@@ -81,10 +81,10 @@ English: entity + fact 47%, media 12%, local/shop/site/quick 22%. No browsing qu
 Naver sections, Kagi Small Web + Marginalia Explore pages.
 
 Rule: separate page = no query; tab = the layout changes; filter = source type, same list; section = intent, automatic.
-- [ ] Tabs: ყველა (sections), ვიდეო (thumbnail grid, films included), სიახლეები (newest first, date shown)
-- [ ] Tab order by intent: film/music words → ვიდეო first; news words → სიახლეები first
-- [ ] Filters (chips, combine): ცოდნა, ტექსტები, ხალხი (forums + blogs + social), სამეცნიერო, იშვიათი (small web), ძველი ვები (archive)
-- [ ] Remove tabs ფილმები, სოციალური, არქივი, ცოდნა (now tab ვიდეო or filters)
+- [x] Tabs: ყველა (sections), ვიდეო (thumbnail grid, films included), სიახლეები (newest first, date shown)
+- [x] Tab order by intent: film/music words → ვიდეო first; news words → სიახლეები first
+- [x] Filters (chips, combine): ცოდნა, ტექსტები, ხალხი (forums + blogs + social), სამეცნიერო, იშვიათი (small web), ძველი ვები (archive)
+- [x] Remove tabs ფილმები, სოციალური, არქივი, ცოდნა (now tab ვიდეო or filters)
 - [ ] Section: dictionary meaning for a one-word Georgian query (ena.ge / Wiktionary)
 - [ ] Section: texts (ტექსტი, ლექსი, სიმღერა, ნოტები, ლოცვა, pdf)
 - [ ] Sections: people (forums, blogs), video row, news row, საინტერესო მიგნებები (2–3 small sites); weather + currency from Session 5

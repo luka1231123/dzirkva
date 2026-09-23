@@ -1,8 +1,10 @@
 """Barebone search page for testing. Run: uv run python -m dzirkva.web  → http://127.0.0.1:8000
 
-Tabs like large engines (All / News / Videos …): nothing is removed, each result goes to the tab
-of its kind. The All tab shows ordinary results, max 2 per site, with small video, film and
-social blocks between them.
+Page structure (plan.md, Session 7): a tab changes the layout, a filter narrows the sources.
+Tabs: ყველა, ვიდეო, სიახლეები; the tab that fits the query words comes right after ყველა.
+Filters (chips, combined with AND): ცოდნა, ტექსტები, ხალხი, სამეცნიერო, იშვიათი, ძველი ვები.
+The All tab without filters shows ordinary results, max 2 per site, with video, people,
+small-site and old-web blocks between them. With a filter it shows the plain filtered list.
 """
 
 import re
@@ -16,19 +18,23 @@ from dzirkva.meaning import similarity
 from dzirkva.morph import families
 from dzirkva.search import search
 
-TABS = {"all": "ყველა", "knowledge": "ცოდნა", "news": "სიახლეები", "archive": "არქივი", "video": "ვიდეო",
-        "film": "ფილმები", "social": "სოციალური"}
-TAB_KINDS = {"knowledge": {"knowledge"}, "news": {"news"}, "archive": {"archive"}, "video": {"video"},
-             "film": {"film"}, "social": {"social", "forum"}}
+TABS = {"all": "ყველა", "video": "ვიდეო", "news": "სიახლეები"}
+TAB_KINDS = {"video": {"video", "film"}, "news": {"news"}}
+TAB_WORDS = {"video": "ფილმი სერიალი კინო მულტფილმი ვიდეო კლიპი ტრეილერი სიმღერა მუსიკა ონლაინ",
+             "news": "სიახლე ამბავი დღეს გუშინ არჩევნები"}  # query word families that move the tab forward
+FILTERS = {"knowledge": "ცოდნა", "texts": "ტექსტები", "people": "ხალხი", "academic": "სამეცნიერო",
+           "small": "იშვიათი", "old": "ძველი ვები"}
 MAIN_KINDS = {"knowledge", "news", "web", "forum"}
-BLOCKS = {3: "video", 5: "archive", 7: "film", 10: "social"}  # All tab: block after the n-th main result
+BLOCKS = {3: "video", 5: "people", 7: "small", 10: "old"}  # All tab: block after the n-th main result
 PER_SITE = 2
 _cache: dict[str, tuple[dict, list, dict]] = {}
 
 PAGE = """<!doctype html><meta charset="utf-8"><title>dzirkva</title>
 <style>body{{font:16px sans-serif;max-width:760px;margin:24px auto;padding:0 16px}}
 input{{width:75%;font-size:18px}} .r{{margin:14px 0}} .u{{color:#070;font-size:13px}} .m{{color:#888;font-size:12px}}
-.tabs a,.tabs b{{margin-right:14px}} .blk{{border:1px solid #ddd;border-radius:6px;padding:4px 12px;margin:18px 0}}
+.tabs a,.tabs b{{margin-right:14px}}
+.chips a{{display:inline-block;border:1px solid #bbb;border-radius:12px;padding:0 9px;margin:0 6px 6px 0;text-decoration:none;color:#333}}
+.chips a.on{{background:#333;color:#fff}} .blk{{border:1px solid #ddd;border-radius:6px;padding:4px 12px;margin:18px 0}}
 mark{{background:#fff3a0}} mark.fb{{background:#cdeaff}} .why{{color:#555;font-size:12px}} .dbg{{font:12px monospace;background:#f6f6f6;padding:8px}}
 .ans{{border:1px solid #ccd;background:#f7f8ff;border-radius:6px;padding:8px 12px;margin:12px 0}}
 table{{border-collapse:collapse}} td{{padding:1px 8px 1px 0;vertical-align:top}}</style>
@@ -80,9 +86,24 @@ def _result(r, marks: dict[str, str]) -> str:
             f"<a href='{escape(c.url)}'>{escape(_host(c.url))}</a>" for c in r.copies[:6]) + "</div>"
     return (f"<div class=r><a href='{escape(r.url)}'>{title}</a>"
             f"<div class=u>{escape(r.url[:90])}</div><div>{snippet}</div>{copies}"
-            f"<div class=why>matched: {matched} · {tier}{r.kind} · meaning {r.meaning:.2f} · "
+            f"<div class=why>matched: {matched} · {tier}{r.kind} {' '.join(sorted(r.tags))} · meaning {r.meaning:.2f} · "
             f"coverage {r.coverage:.0%} · score {r.score * 1000:.1f}</div>"
             f"<div class=m>found by: {_found_by(r)}</div></div>")
+
+
+def _link(q: str, tab: str, filters: set[str]) -> str:
+    return f"?q={quote(q)}" + (f"&tab={tab}" if tab != "all" else "") + "".join(f"&f={f}" for f in sorted(filters))
+
+
+def _tab_order(content: list[str]) -> list[str]:
+    """ყველა first, then the tab whose words are in the query, then the rest."""
+    fams = {f for w in content for f in families(w)} | set(content)
+    hit = [t for t, ws in TAB_WORDS.items() if fams & set(ws.split())]
+    return ["all"] + hit + [t for t in TABS if t != "all" and t not in hit]
+
+
+def _in_tab(r, tab: str) -> bool:
+    return tab == "all" or r.kind in TAB_KINDS[tab]
 
 
 def _all_tab(q: str, results: list, marks: dict[str, str]) -> str:
@@ -91,13 +112,20 @@ def _all_tab(q: str, results: list, marks: dict[str, str]) -> str:
         if r.kind in MAIN_KINDS and per_site.get(_host(r.url), 0) < PER_SITE:
             per_site[_host(r.url)] = per_site.get(_host(r.url), 0) + 1
             main.append(r)
+    main = main[:30]
+    shown = {id(r) for r in main}
     body = ""
-    for i, r in enumerate(main[:30], 1):
+    for i, r in enumerate(main, 1):
         body += _result(r, marks)
-        tab = BLOCKS.get(i)
-        block = [x for x in results if x.kind in TAB_KINDS.get(tab, ())][:3]
+        name = BLOCKS.get(i)
+        if name is None:
+            continue
+        pick = (lambda x: x.kind in TAB_KINDS[name]) if name in TABS else (lambda x: name in x.tags)
+        block = [x for x in results if pick(x) and id(x) not in shown][:3]
+        shown |= {id(x) for x in block}
+        more = _link(q, name, set()) if name in TABS else _link(q, "all", {name})
         if block:
-            body += (f"<div class=blk><p><b>{TABS[tab]}</b> · <a href='?q={quote(q)}&tab={tab}'>ყველა →</a></p>"
+            body += (f"<div class=blk><p><b>{TABS.get(name) or FILTERS[name]}</b> · <a href='{more}'>ყველა →</a></p>"
                      + "".join(_result(x, marks) for x in block) + "</div>")
     return body
 
@@ -107,6 +135,8 @@ class Handler(BaseHTTPRequestHandler):
         params = parse_qs(urlparse(self.path).query)
         q = params.get("q", [""])[0].strip()
         tab = params.get("tab", ["all"])[0]
+        tab = tab if tab in TABS else "all"
+        chosen = {f for f in params.get("f", []) if f in FILTERS}
         body = ""
         if q:
             if q not in _cache:
@@ -116,15 +146,20 @@ class Handler(BaseHTTPRequestHandler):
                 _cache[q] = (qs, results, debug)
             qs, results, debug = _cache[q]
             marks = _marks(debug)
-            counts = {t: sum(r.kind in k for r in results) for t, k in TAB_KINDS.items()}
+            passes = lambda r, fs: _in_tab(r, tab) and fs <= r.tags
+            tab_count = {t: sum(_in_tab(r, t) and chosen <= r.tags for r in results) for t in TABS}
             body = "<p class=tabs>" + "".join(
-                (f"<b>{name}</b>" if t == tab else f"<a href='?q={quote(q)}&tab={t}'>{name}</a>")
-                + (f" <span class=m>{counts[t]}</span>" if t in counts else "")
-                for t, name in TABS.items()) + "</p>"
+                (f"<b>{TABS[t]}</b>" if t == tab else f"<a href='{_link(q, t, chosen)}'>{TABS[t]}</a>")
+                + (f" <span class=m>{tab_count[t]}</span>" if t != "all" else "")
+                for t in _tab_order(debug["content"])) + "</p>"
+            body += "<p class=chips>" + "".join(
+                f"<a class={'on' if f in chosen else 'off'} href='{_link(q, tab, chosen ^ {f})}'>{name}"
+                f" <span class=m>{sum(passes(r, chosen | {f}) for r in results)}</span></a>"
+                for f, name in FILTERS.items()) + "</p>"
             if debug["spelling"]:
                 fixed = " ".join(debug["spelling"].get(normalize(w), w) for w in q.split())
                 body += f"<p>ნაჩვენებია შედეგები: <b>{escape(fixed)}</b> <span class=m>(typed: {escape(q)})</span></p>"
-            if (a := debug.get("answer")) and tab == "all":
+            if (a := debug.get("answer")) and tab == "all" and not chosen:
                 body += (f"<div class=ans><a href='{escape(a['url'])}'><b>{escape(a['title'])}</b></a>"
                          f"<div>{escape(a['text'])}</div><div class=m>ვიკიპედია</div></div>")
             body += (f"<details class=dbg><summary>debug · {len(results)} results · {debug['seconds']['total']}s</summary>"
@@ -135,10 +170,10 @@ class Handler(BaseHTTPRequestHandler):
                      + "".join(f"<tr><td>{escape(n)}</td><td>{debug['counts'].get(n, 0)}</td><td>{escape(v)}</td></tr>"
                                for n, v in qs.items())
                      + "</table></details>")
-            if tab == "all":
+            if tab == "all" and not chosen:
                 body += _all_tab(q, results, marks)
             else:
-                body += "".join(_result(r, marks) for r in results if r.kind in TAB_KINDS.get(tab, ())) or "<p>—</p>"
+                body += "".join(_result(r, marks) for r in results if passes(r, chosen)) or "<p>—</p>"
         html = PAGE.format(q=escape(q), body=body).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")

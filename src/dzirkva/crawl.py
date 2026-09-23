@@ -66,6 +66,14 @@ def small_site(url: str) -> bool:
         (domain_of(url), COMMERCIAL, MIN_GEORGIAN, SMALL_INBOUND)).fetchone() is not None
 
 
+def domain_signals(url: str) -> set[str]:
+    """Kind and signals of the accepted crawled domain ({'academic', 'dspace', 'rss'}); empty if unknown."""
+    db = _db()
+    row = db and db.execute("SELECT kind, signals FROM domains WHERE host=? AND state='full'",
+                            (domain_of(url),)).fetchone()
+    return {row[0], *row[1].split(",")} - {"", "other"} if row else set()
+
+
 def search(words: list[str], limit: int = 20) -> list[dict]:
     """Crawled pages with all words (any form); if too few, with any of them. The date starts the snippet."""
     db = _db()

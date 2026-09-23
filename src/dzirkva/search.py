@@ -10,7 +10,7 @@
    then × trust tier × coverage (share of query words present, rare words count more:
    a metro-map page without შრიფტი drops for "თბილისის მეტროს შრიფტი").
 4. Group: the same text on many sites becomes one result with `copies`.
-Only results that are mostly Georgian are kept. `kind` decides the tab (sources.kind).
+Only results that are mostly Georgian are kept. `kind` decides the tab (sources.kind), `tags` the filters.
 """
 
 import asyncio
@@ -28,7 +28,7 @@ from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize,
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families, family_members
 from dzirkva import archive, crawl, wiki
-from dzirkva.sources import by_category, kind, lookup
+from dzirkva.sources import by_category, kind, lookup, tags
 
 # Question words and function words: dropped from keyword queries and feedback terms.
 STOPWORDS = set(
@@ -81,6 +81,7 @@ class Result:
     coverage: float = 0.0
     small: bool = False
     kind: str = "web"
+    tags: set[str] = field(default_factory=set)  # filters: sources.FILTERS
     queries: set[str] = field(default_factory=set)
     engines: set[str] = field(default_factory=set)
     hits: list[tuple[str, str, int]] = field(default_factory=list)  # (query name, engine, rank)
@@ -260,6 +261,7 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str]) -> list[Resul
         m.kind = kind(m.url)
         m.coverage = coverage(m.text, content)
         m.small = crawl.small_site(m.url)
+        m.tags = tags(m.url, m.title, crawl.domain_signals(m.url), m.small)
         m.score *= 1 + _trust(m) + FAMILY_BONUS * _family_share(m.text, query_fams)
         out.append(m)
     return sorted(out, key=lambda m: m.score, reverse=True)

@@ -60,3 +60,35 @@ def kind(url: str) -> str:
     if FILM_HOST.search(host):
         return "film"
     return "web"
+
+
+# ---- filters (source type) ----------------------------------------------
+# A tab changes the layout (kind above); a filter keeps the list and narrows the sources.
+# One result can have several filter tags; the page combines chosen filters with AND.
+FILTERS = ("knowledge", "texts", "people", "academic", "small", "old")
+BLOG_HOSTS = {"blogspot.com", "wordpress.com", "medium.com", "livejournal.com", "tumblr.com", "substack.com"}
+TEXT_HOSTS = {"ka.wikisource.org", "lib.ge", "poetry.ge", "geolit.ge"}
+TEXT_TITLE = re.compile(r"ლექს(?!იკ)|ტექსტ|სიმღერ|ნოტებ|ლოცვ|პოემ|მოთხრობ|წიგნ|lyrics|\.pdf\b", re.I)
+ACADEMIC_URL = re.compile(r"(?i)\.edu(\.ge)?$|\.ac\.ge$|^dspace\.|^journals?\.|/handle/\d|/article/view/")
+WAYBACK = re.compile(r"^https?://web\.archive\.org/web/[^/]+/")
+
+
+def tags(url: str, title: str, signals: set[str], small: bool) -> set[str]:
+    """Filter tags of one result. `signals` come from the crawl (crawl.domain_signals)."""
+    out = {"old"} if WAYBACK.match(url) else set()
+    url = WAYBACK.sub("", url)
+    host = (urlparse(url).hostname or "").removeprefix("www.")
+    base = ".".join(host.split(".")[-2:])
+    k = kind(url)
+    category, _ = lookup(url) or (None, None)
+    if k == "knowledge":
+        out.add("knowledge")
+    if host in TEXT_HOSTS or TEXT_TITLE.search(title) or url.lower().endswith(".pdf"):
+        out.add("texts")
+    if k in ("forum", "social") or base in BLOG_HOSTS or "blog-host" in signals:
+        out.add("people")
+    if category == "science" or "academic" in signals or ACADEMIC_URL.search(host + urlparse(url).path):
+        out |= {"academic", "knowledge"}
+    if small:
+        out.add("small")
+    return out
