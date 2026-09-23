@@ -80,6 +80,7 @@ LOCAL_LISTS = {"wikipedia", "wikisource", "passages"}
 FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every query word
 SITE_FREE = 2           # results per site before the site penalty (თბილისი: half the page was Wikipedia)
 SITE_PENALTY = 0.5      # × for each further result from the same site
+VOICE_BONUS = 0.3       # × (1 + bonus × coverage) for people: small web, blogs, forums, social posts (ხალხი)
 COPY_SIMILARITY = 0.6   # word overlap (Jaccard) of two snippets that makes them copies
 # Question word → the shape of a text that answers it. A result with that shape gets SHAPE_BONUS.
 SHAPES = {
@@ -467,9 +468,12 @@ def group_copies(results: list[Result]) -> list[Result]:
 
 def diversify(results: list[Result]) -> list[Result]:
     """Many sites, not one: after SITE_FREE results from a site, each further one gets × SITE_PENALTY.
-    Wikipedia and Wikisource count as one site."""
+    Wikipedia and Wikisource count as one site. People (small web, blogs, forums) get VOICE_BONUS when they
+    use the query words: institutions fill the top otherwise."""
     seen: Counter[str] = Counter()
     for r in results:
+        if r.small or "people" in r.tags:
+            r.score *= 1 + VOICE_BONUS * r.coverage
         site = "wiki" if host(r.url) in WIKI_HOSTS else host(r.url)
         r.score *= SITE_PENALTY ** max(0, seen[site] - SITE_FREE + 1)
         seen[site] += 1
