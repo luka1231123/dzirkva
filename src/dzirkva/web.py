@@ -107,6 +107,10 @@ mark.fb{background:var(--fb);border-radius:3px;padding:0 2px}
 .list{margin:8px 0;padding:0;list-style:none} .list li{margin:7px 0;line-height:1.5} .list .m{margin-right:8px}
 .facts{font-size:13px;color:var(--muted);margin:6px 0 4px} .hero .t{font-size:24px}
 .go{display:inline-block;margin-top:10px}
+.pm{font-size:13px;color:var(--ok);margin:2px 0}
+.cite{font-size:12.5px;color:var(--muted);margin:6px 0} .cite summary{cursor:pointer}
+.cite code{display:block;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--line);
+ border-radius:8px;font:12.5px/1.6 "Noto Serif Georgian",Georgia,serif;color:var(--text);user-select:all}
 @media (max-width:520px){.r .t{font-size:17px} .ans,.blk,.dbg{padding:12px 14px;border-radius:10px}}
 """
 
@@ -282,8 +286,20 @@ def _result(r, marks: dict[str, str], key: str) -> str:
         copies = f"ასევე {len(r.copies)} საიტზე: " + ", ".join(
             f"<a href='{escape(c.url)}'>{escape(_host(c.url))}</a>" for c in r.copies[:6])
     tags = f"<div class=tags>{_labels(r)}{copies}</div>" if _labels(r) or copies else ""
+    paper = ""
+    if m := papers.meta(r.url):  # a paper: authors, year, journal; the abstract; PDF, citation, the author's papers
+        snippet = _highlight(m["description"][:320], marks)[0] if m["description"] else snippet
+        who = papers.authors(m["creator"])
+        info = " · ".join(escape(x) for x in ("; ".join(who[:3]), m["year"], papers.journal(m["source"]),
+                                                papers.type_name(m["type"])) if x)
+        pdf = f"<a href='{escape(m['pdf'])}'>PDF</a> · " if m["pdf"] else ""
+        more = (f" · <a href='{_link(who[0].replace(',', ''), 'all', {'academic'})}'>{cap('ავტორის ნაშრომები')}</a>"
+                if who else "")
+        paper = f"<div class=pm>{info}</div>"
+        tags += (f"<details class=cite><summary>{pdf}{cap('ციტირება')}{more}</summary>"
+                 f"<code>{escape(papers.citation(m))}</code></details>")
     return (f"<div class=r><div class=site>{_site(r.url)}</div><a class=t href='{escape(_go(r, key))}'>{title}</a>"
-            f"<div class=snip>{snippet}</div>{tags}"
+            f"{paper}<div class=snip>{snippet}</div>{tags}"
             f"<div class=why>დაემთხვა: {matched} · {tier}{escape(kinds)} · აზრი {r.meaning:.2f} · "
             f"დაფარვა {r.coverage:.0%} · ქულა {r.score * 1000:.1f}"
             f"<br>იპოვა: {_found_by(r)}</div></div>")

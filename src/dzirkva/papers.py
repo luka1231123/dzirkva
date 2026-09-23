@@ -27,6 +27,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS papers USING fts5(oai UNINDEXED, url UNINDEXE
     subject, description, source, year UNINDEXED, type UNINDEXED, language UNINDEXED, repo UNINDEXED,
     tokenize='unicode61');
 CREATE TABLE IF NOT EXISTS seen (oai TEXT PRIMARY KEY);  -- a record once: OJS installs answer under several names
+CREATE INDEX IF NOT EXISTS papers_url ON papers_content(c1);  -- a paper by its URL (c1 = url): meta()
 """
 MIN_GEORGIAN = 0.3   # share of Georgian letters in the title + abstract kept
 CONTROL = re.compile(rb"[\x00-\x08\x0b\x0c\x0e-\x1f]")  # not allowed in XML; abstracts pasted from PDFs have them
@@ -34,6 +35,7 @@ NS = {"oai": "http://www.openarchives.org/OAI/2.0/", "dc": "http://purl.org/dc/e
 VERSION = re.compile(r"(?i)version$|^draft$|peer-reviewed|^text$")  # dc:type values that are not the item's type
 ISSN = re.compile(r"^\d{4}-\d{3}[\dXx]$")
 OJS_GALLEY = re.compile(r"/article/view/\d+/\d+")
+PAGES = re.compile(r"\d+\s*[-–]\s*\d+")
 TYPE_NAMES = {"article": "სტატია", "doctoralthesis": "დისერტაცია", "thesis": "ნაშრომი", "masterthesis": "სამაგისტრო",
               "bachelorthesis": "საბაკალავრო", "book": "წიგნი", "bookpart": "წიგნის თავი", "review": "რეცენზია",
               "conferenceobject": "კონფერენციის მასალა", "report": "ანგარიში", "lecture": "ლექცია"}
@@ -108,6 +110,38 @@ def type_name(t: str) -> str:
     return TYPE_NAMES.get(t.lower(), t)
 
 
+def meta(url: str) -> dict | None:
+    """The record of a paper page (for the paper layout and its citation), else None."""
+    db = _db()
+    if db is None:
+        return None
+    urls = [url, re.sub(r"^https:", "http:", url), re.sub(r"^http:", "https:", url)]
+    row = db.execute("SELECT c1, c2, c3, c4, c6, c7, c8, c9 FROM papers_content WHERE c1 IN (?, ?, ?)", urls).fetchone()
+    return dict(zip(("url", "pdf", "title", "creator", "description", "source", "year", "type"), row)) if row else None
+
+
+def authors(creator: str) -> list[str]:
+    """Author names; journals list each name in two scripts (ჩიქოვანი, გურამ; Chikovani, Guram): Georgian ones only."""
+    names = [a.strip() for a in creator.split(";") if a.strip()]
+    return [a for a in names if georgian_ratio(a) > 0.5] or names
+
+
+def journal(source: str) -> str:
+    """Journal, issue, pages: "ქრონოსი; Vol. 1 (2020): ქრონოსი; 270-279" → "ქრონოსი, Vol. 1 (2020), 270-279"."""
+    parts = [p.strip() for p in source.split(";")]
+    out = parts[:1] + [p.split(":")[0].strip() for p in parts[1:2]] + [p for p in parts[2:3] if PAGES.fullmatch(p)]
+    return ", ".join(x for x in out if x)
+
+
+def citation(m: dict) -> str:
+    """A citation line in APA style: Authors (year). Title. Journal. URL"""
+    short = lambda a: f"{a.partition(',')[0].strip()}, {a.partition(',')[2].strip()[:1]}." if "," in a else a
+    names = [short(a) for a in authors(m["creator"])]
+    who = ", ".join(names[:-1]) + " & " + names[-1] if len(names) > 1 else "".join(names)
+    return ". ".join(x for x in (f"{who} ({m['year'] or 'უ. თ.'})", m["title"].rstrip("."),
+                                 journal(m["source"]), m["url"]) if x)
+
+
 def search(words: list[str], limit: int = 10) -> list[dict]:
     """Papers with all words (any form) in title, authors, keywords, abstract or journal; titles weigh most."""
     db = _db()
@@ -119,7 +153,7 @@ def search(words: list[str], limit: int = 10) -> list[dict]:
         "ORDER BY bm25(papers, 0, 0, 0, 10, 3, 3, 1, 1) LIMIT ?", (expr, limit)).fetchall()
     out = []
     for url, title, creator, desc, year, typ, source in rows:
-        meta = " · ".join(x for x in (type_name(typ), year, creator[:80], source.split(";")[0]) if x)
+        meta = " · ".join(x for x in (type_name(typ), year, creator[:80], journal(source)) if x)
         out.append({"url": url, "title": title, "snippet": f"{meta}. {desc[:250]}".strip(" ."), "engine": "papers"})
     return out
 
