@@ -25,6 +25,12 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 - `src/dzirkva/georgian.py` — normalize, Latin→Georgian, spelling (a rare word is fixed only when a sound-alike or keyboard-slip word is 20× more frequent in `vocab.tsv`), Georgian ratio
 - `src/dzirkva/morph.py` — word form → lemma + word family (lexicon first, then grammar rules), synonyms
 - `src/dzirkva/web.py` — test page: `uv run python -m dzirkva.web` → http://127.0.0.1:8000. Single thread on purpose: the GPU model hangs in other threads.
+  Pages without a query: `/site?h=host` (site profile), `/discover`, `/random` (a small site); home page shows 3 finds of the day
+- `src/dzirkva/discover.py` — web surfing data: site profiles (crawl pages, links in/out, similar sites by shared links, Wikipedia citations, archive copies), newest small-web posts, shelves
+  Feeds: `uv run python scripts/feeds.py` (→ `data/feeds.db`, ~2 min; run daily)
+- `src/dzirkva/papers.py` — Georgian journals and university repositories (OJS, DSpace, EPrints) by OAI-PMH → `data/papers.db`; search source, paper layout (authors, year, journal, PDF, citation)
+  Find endpoints: `uv run python scripts/find_repos.py` (~15 min, asks every Georgian host); harvest: `nohup uv run python scripts/papers_collect.py > data/papers.log 2>&1 &` (resumable; run again for new or failed repositories)
+  Full text: `nohup uv run python scripts/papers_text.py > data/papers_text.log 2>&1 &` (PDFs → `passages.db` site `papers`), then `scripts/build_passages.py` for vectors
 - `src/dzirkva/search.py` — simple queries → engines → feedback round (only when fewer than 5 of the top 10 have every query word) → rank (engine + meaning + tier + coverage) → group copies. Demo: `uv run python -m dzirkva.search <query>`
 - `src/dzirkva/archive.py` + `scripts/archive_collect.py` — old web from the Internet Archive → `data/archive.db`. Run collector in background: `nohup uv run python scripts/archive_collect.py > data/archive.log 2>&1 &` (resumable)
 - `src/dzirkva/dictionary.py` — Georgian word meanings from ka.wiktionary: answer box for "X რას ნიშნავს" / one-word queries

@@ -101,33 +101,34 @@ Focus: dzirkva is for study and for exploring the Georgian web. Service queries 
 they are; no more tuning for them. Only data we can get now: OAI-PMH feeds, own crawl, archive, local indexes.
 
 Research: data
-- [ ] scribd.com (user documents: school texts, contracts, books) and poetry.ge (poems, prose): texts filter, books
+- [x] scribd.com (user documents: school texts, contracts, books) and poetry.ge (poems, prose): texts filter, books
   intent searches them; poetry.ge trusted (tier 2)
-- [ ] Find repositories: probe every Georgian host (8,390 .ge hosts from the crawl + Wikipedia, trusted sites) for
+- [x] Find repositories: probe every Georgian host (8,390 .ge hosts from the crawl + Wikipedia, trusted sites) for
   OAI-PMH (OJS journals, DSpace, EPrints) → `data/papers.db` table `repos` (`scripts/find_repos.py`)
-- [ ] Harvest all found repositories: title, authors, year, journal, abstract, keywords, PDF link → `papers` FTS5
+- [x] Harvest all found repositories: title, authors, year, journal, abstract, keywords, PDF link → `papers` FTS5
   (`scripts/papers_collect.py`, resumable, 1 request/s per repository)
 - [ ] Full text: small PDFs of Georgian papers → `passages.db` site `papers` (like Iverieli text), then vectors
-- [ ] Academic tag only from evidence: .edu host, OAI repository, science source, article/handle URL
+- [x] Academic tag only from evidence: .edu host, OAI repository, science source, article/handle URL
   (a link to dspace.nplg.gov.ge made netgazeti.ge "academic")
 
 Research: search
-- [ ] Papers index as a search source (every search); snippet: type · year · authors · journal
-- [ ] Research intent (კვლევა, სტატია, დისერტაცია, ნაშრომი, ჟურნალი, მონოგრაფია, თეზისი, ანოტაცია) → papers first
-- [ ] Tab სამეცნიერო with its own layout: authors, year, journal, PDF link, citation line, more by the author
+- [x] Papers index as a search source (every search); snippet: type · year · authors · journal
+- [x] Research intent (კვლევა, სტატია, დისერტაცია, ნაშრომი, ჟურნალი, მონოგრაფია, თეზისი, ანოტაცია) → papers first
+- [x] Paper layout (every tab): authors, year, journal, PDF link, citation line, more by the author
+- [ ] Tab სამეცნიერო instead of the filter chip (papers first, grouped by year)
 - [ ] Operators: `ავტორი:` (author), year or years (`1990-2000`), `pdf`
 - [ ] Similar papers: nearest by meaning (paper vectors)
 - [ ] Check: 10 research queries in `eval/` with the paper that must be in the top 3
 
 Web surfing (Discover). Data we have: crawl.db (pages with dates, domains with kind, links between sites),
 voice.db (personal sites), archive.db (old web), papers.db
-- [ ] Site page `/site?h=host`: what the site is (kind, pages, Georgian share, labels), newest pages, sites it links
+- [x] Site page `/site?h=host`: what the site is (kind, pages, Georgian share, labels), newest pages, sites it links
   to, sites that link to it, similar sites (shared inbound links), old copies in the archive
-- [ ] Each result: link to its site page and "more from this site"
-- [ ] `/discover`: newest posts of blogs and small web, a random small site, an old-web find, new papers
-- [ ] Home page: 3 finds under the search box (from the /discover data)
-- [ ] RSS: blogs with feeds → `scripts/feeds.py` daily, so /discover shows new posts first
-- [ ] Shelves on /discover: sites by kind and by sources.yaml category (history, literature, science …)
+- [x] Each result: its host opens its site page ("more from this site" = the site page's newest pages)
+- [x] `/discover`: newest posts of blogs and small web, a random small site, an old-web find, new papers
+- [x] Home page: 3 finds under the search box (from the /discover data)
+- [x] RSS: blogs with feeds → `scripts/feeds.py` daily, so /discover shows new posts first
+- [x] Shelves on /discover: sites by kind and by sources.yaml category (history, literature, science …)
 
 ## Later (optional)
 - [x] Own crawl of the trusted sites (`scripts/crawl_sites.py` → `data/crawl.db`, FTS5): robots.txt, sitemaps newest first, 1 req/s per site, main text by trafilatura; search source `crawl`
