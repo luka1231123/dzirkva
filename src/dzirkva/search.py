@@ -14,6 +14,7 @@
    a metro-map page without შრიფტი drops for "თბილისის მეტროს შრიფტი").
    Pages that the matching Wikipedia articles cite get a trust bonus like tier 1; the crawled ones join
    the candidates (list "cited"). Wikipedia judges the sources instead of filling the list.
+   Pages people chose for the same question before (clicks.py) get CLICK_BONUS per good click.
 4. Group: the same text on many sites becomes one result with `copies`.
 Only results that are mostly Georgian are kept. `kind` decides the tab (sources.kind), `tags` the filters.
 """
@@ -33,7 +34,7 @@ from dzirkva import engines
 from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, typo_weight, words
 from dzirkva.meaning import cached_vectors, vectors
 from dzirkva.morph import analyze, families, family_members
-from dzirkva import archive, crawl, dictionary, iverieli, passages, wiki
+from dzirkva import archive, clicks, crawl, dictionary, iverieli, passages, wiki
 from dzirkva.sources import by_category, kind, lookup, tags
 
 # Question words and function words: dropped from keyword queries and feedback terms.
@@ -63,6 +64,8 @@ TIER_BONUS = {1: 0.5, 2: 0.25, 3: 0.0}
 SMALL_BONUS = 0.25     # small, non-commercial, Georgian site found by the crawl (crawl.small_site)
 CITED_BONUS = 0.5      # page cited by a Wikipedia article that matches the query
 CITING_ARTICLES = 3    # articles read for citations: top word matches + top meaning matches (+ answer box)
+CLICK_BONUS = 0.3      # × good clicks on the same question (max CLICK_MAX)
+CLICK_MAX = 3
 WIKI_HOSTS = {"ka.wikipedia.org": "wikipedia", "ka.wikisource.org": "wikisource"}
 FAMILY_BONUS = 0.5      # × share of query word families found in title + snippet
 FEEDBACK_DOCS = 15      # round-1 results read for feedback terms
@@ -104,6 +107,8 @@ class Result:
     coverage: float = 0.0
     small: bool = False
     cited: bool = False
+    clicks: int = 0        # good clicks on this page for the same question
+    rank: int = 0          # position in the final list (1 = first)
     kind: str = "web"
     tags: set[str] = field(default_factory=set)  # filters: sources.FILTERS
     queries: set[str] = field(default_factory=set)
@@ -271,10 +276,11 @@ def _wiki_page(url: str) -> tuple[str, str] | None:
     return (site, unquote(p.path[6:]).replace("_", " ")) if site and p.path.startswith("/wiki/") else None
 
 
-def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[str] = frozenset()) -> list[Result]:
+def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[str] = frozenset(),
+          clicked: Counter[str] = Counter()) -> list[Result]:
     """RRF over all lists (Wikipedia pages: best rank only), Georgian filter, trust tier and word-family bonuses.
 
-    cited: canonical URLs of the pages the matching Wikipedia articles cite."""
+    cited: canonical URLs of the pages the matching Wikipedia articles cite; clicked: good clicks per canonical URL."""
     merged: dict[str, Result] = {}
     for name, results in lists:
         for rank, r in enumerate(results):
@@ -297,6 +303,7 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[st
         m.coverage = coverage(m.text, content)
         m.small = crawl.small_site(m.url)
         m.cited = canonical_url(m.url) in cited
+        m.clicks = clicked[canonical_url(m.url)]
         m.tags = tags(m.url, m.title, crawl.domain_signals(m.url), m.small)
         m.score *= 1 + _trust(m) + FAMILY_BONUS * _family_share(m.text, query_fams)
         out.append(m)
@@ -349,6 +356,7 @@ def rank_by_meaning(query: str, results: list[Result], qv, answer=None) -> list[
         r.score = fused * (1 + _trust(r)) * (COVERAGE_FLOOR + (1 - COVERAGE_FLOOR) * r.coverage)
         if shape and shape.search(r.snippet):
             r.score *= 1 + SHAPE_BONUS
+        r.score *= 1 + CLICK_BONUS * min(r.clicks, CLICK_MAX)
     return sorted(results, key=lambda r: r.score, reverse=True)
 
 
@@ -386,6 +394,11 @@ def related(content: list[str], base: str, terms: list[str], wiki_hits: list[dic
     return out[:RELATED]
 
 
+def click_key(content: list[str]) -> str:
+    """The question for clicks.py: content words in dictionary form, sorted."""
+    return " ".join(sorted(_lemma(w) for w in content))
+
+
 def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     """Returns the queries sent, the ranked results, and debug information (with the answer box)."""
     t0 = time.time()
@@ -406,13 +419,15 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
         :CITING_ARTICLES]
     cites = wiki.cites(articles)
     cited = {canonical_url(u) for u in cites}
+    key = click_key(content)
+    clicked = clicks.good(key)
     lists.append(("cited", crawl.search(content, 10, cites) if cites else []))  # crawled pages the articles cite
     qv = vectors([query])[0]
     # explanations (why/how): answer vector and feedback from the nearest paragraphs; names and facts: from
     # the covered snippets (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
     explain = question_type(query) in ANSWER_TYPES and bool(near)
     answer_v = answer_vector(near) if explain else None
-    first = rank_by_meaning(query, wiki_snippets(merge(lists, content, cited), qv, content), qv, answer_v)
+    first = rank_by_meaning(query, wiki_snippets(merge(lists, content, cited, clicked), qv, content), qv, answer_v)
     t1 = time.time()
     covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]
     terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
@@ -426,12 +441,14 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     if more:
         qs.update(more)
         lists += asyncio.run(fan_out(more))
-    results = group_copies(rank_by_meaning(query, wiki_snippets(merge(lists, content, cited), qv, content), qv,
+    results = group_copies(rank_by_meaning(query, wiki_snippets(merge(lists, content, cited, clicked), qv, content), qv,
                                            answer_v))
+    for i, r in enumerate(results, 1):
+        r.rank = i
     # why/how: no answer text (a wrong paragraph reads like a fact), only the nearest articles to read
     links = [(p["title"].removesuffix(" — ვიკიპედია"), p["url"]) for p in near[:WIKI_LINKS]] if explain else []
     debug = {
-        "content": content, "type": question_type(query), "spelling": fixes, "feedback": terms, "answer": answer,
+        "content": content, "key": key, "type": question_type(query), "spelling": fixes, "feedback": terms, "answer": answer,
         "wiki_links": links,
         "related": related(content, base, terms, wiki_hits, near, answer),
         "definition": dictionary.define(qs.get("corrected", query)),  # "სახლი რას ნიშნავს"

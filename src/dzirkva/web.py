@@ -18,10 +18,10 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 import yaml
 
 from dzirkva.georgian import normalize
-from dzirkva import passages
+from dzirkva import clicks, passages
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families
-from dzirkva.search import search
+from dzirkva.search import canonical_url, search
 
 TABS = {"all": "ყველა", "video": "ვიდეო", "news": "სიახლეები"}
 TAB_KINDS = {"video": {"video", "film"}, "news": {"news"}}
@@ -172,6 +172,8 @@ def _labels(r) -> str:
         out.append(f"<span class=lbl>{cap('სანდო წყარო')}</span>")
     if r.small:
         out.append(f"<span class='lbl rare'>{cap('პატარა ვები')}</span>")
+    if r.clicks:
+        out.append(f"<span class=lbl>{cap('ადრე არჩეული')}</span>")
     if r.cited:
         out.append(f"<span class=lbl>{cap('ვიკიპედიის წყარო')}</span>")
     if y := ARCHIVE_YEAR.search(r.url):
@@ -246,7 +248,12 @@ def _related(related: list[tuple[str, str]]) -> str:
         for rq, src in related) + "</div></div>")
 
 
-def _result(r, marks: dict[str, str]) -> str:
+def _go(r, key: str) -> str:
+    """Result link through /go: the click is logged (clicks.py), then the browser goes to the page."""
+    return f"/go?k={quote(key)}&r={r.rank}&u={quote(r.url)}"
+
+
+def _result(r, marks: dict[str, str], key: str) -> str:
     title, t_found = _highlight(r.title, marks)
     date = DATE_FIRST.match(r.snippet)
     snippet, s_found = _highlight(r.snippet[date.end():] if date else r.snippet, marks)
@@ -260,7 +267,7 @@ def _result(r, marks: dict[str, str]) -> str:
         copies = f"ასევე {len(r.copies)} საიტზე: " + ", ".join(
             f"<a href='{escape(c.url)}'>{escape(_host(c.url))}</a>" for c in r.copies[:6])
     tags = f"<div class=tags>{_labels(r)}{copies}</div>" if _labels(r) or copies else ""
-    return (f"<div class=r><div class=site>{_site(r.url)}</div><a class=t href='{escape(r.url)}'>{title}</a>"
+    return (f"<div class=r><div class=site>{_site(r.url)}</div><a class=t href='{escape(_go(r, key))}'>{title}</a>"
             f"<div class=snip>{snippet}</div>{tags}"
             f"<div class=why>დაემთხვა: {matched} · {tier}{escape(kinds)} · აზრი {r.meaning:.2f} · "
             f"დაფარვა {r.coverage:.0%} · ქულა {r.score * 1000:.1f}"
@@ -282,18 +289,18 @@ def _in_tab(r, tab: str) -> bool:
     return tab == "all" or r.kind in TAB_KINDS[tab]
 
 
-def _all_tab(q: str, results: list, marks: dict[str, str]) -> str:
+def _all_tab(q: str, results: list, marks: dict[str, str], key: str) -> str:
     main, per_site = [], {}
     for r in results:
-        key, limit = ("social", MAX_SOCIAL) if r.kind == "social" else (_host(r.url), PER_SITE)
-        if r.kind in MAIN_KINDS and per_site.get(key, 0) < limit:
-            per_site[key] = per_site.get(key, 0) + 1
+        site, limit = ("social", MAX_SOCIAL) if r.kind == "social" else (_host(r.url), PER_SITE)
+        if r.kind in MAIN_KINDS and per_site.get(site, 0) < limit:
+            per_site[site] = per_site.get(site, 0) + 1
             main.append(r)
     main = main[:30]
     shown = {id(r) for r in main}
     body = ""
     for i, r in enumerate(main, 1):
-        body += _result(r, marks)
+        body += _result(r, marks, key)
         name = BLOCKS.get(i)
         if name is None:
             continue
@@ -303,7 +310,7 @@ def _all_tab(q: str, results: list, marks: dict[str, str]) -> str:
         more = _link(q, name, set()) if name in TABS else _link(q, "all", {name})
         if block:
             body += (f"<div class=blk><h3>{cap(TABS.get(name) or FILTERS[name])}<a href='{more}'>{cap('ყველა')} →</a></h3>"
-                     + "".join(_result(x, marks) for x in block) + "</div>")
+                     + "".join(_result(x, marks, key) for x in block) + "</div>")
     return body
 
 
@@ -344,15 +351,27 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
                        for n, v in qs.items())
              + "</table></div></details>")
     if tab == "all" and not chosen:
-        body += _all_tab(q, results, marks)
+        body += _all_tab(q, results, marks, debug["key"])
     else:
-        body += "".join(_result(r, marks) for r in results if passes(r, chosen)) or "<p>—</p>"
+        body += "".join(_result(r, marks, debug["key"]) for r in results if passes(r, chosen)) or "<p>—</p>"
     return body + _related(debug.get("related", []))
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        params = parse_qs(urlparse(self.path).query)
+        path = urlparse(self.path)
+        params = parse_qs(path.query)
+        if path.path == "/go":
+            url = params.get("u", [""])[0]
+            if not url.startswith(("http://", "https://")):
+                self.send_error(400)
+                return
+            clicks.log(params.get("k", [""])[0], canonical_url(url), int(params.get("r", ["0"])[0] or 0))
+            _cache.clear()  # the next search of the question ranks with this click
+            self.send_response(302)
+            self.send_header("Location", url)
+            self.end_headers()
+            return
         q = params.get("q", [""])[0].strip()
         tab = params.get("tab", ["all"])[0]
         tab = tab if tab in TABS else "all"
