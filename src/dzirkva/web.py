@@ -2,7 +2,7 @@
 
 Page structure (plan.md, Session 7): a tab changes the layout, a filter narrows the sources.
 Tabs: ყველა, ვიდეო, სიახლეები; the tab that fits the query words comes right after ყველა.
-Filters (chips, combined with AND): ცოდნა, ტექსტები, ხალხი, სამეცნიერო, იშვიათი, ძველი ვები.
+Filters (chips, one at a time): ცოდნა, ტექსტები, ხალხი, სამეცნიერო, იშვიათი, ძველი ვები.
 The All tab without filters shows ordinary results, max 2 per site, with video, people,
 small-site and old-web blocks between them. With a filter it shows the plain filtered list.
 """
@@ -136,7 +136,7 @@ class Handler(BaseHTTPRequestHandler):
         q = params.get("q", [""])[0].strip()
         tab = params.get("tab", ["all"])[0]
         tab = tab if tab in TABS else "all"
-        chosen = {f for f in params.get("f", []) if f in FILTERS}
+        chosen = {f for f in params.get("f", [])[:1] if f in FILTERS}  # one filter at a time
         body = ""
         if q:
             if q not in _cache:
@@ -153,8 +153,8 @@ class Handler(BaseHTTPRequestHandler):
                 + (f" <span class=m>{tab_count[t]}</span>" if t != "all" else "")
                 for t in _tab_order(debug["content"])) + "</p>"
             body += "<p class=chips>" + "".join(
-                f"<a class={'on' if f in chosen else 'off'} href='{_link(q, tab, chosen ^ {f})}'>{name}"
-                f" <span class=m>{sum(passes(r, chosen | {f}) for r in results)}</span></a>"
+                f"<a class={'on' if f in chosen else 'off'} href='{_link(q, tab, set() if f in chosen else {f})}'>{name}"
+                f" <span class=m>{sum(passes(r, {f}) for r in results)}</span></a>"
                 for f, name in FILTERS.items()) + "</p>"
             if debug["spelling"]:
                 fixed = " ".join(debug["spelling"].get(normalize(w), w) for w in q.split())

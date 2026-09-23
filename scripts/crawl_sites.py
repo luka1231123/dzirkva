@@ -6,7 +6,7 @@ Domains (table `domains`):
   crawled Georgian pages (table `links`). A new domain is probed: robots.txt, home page + 5 pages
   (cited pages first). Full budget only if its pages are >30% Georgian and it is not commercial.
 Rules, no ML (signals in the HTML of each page, collected per domain):
-- commercial score: ad/tracker scripts 1, WooCommerce 2, two or more shop words (კალათა, ყიდვა, ₾ …) 2
+- commercial score: ad/tracker scripts 1, WooCommerce 2, shop page (3+ shop words on one page: კალათა, ყიდვა, ₾ …) 2
 - kind: academic (.edu, OJS, DSpace, or two of ISSN / DOI / ანოტაცია), blog (Blogger, WordPress, blogspot, RSS)
 Full domains: home page + sitemaps (newest first) each run, same-site links up to MAX_DEPTH,
 max PER_HOST new pages per run. Polite: robots.txt, one request per second per domain.
@@ -71,13 +71,16 @@ SIGNALS = {
     "ანოტაცია": re.compile(r"ანოტაცია"),
     "blog-engine": re.compile(r"<meta[^>]*(generator[^>]*(Blogger|WordPress)|(Blogger|WordPress)[^>]*generator)", re.I),
     "rss": re.compile(r"application/rss\+xml"),
+    "news": re.compile(r'"@type"\s*:\s*"(News|Reportage)Article"'),
 }
 SHOP = ("კალათა", "ყიდვა", "იყიდე", "შეკვეთა", "ფასდაკლება", "₾")
+SHOP_WORDS = 3          # on one page: a history blog uses one or two of them across many posts
 
 
 def page_signals(page: str, host: str) -> set[str]:
     found = {name for name, rx in SIGNALS.items() if rx.search(page)}
-    found |= {f"shop:{w}" for w in SHOP if w in page}
+    if sum(w in page for w in SHOP) >= SHOP_WORDS:
+        found.add("shop")
     if re.search(r"(^|\.)edu(\.[a-z]+)?$", host):
         found.add("edu")
     if BLOG_HOST.search(host):
@@ -86,8 +89,7 @@ def page_signals(page: str, host: str) -> set[str]:
 
 
 def commercial(signals: set[str]) -> int:
-    shop = sum(s.startswith("shop:") for s in signals) >= 2
-    return ("ads" in signals) + 2 * ("woocommerce" in signals) + 2 * shop
+    return ("ads" in signals) + 2 * ("woocommerce" in signals) + 2 * ("shop" in signals)
 
 
 def kind(signals: set[str]) -> str:

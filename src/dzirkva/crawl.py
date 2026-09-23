@@ -5,9 +5,10 @@ an engine: pages with all query words (any form), best BM25 first. A page no eng
 still be found here.
 Domains: trusted sites (config/sources.yaml) and discovered ones (cited in Georgian Wikipedia or
 linked from crawled pages), with Georgian share, commercial score, kind and inbound links.
-Search boosts small, non-commercial, Georgian domains (small_site).
+Search boosts rare domains (small_site): small, non-commercial, Georgian, not on the trusted list.
 """
 
+import re
 import sqlite3
 from functools import cache
 from pathlib import Path
@@ -30,7 +31,9 @@ CREATE TABLE IF NOT EXISTS links (src TEXT, dst TEXT, PRIMARY KEY (src, dst)) WI
 """
 MIN_GEORGIAN = 0.3
 COMMERCIAL = 2       # commercial score from which a domain is commercial
-SMALL_INBOUND = 100  # small domain: at most this many citing Wikipedia pages + linking crawled sites
+SMALL_INBOUND = 30   # rare domain: at most this many citing Wikipedia pages + linking crawled sites
+# known kinds of sites that are never rare: government, news, TV, radio, sport
+NOT_RARE = re.compile(r"\.gov\.ge$|news|ambebi|tv|radio|media|press|post|sport|goal")
 
 
 def connect() -> sqlite3.Connection:
@@ -59,11 +62,16 @@ def domain_of(url: str) -> str:
 
 
 def small_site(url: str) -> bool:
-    """The URL is on a small, non-commercial, Georgian domain that the crawl accepted."""
+    """Rare site: found by the crawl (not on the trusted list), Georgian, non-commercial, not news or
+    government, and few inbound links. One-person blogs (blogspot, wordpress.com) are rare at any count."""
     db = _db()
-    return db is not None and db.execute(
-        "SELECT 1 FROM domains WHERE host=? AND state='full' AND commercial<? AND georgian>=? AND inbound<=?",
-        (domain_of(url), COMMERCIAL, MIN_GEORGIAN, SMALL_INBOUND)).fetchone() is not None
+    host = domain_of(url)
+    row = db and db.execute("SELECT source, signals, inbound FROM domains WHERE host=? AND state='full' "
+                            "AND commercial<? AND georgian>=?", (host, COMMERCIAL, MIN_GEORGIAN)).fetchone()
+    if not row or row[0] == "trusted" or NOT_RARE.search(host):
+        return False
+    signals = set(row[1].split(","))
+    return "news" not in signals and (row[2] <= SMALL_INBOUND or "blog-host" in signals)
 
 
 def domain_signals(url: str) -> set[str]:

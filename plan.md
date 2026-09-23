@@ -97,7 +97,7 @@ Rule: separate page = no query; tab = the layout changes; filter = source type, 
 - [x] Own crawl of the trusted sites (`scripts/crawl_sites.py` → `data/crawl.db`, FTS5): robots.txt, sitemaps newest first, 1 req/s per site, main text by trafilatura; search source `crawl`
 - [x] Discovery of rare Georgian sites (same crawler): seeds = 121k hosts cited in ka.wikipedia + hosts linked from crawled pages (`links`); new domain = robots + home + 5 pages, full budget only if >30% Georgian and not commercial
 - [x] Domain rules, no ML (`domains` table): commercial score (ads 1, WooCommerce 2, shop words 2), kind academic / blog / other, inbound count
-- [x] Search: small (≤100 inbound), non-commercial, Georgian domains get a bonus like tier 2 (`crawl.small_site`)
+- [x] Search: rare domains get a bonus like tier 2 (`crawl.small_site`): not trusted, not gov/news/TV/sport, Georgian, non-commercial, ≤30 inbound (one-person blogs at any count); shop words count only 3+ on one page
 - [ ] Answer box through `claude -p` (personal use only)
 - [ ] Entity names from Wikidata: თბილისი = Tbilisi = Тбилиси
 - [ ] Facebook: opt-in page connect, public Telegram channels

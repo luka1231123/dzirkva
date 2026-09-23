@@ -64,7 +64,7 @@ def kind(url: str) -> str:
 
 # ---- filters (source type) ----------------------------------------------
 # A tab changes the layout (kind above); a filter keeps the list and narrows the sources.
-# One result can have several filter tags; the page combines chosen filters with AND.
+# One result can have several filter tags; the page shows one filter at a time.
 FILTERS = ("knowledge", "texts", "people", "academic", "small", "old")
 BLOG_HOSTS = {"blogspot.com", "wordpress.com", "medium.com", "livejournal.com", "tumblr.com", "substack.com"}
 TEXT_HOSTS = {"ka.wikisource.org", "lib.ge", "poetry.ge", "geolit.ge"}
