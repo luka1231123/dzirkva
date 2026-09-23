@@ -13,14 +13,18 @@ from dzirkva.georgian import freq
 from dzirkva.morph import analyze, families, forms_of
 
 DB = Path(__file__).resolve().parents[2] / "data" / "wiki.db"
+# Local indexes built by scripts/build_wiki_index.py: file, URL prefix, name shown in titles.
+SITES = {"wikipedia": (DB, "https://ka.wikipedia.org/wiki/", "ვიკიპედია"),
+         "wikisource": (DB.with_name("wikisource.db"), "https://ka.wikisource.org/wiki/", "ვიკიწყარო")}
 MAX_FORMS = 40
 ANSWER_CHARS = 350
 WIKI_URL = "https://ka.wikipedia.org/wiki/"
 
 
 @cache
-def _db() -> sqlite3.Connection | None:
-    return sqlite3.connect(DB, check_same_thread=False) if DB.exists() else None
+def _db(site: str = "wikipedia") -> sqlite3.Connection | None:
+    path = SITES[site][0]
+    return sqlite3.connect(path, check_same_thread=False) if path.exists() else None
 
 
 def any_form(word: str) -> str:
@@ -79,9 +83,10 @@ def article(words: list[str]) -> dict | None:
     return {"title": title, "text": _opening(body), "url": WIKI_URL + quote(title.replace(" ", "_"))}
 
 
-def search(words: list[str], limit: int = 20) -> list[dict]:
+def search(words: list[str], limit: int = 20, site: str = "wikipedia") -> list[dict]:
     """Articles with all words (any form), title matches weigh 10×; if too few, any of the words."""
-    db = _db()
+    db = _db(site)
+    prefix, name = SITES[site][1:]
     if db is None or not words:
         return []
     rows = []
@@ -92,5 +97,5 @@ def search(words: list[str], limit: int = 20) -> list[dict]:
             "ORDER BY bm25(wiki, 10, 1) LIMIT ?", (expr, limit)).fetchall()
         if len(rows) >= 5 or len(words) == 1:
             break
-    return [{"url": "https://ka.wikipedia.org/wiki/" + quote(title.replace(" ", "_")), "title": f"{title} — ვიკიპედია",
-             "snippet": snip, "engine": "wikipedia"} for title, snip in rows]
+    return [{"url": prefix + quote(title.replace(" ", "_")), "title": f"{title} — {name}",
+             "snippet": snip, "engine": site} for title, snip in rows]

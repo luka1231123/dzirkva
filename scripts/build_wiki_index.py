@@ -2,11 +2,13 @@
 
 Used for spelling in context (how many articles contain both words?) and later as a local engine.
 Run: uv run python scripts/build_wiki_index.py   (needs data/kawiki.xml.bz2)
+Wikisource: uv run python scripts/build_wiki_index.py wikisource   (data/kawikisource.xml.bz2 → data/wikisource.db)
 """
 
 import bz2
 import re
 import sqlite3
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -29,10 +31,12 @@ def plain(text: str) -> str:
     return " ".join(text.split())
 
 
-db = sqlite3.connect(DATA / "wiki.db")
+SOURCE = sys.argv[1] if len(sys.argv) > 1 else "wiki"
+DUMP, OUT = {"wiki": ("kawiki.xml.bz2", "wiki.db"), "wikisource": ("kawikisource.xml.bz2", "wikisource.db")}[SOURCE]
+db = sqlite3.connect(DATA / OUT)
 db.executescript("DROP TABLE IF EXISTS wiki; CREATE VIRTUAL TABLE wiki USING fts5(title, body, tokenize='unicode61');")
 n = 0
-with bz2.open(DATA / "kawiki.xml.bz2") as f:
+with bz2.open(DATA / DUMP) as f:
     for _, el in ET.iterparse(f):
         if el.tag != NS + "page":
             continue

@@ -374,6 +374,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     qs, content, fixes = round1_queries(query)
     lists = asyncio.run(fan_out(qs, BRAVE_QUERIES if "corrected" in qs else ("original", "lemmas")))
     lists.append(("wikipedia", wiki.search(content)))   # local Georgian Wikipedia, every search
+    lists.append(("wikisource", wiki.search(content, 10, "wikisource")))  # classic texts: poems, prose, laws
     lists.append(("archive", archive.search(content)))  # old Georgian web, local index
     lists.append(("crawl", crawl.search(content)))  # trusted sites, own crawl
     lists.append(("iverieli", iverieli.search(content)))  # National Library catalog: books, journals, press

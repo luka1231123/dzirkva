@@ -15,7 +15,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 - Grammar demo: `uv run python -m dzirkva.morph <words>`; accuracy: `uv run python scripts/check_morph.py`
 - Rebuild data (in `data/`, gitignored): download `kawiki-latest-pages-articles.xml.bz2` → `kawiki.xml.bz2`,
   kaikki.org Georgian JSONL → `kaikki-ka.jsonl`, unimorph/kat → `unimorph-kat.tsv`; then
-  `scripts/build_words.py`, then `scripts/build_lexicon.py`, then `scripts/build_wiki_index.py` (→ `data/wiki.db`, ~1 min)
+  `scripts/build_words.py`, then `scripts/build_lexicon.py`, then `scripts/build_wiki_index.py` (→ `data/wiki.db`, ~1 min); Wikisource: `kawikisource-latest-pages-articles.xml.bz2` → `kawikisource.xml.bz2`, then `scripts/build_wiki_index.py wikisource` (→ `data/wikisource.db`)
   ka.wiktionary dump → `kawiktionary.xml.bz2`, then `scripts/build_dictionary.py` (→ `data/dictionary.db`, ~10 s)
 
 ## Layout
