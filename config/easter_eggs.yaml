@@ -1,0 +1,57 @@
+# Easter eggs: a query that matches `when` shows the `say` line above the results.
+# Match: the whole query, lower case, without punctuation. A one-word entry also matches its
+# other forms (აფხაზეთში, აფხაზეთის). Latin queries match after Latin → Georgian (afxazeti).
+# Edit freely; the page reads this file at start.
+
+- when: [აფხაზეთი, abkhazia]
+  say: აფხაზეთი საქართველოა
+- when: [სამაჩაბლო, ცხინვალი, სამხრეთ ოსეთი, south ossetia]
+  say: სამაჩაბლო საქართველოა
+- when: [რუსეთს რა, რუსეთს რა ვუთხრა]
+  say: დედისტყვნა
+- when: [რუსეთი, ოკუპაცია, 20%]
+  say: რუსეთი ოკუპანტია
+- when: [გამარჯობა]
+  say: გაგიმარჯოს!
+- when: [მადლობა, გმადლობთ]
+  say: არაფრის
+- when: [დედაენა, ანბანი, ქართული ანბანი]
+  say: ია, აი ია
+- when: [ხინკალი]
+  say: კუდს თეფშზე ტოვებენ
+- when: [სუფრა, თამადა, სადღეგრძელო]
+  say: გაუმარჯოს!
+- when: [გუგლი, google]
+  say: აქაც კარგად ვეძებთ
+- when: [ძირკვა, dzirkva]
+  say: აქ ხარ
+- when: [bing, ბინგი]
+  say: ვინ?
+- when: [chatgpt, ჩატჯიპიტი, ჩატ ჯიპიტი, ხელოვნური ინტელექტი]
+  say: აქ არაფერს ვიგონებთ
+- when: [რა ვეძებო, არ ვიცი რა ვეძებო]
+  say: არც ჩვენ
+- when: ["404"]
+  say: გვერდი ვერ მოიძებნა. ხუმრობა
+- when: [english, ინგლისური, ინგლისურად]
+  say: აქ ქართულად ვეძებთ
+- when: [odnoklassniki, ოდნოკლასნიკი, mail.ru]
+  say: 2009 წელი დამთავრდა
+- when: [ფორუმი, forum.ge]
+  say: ფორუმელებს გაუმარჯოს
+- when: [ძებნა, საძიებო სისტემა, საძიებო]
+  say: სწორ ადგილას ხარ
+- when: [დავიკარგე, დაკარგული]
+  say: აქ ყველაფერი იძებნება
+- when: [იანდექსი, იანდექსში, იანდექსის, yandex, яндекс]
+  say: ბოდიში, ჯერ ვიყენებთ
+- when: [ping, პინგ, პინგი]
+  say: პონგ
+- when: [test, ტესტი]
+  say: მუშაობს
+- when: [რონალდო, რონალდუ, ronaldo, პორტუგალია, portugal]
+  say: "2:0"
+- when: [სტალინი, სტალინის, სტალინზე, stalin]
+  say: დიდი კაცი იყო
+- when: [პუტინი, პუტინს, პუტინის, putin, путин]
+  say: ხუილო

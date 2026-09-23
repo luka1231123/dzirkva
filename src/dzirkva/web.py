@@ -1,4 +1,4 @@
-"""Barebone search page for testing. Run: uv run python -m dzirkva.web  → http://127.0.0.1:8000
+"""Search page for testing. Run: uv run python -m dzirkva.web  → http://127.0.0.1:8000
 
 Page structure (plan.md, Session 7): a tab changes the layout, a filter narrows the sources.
 Tabs: ყველა, ვიდეო, სიახლეები; the tab that fits the query words comes right after ყველა.
@@ -9,13 +9,17 @@ The All tab without filters shows ordinary results, max 2 per site and max 3 soc
 
 import re
 import time
+from functools import cache
 from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import parse_qs, quote, urlparse
+from pathlib import Path
+from urllib.parse import parse_qs, quote, unquote, urlparse
+
+import yaml
 
 from dzirkva.georgian import normalize
 from dzirkva.meaning import similarity
-from dzirkva.morph import families
+from dzirkva.morph import analyze, families
 from dzirkva.search import search
 
 TABS = {"all": "ყველა", "video": "ვიდეო", "news": "სიახლეები"}
@@ -28,18 +32,89 @@ MAIN_KINDS = {"knowledge", "news", "web", "forum", "social"}
 BLOCKS = {3: "video", 5: "people", 10: "old"}  # All tab: block after the n-th main result
 PER_SITE = 2
 MAX_SOCIAL = 3  # social posts in the main list (all social sites together)
+ENGINE_NAMES = {"google": "გუგლი", "yandex": "იანდექსი", "yahoo": "იაჰუ", "brave-api": "ბრეივი",
+                "wikipedia": "ვიკიპედია", "passages": "ვიკიპედია (აზრით)", "archive": "ძველი ვები", "crawl": "ჩვენი ინდექსი"}
+KIND_NAMES = {"knowledge": "ცოდნა", "news": "სიახლე", "web": "ვები", "forum": "ფორუმი", "social": "სოციალური ქსელი",
+              "video": "ვიდეო", "film": "ფილმი"}
+CATEGORY_NAMES = {"reference": "ცნობარი", "law": "სამართალი", "history": "ისტორია", "religion": "რელიგია",
+                  "education": "განათლება", "government": "სახელმწიფო", "culture": "კულტურა"}
+QUESTION = {"why": "რატომ", "how": "როგორ", "when": "როდის", "amount": "რამდენი"}
+RELATED_FROM = {"wiki": "ვიკიპედიის სათაური", "feedback": "პასუხის სიტყვა", "meaning": "აზრით ახლო"}
+STEP_NAMES = {"round1": "პირველი რაუნდი", "round2+rank": "მეორე რაუნდი და რიგი", "total": "სულ"}
+ARCHIVE_YEAR = re.compile(r"web\.archive\.org/web/(\d{4})")
+WAYBACK = re.compile(r"^https?://web\.archive\.org/web/[^/]+/")
+DATE_FIRST = re.compile(r"^(\d{4}-\d{2}-\d{2})\S* — ")  # crawl snippets start with the page date
+EGGS_FILE = Path(__file__).resolve().parents[2] / "config" / "easter_eggs.yaml"
 _cache: dict[str, tuple[dict, list, dict]] = {}
 
-PAGE = """<!doctype html><meta charset="utf-8"><title>dzirkva</title>
-<style>body{{font:16px sans-serif;max-width:760px;margin:24px auto;padding:0 16px}}
-input{{width:75%;font-size:18px}} .r{{margin:14px 0}} .u{{color:#070;font-size:13px}} .m{{color:#888;font-size:12px}}
-.tabs a,.tabs b{{margin-right:14px}}
-.chips a{{display:inline-block;border:1px solid #bbb;border-radius:12px;padding:0 9px;margin:0 6px 6px 0;text-decoration:none;color:#333}}
-.chips a.on{{background:#333;color:#fff}} .blk{{border:1px solid #ddd;border-radius:6px;padding:4px 12px;margin:18px 0}}
-mark{{background:#fff3a0}} mark.fb{{background:#cdeaff}} .why{{color:#555;font-size:12px}} .dbg{{font:12px monospace;background:#f6f6f6;padding:8px}}
-.ans{{border:1px solid #ccd;background:#f7f8ff;border-radius:6px;padding:8px 12px;margin:12px 0}}
-table{{border-collapse:collapse}} td{{padding:1px 8px 1px 0;vertical-align:top}}</style>
-<form><input name="q" value="{q}" autofocus> <button>ძებნა</button></form>{body}"""
+# Colors are tokens: light by default, dark when the system asks for it.
+CSS = """
+:root{--bg:#1b1714;--card:#241f1b;--ink:#f1e9df;--text:#d6ccc0;--muted:#9a8f83;--line:#352e28;
+--link:#eab676;--visited:#d1a2c4;--accent:#d9774b;--fb:#3a2c1f;
+--ok-bg:#25331f;--ok:#a9cf8e;--old-bg:#3b2c1a;--old:#e2b87c;--rare-bg:#2f2638;--rare:#c7b3e6;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15.5px/1.6 "Noto Serif Georgian",Georgia,serif}
+a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline} a:visited{color:var(--visited)}
+.cap,.logo,.tabs a,.chips a,button,.blk h3,.lbl,.dbg summary,.rel .m{letter-spacing:.04em}
+header{border-bottom:1px solid var(--line);background:var(--card)}
+header div,main{max-width:720px;margin:0 auto;padding:0 16px}
+header div{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding-block:14px}
+.logo,.logo:visited{color:var(--accent);font-weight:600;font-size:20px;letter-spacing:.08em;text-decoration:none}
+form{display:flex;flex:1;min-width:240px;gap:8px}
+input{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--ink);background:var(--bg);
+ border:1px solid var(--line);border-radius:22px;padding:8px 16px;outline:none}
+input:focus{border-color:var(--link)}
+button{font:inherit;font-size:12.5px;font-weight:600;border:0;border-radius:22px;padding:8px 18px;background:var(--accent);color:#1b1714;cursor:pointer}
+.tabs{display:flex;gap:22px;border-bottom:1px solid var(--line);margin-top:6px}
+.tabs a{padding:11px 0 8px;font-size:12.5px;color:var(--muted);border-bottom:2px solid transparent}
+.tabs a.on{color:var(--ink);border-color:var(--accent);font-weight:600} .tabs a:hover{text-decoration:none;color:var(--ink)}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:12px 0 4px;scrollbar-width:none}
+.chips a{flex:none;border:1px solid var(--line);border-radius:16px;padding:3px 12px;color:var(--text);background:var(--card);font-size:11.5px}
+.chips a.on{background:var(--ink);border-color:var(--ink);color:var(--bg)} .chips a:hover{text-decoration:none;border-color:var(--muted)}
+.m{color:var(--muted);font-size:11.5px}
+.fix{font-size:14px;margin:14px 0 4px} .fix b{color:var(--ink)}
+.und,.src{font-size:12.5px;color:var(--muted);margin:6px 0} .und b{color:var(--ink);font-weight:600}
+.und .cap,.src .cap{font-size:11px;color:var(--text);margin-right:4px}
+mark{background:none;color:inherit} mark.q{font-weight:600;color:var(--ink)}
+mark.fb{background:var(--fb);border-radius:3px;padding:0 2px}
+.t mark,.t mark.q{color:inherit;background:none;padding:0}
+.ans,.blk,.dbg{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin:18px 0}
+.ans .t{font-size:19px;font-weight:500} .ans p{margin:6px 0;color:var(--text)} .ans .cap{font-size:10.5px;color:var(--muted)}
+.egg{margin:18px 0 6px;font-size:21px;font-weight:600;letter-spacing:.06em;color:var(--accent)}
+.dict ol{margin:8px 0;padding-left:22px} .dict li{margin:3px 0;padding-left:2px} .dict li::marker{color:var(--muted)}
+.dict .syn{font-size:14px} .dict .syn .cap{margin-right:6px} .dict .t{margin-right:6px}
+.blk h3{margin:0 0 6px;font-size:12.5px;font-weight:600;color:var(--ink)} .blk h3 a{font-weight:400;margin-left:10px}
+.r{margin:26px 0}
+.site{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.site .host{color:var(--ink)}
+.r .t{display:block;font-size:18px;line-height:1.4;font-weight:500;margin:3px 0}
+.snip{margin:4px 0;color:var(--text);font-size:15px;line-height:1.7} .date{color:var(--muted)}
+.tags{margin:6px 0 2px;font-size:12px;color:var(--muted)}
+.lbl{display:inline-block;font-size:10.5px;border-radius:6px;padding:1px 8px;margin-right:6px;background:var(--ok-bg);color:var(--ok)}
+.lbl.old{background:var(--old-bg);color:var(--old)} .lbl.rare{background:var(--rare-bg);color:var(--rare)}
+.why{font-size:11.5px;color:var(--muted);line-height:1.55;margin-top:4px}
+.dbg{font-size:12px;line-height:1.6;color:var(--text)} .dbg summary{cursor:pointer;color:var(--ink);font-weight:600;font-size:11.5px}
+.dbg .tbl{overflow-x:auto} table{border-collapse:collapse} td{padding:1px 10px 1px 0;vertical-align:top}
+.rel{display:flex;flex-wrap:wrap;gap:8px}
+.rel a{border:1px solid var(--line);border-radius:16px;padding:4px 12px;background:var(--bg);font-size:14px}
+.rel a .m{margin-left:8px;font-size:10px}
+@media (max-width:520px){.r .t{font-size:17px} .ans,.blk,.dbg{padding:12px 14px;border-radius:10px}}
+"""
+
+
+def _page(q: str, body: str) -> str:
+    return (f"<!doctype html><html lang=ka><meta charset=utf-8>"
+            f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{escape(q) + ' · ' if q else ''}ძირკვა</title>"
+            "<link rel=preconnect href=https://fonts.googleapis.com><link rel=stylesheet href="
+            "'https://fonts.googleapis.com/css2?family=Noto+Serif+Georgian:wght@400..600&display=swap'>"
+            f"<style>{CSS}</style><header><div><a class=logo href=/>{cap('ძირკვა')}</a>"
+            f"<form><input name=q value='{escape(q)}' autofocus><button>{cap('ძებნა')}</button></form></div></header>"
+            f"<main>{body}</main>")
+
+
+def cap(text: str) -> str:
+    """Mtavruli (Georgian capitals) for short labels. CSS text-transform leaves Georgian unchanged."""
+    return text.upper()
 
 
 def _host(url: str) -> str:
@@ -72,24 +147,119 @@ def _marks(debug: dict) -> dict[str, str]:
 def _found_by(r) -> str:
     by: dict[str, list[str]] = {}
     for name, engine, rank in r.hits:
-        by.setdefault(name, []).append(f"{engine} #{rank}")
-    return "; ".join(f"{escape(n)}: {', '.join(v)}" for n, v in by.items())
+        by.setdefault(name, []).append(f"{ENGINE_NAMES.get(engine, engine)} #{rank}")
+    return "; ".join(f"{escape(_query_name(n))} — {', '.join(v)}" for n, v in by.items())
+
+
+def _query_name(name: str) -> str:
+    """Query names from search.py (original, lemmas, site:law, feedback:…) in Georgian."""
+    kind, _, arg = name.partition(":")
+    fixed = {"original": "როგორც დაიწერა", "corrected": "გასწორებული", "lemmas": "ლექსიკონის ფორმები"}
+    if kind == "site":
+        return f"სანდო საიტები: {CATEGORY_NAMES.get(arg, arg)}"
+    if kind == "feedback":
+        return f"პასუხის სიტყვა: {arg}"
+    return fixed.get(name) or ENGINE_NAMES.get(name, name)
+
+
+def _labels(r) -> str:
+    """What dzirkva knows about the source: trusted list, rare site, old web with its year."""
+    out = []
+    if r.tier in (1, 2):
+        out.append(f"<span class=lbl>{cap('სანდო წყარო')}</span>")
+    if r.small:
+        out.append(f"<span class='lbl rare'>{cap('იშვიათი საიტი')}</span>")
+    if y := ARCHIVE_YEAR.search(r.url):
+        out.append(f"<span class='lbl old'>{cap('ძველი ვები')} · {y[1]}</span>")
+    return "".join(out)
+
+
+def _site(url: str) -> str:
+    """host › path parts, readable: Wayback prefix removed, %-escapes decoded."""
+    url = WAYBACK.sub("", url)
+    parts = [unquote(p) for p in urlparse(url).path.split("/") if p][:3]
+    return f"<span class=host>{escape(_host(url))}</span>" + "".join(f" › {escape(p[:40].replace('_', ' '))}" for p in parts)
+
+
+def _understood(q: str, qs: dict[str, str], debug: dict) -> str:
+    """One line: how the query was read (spelling, Latin → Georgian, dictionary forms, question, extra words)."""
+    parts = []
+    if "corrected" in qs and not debug["spelling"]:  # spelling fixes have their own line
+        parts.append(f"<b>{escape(qs['corrected'])}</b> <span class=m>(დაწერილი: {escape(q)})</span>")
+    if "lemmas" in qs and qs["lemmas"] != " ".join(debug["content"]):
+        parts.append(f"ლექსიკონის ფორმა: <b>{escape(qs['lemmas'])}</b>")
+    dropped = [w for w in qs.get("corrected", q).split() if w not in debug["content"]]
+    if dropped:
+        parts.append(f"გამოტოვებული: {escape(' '.join(dropped))}")
+    if debug["type"]:
+        parts.append(f"კითხვა: {QUESTION[debug['type']]}")
+    if debug["feedback"]:
+        parts.append(f"დამატებითი სიტყვები: <mark class=fb>{escape(', '.join(debug['feedback']))}</mark>")
+    return f"<p class=und><span class=cap>{cap('გავიგეთ')}</span> {' · '.join(parts)}</p>" if parts else ""
+
+
+def _sources(results: list) -> str:
+    """Result count per engine and the number of different sites."""
+    count: dict[str, int] = {}
+    for r in results:
+        for e in r.engines:
+            count[e] = count.get(e, 0) + 1
+    engines = " · ".join(f"{escape(ENGINE_NAMES.get(e, e))} {n}" for e, n in sorted(count.items(), key=lambda x: -x[1]))
+    return f"<p class=src><span class=cap>{cap('წყაროები')}</span> {engines} · {len({_host(r.url) for r in results})} საიტი</p>"
+
+
+@cache
+def _eggs() -> dict[str, str]:
+    """Query -> easter egg line (config/easter_eggs.yaml)."""
+    return {normalize(w): e["say"] for e in yaml.safe_load(EGGS_FILE.read_text(encoding="utf-8")) for w in e["when"]}
+
+
+def _egg(q: str, qs: dict[str, str]) -> str:
+    for text in (q, qs.get("corrected", q)):
+        key = normalize(re.sub(r"[^\w\s%.]", " ", text)).strip(". ")  # keep the dot in mail.ru
+        lemmas = [a.lemma for a in analyze(key)] if key and " " not in key else []
+        if say := next((_eggs()[k] for k in [key] + lemmas if k in _eggs()), None):
+            return f"<p class=egg>{escape(cap(say))}</p>"
+    return ""
+
+
+def _definition(d: dict) -> str:
+    """Dictionary box: the word, part of speech, numbered senses, synonyms as new searches."""
+    syn = ", ".join(f"<a href='{_link(w, 'all', set())}'>{escape(w)}</a>" for w in d["synonyms"])
+    return (f"<div class='ans dict'><div class=cap>{cap('განმარტებითი ლექსიკონი')}</div>"
+            f"<a class=t href='{escape(d['url'])}'>{escape(d['word'])}</a> <span class=m>{escape(d['pos'])}</span>"
+            "<ol>" + "".join(f"<li>{escape(s)}</li>" for s in d["senses"]) + "</ol>"
+            + (f"<p class=syn><span class=cap>{cap('სინონიმები')}</span> {syn}</p>" if syn else "")
+            + f"<div class=cap>{cap('ვიქსიკონი')}</div></div>")
+
+
+def _related(related: list[tuple[str, str]]) -> str:
+    if not related:
+        return ""
+    return (f"<div class=blk><h3>{cap('მსგავსი ძიებები')}</h3><div class=rel>" + "".join(
+        f"<a href='{_link(rq, 'all', set())}'>{escape(rq)}<span class=m>{cap(RELATED_FROM[src])}</span></a>"
+        for rq, src in related) + "</div></div>")
 
 
 def _result(r, marks: dict[str, str]) -> str:
     title, t_found = _highlight(r.title, marks)
-    snippet, s_found = _highlight(r.snippet, marks)
+    date = DATE_FIRST.match(r.snippet)
+    snippet, s_found = _highlight(r.snippet[date.end():] if date else r.snippet, marks)
+    if date:
+        snippet = f"<span class=date>{date[1]} — </span>{snippet}"
     matched = ", ".join(dict.fromkeys(escape(w) for w in t_found + s_found)) or "—"
-    tier = f"tier {r.tier} · " if r.tier else "small site · " if r.small else ""
+    tier = f"სანდოობა {r.tier} · " if r.tier else "იშვიათი საიტი · " if r.small else ""
+    kinds = " ".join(dict.fromkeys([KIND_NAMES.get(r.kind, r.kind)] + [FILTERS.get(t, t) for t in sorted(r.tags)]))
     copies = ""
     if r.copies:
-        copies = f"<div class=m>also on {len(r.copies)}: " + ", ".join(
-            f"<a href='{escape(c.url)}'>{escape(_host(c.url))}</a>" for c in r.copies[:6]) + "</div>"
-    return (f"<div class=r><a href='{escape(r.url)}'>{title}</a>"
-            f"<div class=u>{escape(r.url[:90])}</div><div>{snippet}</div>{copies}"
-            f"<div class=why>matched: {matched} · {tier}{r.kind} {' '.join(sorted(r.tags))} · meaning {r.meaning:.2f} · "
-            f"coverage {r.coverage:.0%} · score {r.score * 1000:.1f}</div>"
-            f"<div class=m>found by: {_found_by(r)}</div></div>")
+        copies = f"ასევე {len(r.copies)} საიტზე: " + ", ".join(
+            f"<a href='{escape(c.url)}'>{escape(_host(c.url))}</a>" for c in r.copies[:6])
+    tags = f"<div class=tags>{_labels(r)}{copies}</div>" if _labels(r) or copies else ""
+    return (f"<div class=r><div class=site>{_site(r.url)}</div><a class=t href='{escape(r.url)}'>{title}</a>"
+            f"<div class=snip>{snippet}</div>{tags}"
+            f"<div class=why>დაემთხვა: {matched} · {tier}{escape(kinds)} · აზრი {r.meaning:.2f} · "
+            f"დაფარვა {r.coverage:.0%} · ქულა {r.score * 1000:.1f}"
+            f"<br>იპოვა: {_found_by(r)}</div></div>")
 
 
 def _link(q: str, tab: str, filters: set[str]) -> str:
@@ -127,9 +297,49 @@ def _all_tab(q: str, results: list, marks: dict[str, str]) -> str:
         shown |= {id(x) for x in block}
         more = _link(q, name, set()) if name in TABS else _link(q, "all", {name})
         if block:
-            body += (f"<div class=blk><p><b>{TABS.get(name) or FILTERS[name]}</b> · <a href='{more}'>ყველა →</a></p>"
+            body += (f"<div class=blk><h3>{cap(TABS.get(name) or FILTERS[name])}<a href='{more}'>{cap('ყველა')} →</a></h3>"
                      + "".join(_result(x, marks) for x in block) + "</div>")
     return body
+
+
+def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list, debug: dict) -> str:
+    """The results part of the page."""
+    marks = _marks(debug)
+    passes = lambda r, fs: _in_tab(r, tab) and fs <= r.tags
+    tab_count = {t: sum(_in_tab(r, t) and chosen <= r.tags for r in results) for t in TABS}
+    body = "<nav class=tabs>" + "".join(
+        f"<a class={'on' if t == tab else 'off'} href='{_link(q, t, chosen)}'>{cap(TABS[t])}"
+        + (f" <span class=m>{tab_count[t]}</span>" if t != "all" else "") + "</a>"
+        for t in _tab_order(debug["content"])) + "</nav>"
+    body += "<nav class=chips>" + "".join(
+        f"<a class={'on' if f in chosen else 'off'} href='{_link(q, tab, set() if f in chosen else {f})}'>{cap(name)}"
+        f" <span class=m>{sum(passes(r, {f}) for r in results)}</span></a>"
+        for f, name in FILTERS.items()) + "</nav>"
+    if debug["spelling"]:
+        fixed = " ".join(debug["spelling"].get(normalize(w), w) for w in q.split())
+        body += f"<p class=fix>ნაჩვენებია შედეგები: <b>{escape(fixed)}</b> <span class=m>(დაწერილი: {escape(q)})</span></p>"
+    body += _egg(q, qs) + _understood(q, qs, debug) + _sources(results)
+    d = debug.get("definition")
+    if d and tab == "all" and not chosen and (d["asked"] or not debug.get("answer")):
+        body += _definition(d)
+    elif (a := debug.get("answer")) and tab == "all" and not chosen:
+        body += (f"<div class=ans><a class=t href='{escape(a['url'])}'>{escape(a['title'])}</a>"
+                 f"<p>{escape(a['text'])}</p><div class=cap>{cap('ვიკიპედია')}</div></div>")
+    body += (f"<details class=dbg open><summary>{cap(f"როგორ ვიპოვეთ · {len(results)} შედეგი · {debug['seconds']['total']} წმ")}</summary>"
+             f"<div>საძიებო სიტყვები: {escape(' · '.join(debug['content']))}</div>"
+             f"<div>კითხვა: {QUESTION.get(debug['type'], '—')}</div>"
+             f"<div>მართლწერა: {escape(', '.join(f'{a} → {b}' for a, b in debug['spelling'].items()) or '—')}</div>"
+             f"<div>პასუხის სიტყვები: <mark class=fb>{escape(' · '.join(debug['feedback']) or '—')}</mark></div>"
+             f"<div>დრო: {escape(' · '.join(f'{STEP_NAMES.get(k, k)} {v} წმ' for k, v in debug['seconds'].items()))}</div>"
+             f"<div class=tbl><table>"
+             + "".join(f"<tr><td>{escape(_query_name(n))}</td><td>{debug['counts'].get(n, 0)}</td><td>{escape(v)}</td></tr>"
+                       for n, v in qs.items())
+             + "</table></div></details>")
+    if tab == "all" and not chosen:
+        body += _all_tab(q, results, marks)
+    else:
+        body += "".join(_result(r, marks) for r in results if passes(r, chosen)) or "<p>—</p>"
+    return body + _related(debug.get("related", []))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -146,37 +356,8 @@ class Handler(BaseHTTPRequestHandler):
                 qs, results, debug = search(q)
                 debug["seconds"]["total"] = round(time.time() - t, 1)
                 _cache[q] = (qs, results, debug)
-            qs, results, debug = _cache[q]
-            marks = _marks(debug)
-            passes = lambda r, fs: _in_tab(r, tab) and fs <= r.tags
-            tab_count = {t: sum(_in_tab(r, t) and chosen <= r.tags for r in results) for t in TABS}
-            body = "<p class=tabs>" + "".join(
-                (f"<b>{TABS[t]}</b>" if t == tab else f"<a href='{_link(q, t, chosen)}'>{TABS[t]}</a>")
-                + (f" <span class=m>{tab_count[t]}</span>" if t != "all" else "")
-                for t in _tab_order(debug["content"])) + "</p>"
-            body += "<p class=chips>" + "".join(
-                f"<a class={'on' if f in chosen else 'off'} href='{_link(q, tab, set() if f in chosen else {f})}'>{name}"
-                f" <span class=m>{sum(passes(r, {f}) for r in results)}</span></a>"
-                for f, name in FILTERS.items()) + "</p>"
-            if debug["spelling"]:
-                fixed = " ".join(debug["spelling"].get(normalize(w), w) for w in q.split())
-                body += f"<p>ნაჩვენებია შედეგები: <b>{escape(fixed)}</b> <span class=m>(typed: {escape(q)})</span></p>"
-            if (a := debug.get("answer")) and tab == "all" and not chosen:
-                body += (f"<div class=ans><a href='{escape(a['url'])}'><b>{escape(a['title'])}</b></a>"
-                         f"<div>{escape(a['text'])}</div><div class=m>ვიკიპედია</div></div>")
-            body += (f"<details class=dbg><summary>debug · {len(results)} results · {debug['seconds']['total']}s</summary>"
-                     f"<div>content words: {escape(' · '.join(debug['content']))}</div>"
-                     f"<div>spelling: {escape(str(debug['spelling']) if debug['spelling'] else '—')}</div>"
-                     f"<div>feedback terms: <mark class=fb>{escape(' · '.join(debug['feedback']) or '—')}</mark></div>"
-                     f"<div>seconds: {escape(str(debug['seconds']))}</div><table>"
-                     + "".join(f"<tr><td>{escape(n)}</td><td>{debug['counts'].get(n, 0)}</td><td>{escape(v)}</td></tr>"
-                               for n, v in qs.items())
-                     + "</table></details>")
-            if tab == "all" and not chosen:
-                body += _all_tab(q, results, marks)
-            else:
-                body += "".join(_result(r, marks) for r in results if passes(r, chosen)) or "<p>—</p>"
-        html = PAGE.format(q=escape(q), body=body).encode()
+            body = render(q, tab, chosen, *_cache[q])
+        html = _page(q, body).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()

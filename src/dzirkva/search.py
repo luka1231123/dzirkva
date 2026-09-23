@@ -2,9 +2,11 @@
 
 1. Round 1: a few simple queries (original, corrected, dictionary forms, trusted sites).
    Their job is recall (collect candidate pages), not precision.
-2. Feedback: read the top Georgian snippets of round 1 and find the words and names that
-   repeat there but are rare in Georgian overall (ბოლტი, უსწრაფესი, სპრინტერი). These are
-   the words the answer pages use. Round 2 searches with them.
+   Search by meaning (passages.py) adds the Wikipedia paragraphs nearest to the question:
+   they find answers that use other words than the question.
+2. Feedback: read the paragraphs nearest in meaning (else the top snippets that contain every
+   query word) and find the words and names that repeat there but are rare in Georgian overall
+   (ბოლტი, უსწრაფესი, სპრინტერი). These are the words the answer pages use. Round 2 searches with them.
 3. Rank: combine the engine ranking (RRF over all lists + trust tier + word-family match)
    with the meaning ranking (BGE-M3 similarity between the question and each result),
    then × trust tier × coverage (share of query words present, rare words count more:
@@ -24,15 +26,15 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import httpx
 
 from dzirkva import engines
-from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, words
+from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, typo_weight, words
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families, family_members
-from dzirkva import archive, crawl, wiki
+from dzirkva import archive, crawl, dictionary, passages, wiki
 from dzirkva.sources import by_category, kind, lookup, tags
 
 # Question words and function words: dropped from keyword queries and feedback terms.
 STOPWORDS = set(
-    "ვინ რა რას რამ რისი როგორ როგორი სად საიდან საით როდის რატომ რისთვის რომელი რომელიც რამდენი "
+    "ვინ რა რას რამ რისი როგორ როგორი სად საიდან საით როდის რატომ რისთვის რომელი რომელიც რამდენი როცა როდესაც "
     "არის არიან იყო იქნება და თუ რომ ეს ის ამ იმ ეგ კი არ ვერ ნუ მაგრამ ან ანუ უნდა შეიძლება "
     "მე შენ ჩვენ თქვენ მისი მათი ჩემი შენი ჩვენი თქვენი ამის იმის აქ იქ ასე ისე ძალიან უფრო "
     "ერთი ორი სამი ყველა ყველაფერი მხოლოდ ასევე თავის თავად შემდეგ წლის წელს მიერ შესახებ "
@@ -57,12 +59,25 @@ TIER_BONUS = {1: 0.5, 2: 0.25, 3: 0.0}
 SMALL_BONUS = 0.25     # small, non-commercial, Georgian site found by the crawl (crawl.small_site)
 FAMILY_BONUS = 0.5      # × share of query word families found in title + snippet
 FEEDBACK_DOCS = 15      # round-1 results read for feedback terms
+FEEDBACK_PASSAGES = 10  # or: paragraphs nearest in meaning
 FEEDBACK_TERMS = 3
 FEEDBACK_MIN_IDF = 4.0  # ignore common words (idf of მსოფლიოში ≈ 3.9, სწრაფი ≈ 5.3, rare names ≈ 9)
 MEANING_WEIGHT = 1.5    # meaning rank vs engine rank in the final fusion
 COVERAGE_FLOOR = 0.2    # score × (floor + (1 - floor) × coverage)
 FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every query word
 COPY_SIMILARITY = 0.6   # word overlap (Jaccard) of two snippets that makes them copies
+# Question word → the shape of a text that answers it. A result with that shape gets SHAPE_BONUS.
+SHAPES = {
+    "why": ("რატომ რისთვის", r"რადგან|იმიტომ|ამიტომ|გამო|მიზეზ|იწვევს|გამოწვეული"),
+    "how": ("როგორ", r"ჯერ |შემდეგ|ნაბიჯ|ინსტრუქცი|საჭიროა|\b\d\. "),
+    "when": ("როდის", r"\b1[0-9]{3}\b|\b20[0-9]{2}\b|საუკუნ|წელს"),
+    "amount": ("რამდენი ღირს", r"\d"),
+}
+SHAPE_BONUS = 0.3
+ANSWER_TYPES = ("why", "how")  # answer box from the nearest paragraph
+ANSWER_MIN = 0.62       # meaning score of that paragraph (full index: answer 0.65, eclipse for "ბნელდება" 0.61)
+ANSWER_FROM = 5         # read the 5 nearest paragraphs
+RELATED = 8             # related searches under the results
 BRAVE_QUERIES = ("corrected", "lemmas")      # Brave API: monthly quota
 SEARXNG_SPACING = 0.3   # seconds between SearXNG requests: Google blocks fast bursts
 TRACKING = re.compile(r"^(utm_|fbclid|gclid|yclid|mc_|ref$|ref_)")
@@ -121,7 +136,8 @@ def spelling_fixes(content: list[str]) -> dict[str, str]:
         if not context:
             fixes[w] = cands[0]
             continue
-        scores = {c: sum(wiki.count(c, x) for x in context) / max(wiki.count(c), 1) ** 0.5 for c in cands}
+        scores = {c: typo_weight(w, c) * sum(wiki.count(c, x) for x in context) / max(wiki.count(c), 1) ** 0.5
+                  for c in cands}
         best = max(scores, key=scores.get)
         if scores[best] > 0:
             fixes[w] = best
@@ -181,12 +197,12 @@ def coverage(text: str, content: list[str]) -> float:
     return sum(w for w, hit in weights if hit) / total if total else 1.0
 
 
-def feedback_terms(content: list[str], results: list[Result]) -> list[str]:
-    """Words and two-word names that repeat in the top results but are rare in Georgian."""
+def feedback_terms(content: list[str], texts: list[str]) -> list[str]:
+    """Words and two-word names that repeat in the texts but are rare in Georgian."""
     query_fams = {f for w in content for f in families(w)}
     df: Counter[str] = Counter()
-    for r in [r for r in results if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]:
-        toks = [w for w in re.findall(r"[ა-ჰ]+", normalize(r.text)) if len(w) > 2 and not is_stop(w)]
+    for text in texts:
+        toks = [w for w in re.findall(r"[ა-ჰ]+", normalize(text)) if len(w) > 2 and not is_stop(w)]
         new = [w for w in toks if not (families(w) & query_fams)]
         grams = set(new) | {f"{a} {b}" for a, b in zip(toks, toks[1:]) if a in new and b in new}
         df.update(grams)
@@ -267,8 +283,30 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str]) -> list[Resul
     return sorted(out, key=lambda m: m.score, reverse=True)
 
 
+def question_type(query: str) -> str | None:
+    """why / how / when / amount from the question word, clitics removed (რამდენია = რამდენი + ა)."""
+    for w in map(normalize, query.split()):
+        for t, (qwords, _) in SHAPES.items():
+            if any(w == q or w in (q + c for c in CLITICS) for q in qwords.split()):
+                return t
+    return None
+
+
+def passage_answer(qtype: str | None, near: list[dict]) -> dict | None:
+    """Answer box for why/how questions: the nearest paragraph that has the answer shape (რადგან …)."""
+    if qtype not in ANSWER_TYPES:
+        return None
+    shape = re.compile(SHAPES[qtype][1])
+    for p in near[:ANSWER_FROM]:
+        if p["score"] >= ANSWER_MIN and shape.search(p["snippet"]):
+            return {"title": p["title"].removesuffix(" — ვიკიპედია"), "text": p["snippet"], "url": p["url"]}
+    return None
+
+
 def rank_by_meaning(query: str, results: list[Result], known: dict[str, float] | None = None) -> list[Result]:
     """Final order: fusion of the engine rank and the meaning rank. `known` caches scores by URL."""
+    qtype = question_type(query)
+    shape = re.compile(SHAPES[qtype][1]) if qtype else None
     known = {} if known is None else known
     todo = [r for r in results if r.url not in known]
     known.update(zip((r.url for r in todo), similarity(query, [r.text for r in todo])))
@@ -278,6 +316,8 @@ def rank_by_meaning(query: str, results: list[Result], known: dict[str, float] |
     for i, r in enumerate(results):  # results are in engine order here
         fused = 1 / (RRF_K + i) + MEANING_WEIGHT / (RRF_K + by_meaning[id(r)])
         r.score = fused * (1 + _trust(r)) * (COVERAGE_FLOOR + (1 - COVERAGE_FLOOR) * r.coverage)
+        if shape and shape.search(r.snippet):
+            r.score *= 1 + SHAPE_BONUS
     return sorted(results, key=lambda r: r.score, reverse=True)
 
 
@@ -295,6 +335,26 @@ def group_copies(results: list[Result]) -> list[Result]:
     return [k for k, _ in kept]
 
 
+def related(content: list[str], base: str, terms: list[str], wiki_hits: list[dict], near: list[dict],
+            answer: dict | None) -> list[tuple[str, str]]:
+    """Related searches without an LLM: (query, source).
+
+    wiki: narrower Wikipedia titles with every query word (თბილისის მეტრო → ღრმაღელე (თბილისის მეტრო));
+    feedback: the query + a word the answer pages use; meaning: articles nearest in meaning (passages.py).
+    """
+    strip = lambda t: t.removesuffix(" — ვიკიპედია")
+    cands = [(strip(h["title"]), "wiki") for h in wiki_hits if coverage(h["title"], content) >= FEEDBACK_MIN_COVERAGE][:4]
+    cands += [(f"{base} {t}", "feedback") for t in terms]
+    cands += [(strip(p["title"]), "meaning") for p in near]
+    seen = {normalize(" ".join(content)), normalize(answer["title"]) if answer else ""}
+    out = []
+    for q, source in cands:
+        if normalize(q) not in seen:
+            seen.add(normalize(q))
+            out.append((q, source))
+    return out[:RELATED]
+
+
 def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     """Returns the queries sent, the ranked results, and debug information (with the answer box)."""
     t0 = time.time()
@@ -303,11 +363,18 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     lists.append(("wikipedia", wiki.search(content)))   # local Georgian Wikipedia, every search
     lists.append(("archive", archive.search(content)))  # old Georgian web, local index
     lists.append(("crawl", crawl.search(content)))  # trusted sites, own crawl
+    near = passages.search(query)                    # Wikipedia paragraphs nearest in meaning
+    lists.append(("passages", near))
     known: dict[str, float] = {}
     first = rank_by_meaning(query, merge(lists, content), known)
     t1 = time.time()
-    terms = feedback_terms(content, first)
-    base = " ".join(_lemma(w) for w in content)
+    covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]
+    # explanations (why/how): words of the nearest paragraphs; names and facts: words of the covered snippets
+    # (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
+    explain = question_type(query) in ANSWER_TYPES and near
+    terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
+    # verbs stay out: ბნელდება would bring back the eclipse pages (დაბნელება)
+    base = " ".join(_lemma(w) for w in content if not _is_verb(w)) or " ".join(_lemma(w) for w in content)
     more = {}
     if terms:
         more[f"feedback:{terms[0]}"] = f"{base} {terms[0]}"
@@ -317,8 +384,12 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
         qs.update(more)
         lists += asyncio.run(fan_out(more))
     results = group_copies(rank_by_meaning(query, merge(lists, content), known))
+    answer = wiki.article(content) or passage_answer(question_type(query), near)
+    wiki_hits = next(res for name, res in lists if name == "wikipedia")
     debug = {
-        "content": content, "spelling": fixes, "feedback": terms, "answer": wiki.article(content),
+        "content": content, "type": question_type(query), "spelling": fixes, "feedback": terms, "answer": answer,
+        "related": related(content, base, terms, wiki_hits, near, answer),
+        "definition": dictionary.define(qs.get("corrected", query)),  # "სახლი რას ნიშნავს"
         "counts": {name: len(res) for name, res in lists},
         "seconds": {"round1": round(t1 - t0, 1), "round2+rank": round(time.time() - t1, 1)},
     }

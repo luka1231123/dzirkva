@@ -55,6 +55,10 @@ Budget rules:
 - [x] Web page: highlighted matched words (yellow = query, blue = feedback), why-line and 'found by' per result, debug panel, 'showing results for'
 - [x] Manual review of 14 queries (Claude read and rated results): 9 good, 3 mixed, 2 fail
 - [x] Wikipedia answer box: the query names an article title exactly (any word form) → first sentences + link (`wiki.article`)
+- [x] Show what dzirkva does: "გავიგეთ" line (spelling, Latin → Georgian, dictionary form, question, extra words), result count per source, labels (სანდო წყარო, იშვიათი საიტი, ძველი ვები · year), debug open as "როგორ ვიპოვეთ"
+- [x] Related searches (no LLM): narrower Wikipedia titles, query + feedback word, articles nearest in meaning (`search.related`)
+- [ ] Related searches: check quality after `data/passages.db` is complete; drop noisy titles
+- [x] Page design: warm dark colors, Georgian UI text (ძირკვა, no Latin labels), Noto Serif Georgian at smaller sizes, Mtavruli for short labels (`web.cap`; CSS uppercase does not change Georgian), phone layout, site › path line above the title, `web.render` builds the page without a server
 - [ ] Answer boxes with live data: currency (NBG API), weather — like Google's widgets
 - [x] SQLite cache of engine answers (`data/cache.db`): SearXNG 24 h, Brave 7 days; empty answers are not cached
 - [x] Google back-off: after a CAPTCHA, Google is left out for 1, 2, 4, 8, 24 h (block in a row); Yandex + Yahoo continue
@@ -87,7 +91,7 @@ Rule: separate page = no query; tab = the layout changes; filter = source type, 
 - [x] Filters (chips, one at a time): ცოდნა, ტექსტები, ხალხი (forums + blogs + social), სამეცნიერო, ძველი ვები (archive); იშვიათი removed: rules cannot tell rare sites well
 - [x] Social posts (Facebook …) in the main list, max 3 per page
 - [x] Remove tabs ფილმები, სოციალური, არქივი, ცოდნა (now tab ვიდეო or filters)
-- [ ] Section: dictionary meaning for a one-word Georgian query (ena.ge / Wiktionary)
+- [x] Section: dictionary meaning from ka.wiktionary (`dictionary.py`, 8,231 words): "X რას ნიშნავს", "X-ის განმარტება/მნიშვნელობა", one-word queries without a Wikipedia article
 - [ ] Section: texts (ტექსტი, ლექსი, სიმღერა, ნოტები, ლოცვა, pdf)
 - [ ] Sections: people (forums, blogs), video row, news row, საინტერესო მიგნებები (2–3 small sites); weather + currency from Session 5
 - [ ] Discover page `/discover`: new posts from Georgian blogs and small sites (RSS), random rare site, by topic
