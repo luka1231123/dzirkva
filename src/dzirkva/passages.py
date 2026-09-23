@@ -7,21 +7,28 @@ The question vector finds the nearest paragraphs directly. Built by scripts/buil
 
 import re
 import sqlite3
+import subprocess
 from functools import cache
 from pathlib import Path
 from urllib.parse import quote
 
 import numpy as np
 
+from dzirkva.georgian import count, from_keyboard, georgian_ratio
+
 DB = Path(__file__).resolve().parents[2] / "data" / "passages.db"
 SCHEMA = """CREATE TABLE IF NOT EXISTS passages (id INTEGER PRIMARY KEY, title TEXT, text TEXT, v BLOB);
 CREATE INDEX IF NOT EXISTS passages_title ON passages(title);"""
 CHARS = 600   # passage size: ~160 tokens, one paragraph
 DIM = 1024
+NAMES = {"iverieli": "ივერიელი", "papers": "სამეცნიერო ნაშრომი"}  # sites outside the wikis (passages with a url)
+PDF_PAGE_GEORGIAN = 0.5  # a PDF page with less Georgian (English summary, tables) is skipped
+LATIN_WORD = re.compile(r"[A-Za-z]{3,}")
+LEADER = re.compile(r"(\.\s?){4,}|…{2,}")  # table of contents: "თავი I ........ 28"
 
 
 def connect() -> sqlite3.Connection:
-    db = sqlite3.connect(DB, check_same_thread=False)
+    db = sqlite3.connect(DB, check_same_thread=False, timeout=60)  # several scripts add passages at once
     db.executescript(SCHEMA)
     columns = {c[1] for c in db.execute("PRAGMA table_info(passages)")}
     if "site" not in columns:  # wiki.SITES key, or 'iverieli'
@@ -48,6 +55,29 @@ def chunks(body: str) -> list[str]:
             cur = ""
         cur += s + " "
     return out + [cur.strip()] if cur.strip() else out
+
+
+def _fix_page(page: str) -> str:
+    """A page in the pre-Unicode AcadNusx font (Latin letters for Georgian) → Unicode Georgian: when most of its
+    Latin words are Georgian words after georgian.from_keyboard. Unicode pages stay as they are."""
+    latin = LATIN_WORD.findall(page)
+    if latin and sum(count(from_keyboard(w)) > 0 for w in latin) > len(latin) / 2:
+        page = from_keyboard(page)
+    return page
+
+
+def pdf_text(pdf: bytes) -> str:
+    """Georgian text of a PDF (needs pdftotext: brew install poppler): pages joined, hyphenated line ends and
+    line breaks removed."""
+    out = subprocess.run(["pdftotext", "-enc", "UTF-8", "-", "-"], input=pdf, capture_output=True).stdout
+    pages = [_fix_page(p) for p in out.decode("utf-8", "replace").split("\f")]
+    text = " ".join(p for p in pages if georgian_ratio(p) >= PDF_PAGE_GEORGIAN)
+    return re.sub(r"\s+", " ", re.sub(r"-\n(?=\w)", "", text)).strip()
+
+
+def pdf_chunks(pdf: bytes) -> list[str]:
+    """Passages of a PDF's Georgian text; table-of-contents pieces and scraps left out."""
+    return [c for c in chunks(pdf_text(pdf)) if len(c) >= 100 and len(LEADER.findall(c)) < 2]
 
 
 def embed_text(title: str, text: str) -> str:
@@ -81,7 +111,8 @@ def best(title: str, qv, site: str = "wikipedia") -> str | None:
 
 
 def search(query: str, limit: int = 20) -> list[dict]:
-    """The paragraphs nearest to the question in meaning, best one per article (Wikipedia, Wikisource, Iverieli)."""
+    """The paragraphs nearest to the question in meaning, best one per article (Wikipedia, Wikisource, Iverieli,
+    papers)."""
     from dzirkva.meaning import _model
     from dzirkva.wiki import SITES
 
@@ -100,7 +131,7 @@ def search(query: str, limit: int = 20) -> list[dict]:
             continue
         seen.add((site, url or title))
         if url:
-            name = "ივერიელი"
+            name = NAMES.get(site, site)
         else:
             _, prefix, name = SITES[site]
             url = prefix + quote(title.replace(" ", "_"))

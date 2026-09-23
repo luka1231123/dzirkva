@@ -28,6 +28,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS papers USING fts5(oai UNINDEXED, url UNINDEXE
     tokenize='unicode61');
 CREATE TABLE IF NOT EXISTS seen (oai TEXT PRIMARY KEY);  -- a record once: OJS installs answer under several names
 CREATE INDEX IF NOT EXISTS papers_url ON papers_content(c1);  -- a paper by its URL (c1 = url): meta()
+CREATE TABLE IF NOT EXISTS texts (url TEXT PRIMARY KEY, passages INT);  -- PDFs read by scripts/papers_text.py
 """
 MIN_GEORGIAN = 0.3   # share of Georgian letters in the title + abstract kept
 CONTROL = re.compile(rb"[\x00-\x08\x0b\x0c\x0e-\x1f]")  # not allowed in XML; abstracts pasted from PDFs have them

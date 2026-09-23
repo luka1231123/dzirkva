@@ -1,7 +1,7 @@
 """Find the OAI-PMH endpoints of Georgian journals and repositories → data/papers.db table repos. ~10 min.
 
 Hosts: every .ge host the crawl knows (queue and domains), .ge hosts cited in Georgian Wikipedia, and the crawled
-and trusted Georgian sites. Each host is asked for Identify at the usual paths (OJS, DSpace 6 and 7, EPrints)
+Georgian sites and the trusted ones. Foreign journals linked from Georgian pages are not asked. Each host is asked for Identify at the usual paths (OJS, DSpace 6 and 7, EPrints)
 and at the OJS paths seen in crawled URLs (/ojs/index.php/…). One endpoint per base URL of Identify
 (hos.openjournals.ge answers as openjournals.ge). Iverieli (dspace.nplg.gov.ge) has its own index.
 Run again after crawling: known endpoints stay, new ones are added.
@@ -19,7 +19,7 @@ from xml.etree import ElementTree as ET
 import httpx
 
 from dzirkva import iverieli, papers
-from dzirkva.crawl import DB as CRAWL_DB
+from dzirkva.crawl import DB as CRAWL_DB, MIN_GEORGIAN, domain_of
 from dzirkva.sources import sources
 
 WIKI_DUMP = Path(__file__).resolve().parent.parent / "data" / "kawiki.xml.bz2"
@@ -42,12 +42,14 @@ def candidates() -> tuple[set[str], set[str]]:
     """(hosts, extra endpoints): Georgian hosts, and OJS endpoints under a path (/ojs/index.php/index/oai)."""
     crawl = sqlite3.connect(f"file:{CRAWL_DB}?mode=ro", uri=True)
     hosts, extra = set(sources()), set()
+    georgian = {h for (h,) in crawl.execute("SELECT host FROM domains WHERE state = 'full' AND georgian >= ?",
+                                              (MIN_GEORGIAN,))}
     for (url,) in crawl.execute("SELECT url FROM queue"):
         if (h := _host(url)).endswith(".ge"):
             hosts.add(h)
-        if m := OJS_PREFIX.match(url):
+        if (m := OJS_PREFIX.match(url)) and (h.endswith(".ge") or domain_of(url) in georgian):
             extra.add(f"{m[1]}{m[2]}/index.php/index/oai")
-    hosts |= {h for (h,) in crawl.execute("SELECT host FROM domains WHERE host LIKE '%.ge' OR state = 'full'")}
+    hosts |= georgian | {h for (h,) in crawl.execute("SELECT host FROM domains WHERE host LIKE '%.ge'")}
     with bz2.open(WIKI_DUMP, "rt", encoding="utf-8") as f:
         for line in f:
             if ".ge" in line:
