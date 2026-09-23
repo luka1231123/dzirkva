@@ -18,6 +18,7 @@ from dzirkva.wiki import any_form
 
 DB = Path(__file__).resolve().parents[2] / "data" / "archive.db"
 FONT_FONTS = re.compile(r"(?i)acad|nusx|lit ?mtavr|grigol")   # fonts that draw Latin letters as Georgian
+SESSION = re.compile(r"(?i)([?&])(s|sid|sessionid|phpsessid|osCsid)=[0-9a-f]{16,}&?")  # old forum session ids
 SKIP_EXT = re.compile(r"(?i)\.(jpe?g|png|gif|bmp|pdf|docx?|xlsx?|zip|rar|mp3|mp4|avi|swf|exe|css|js)$")
 WAYBACK = "https://web.archive.org/web/{}/{}"
 SCHEMA = """
@@ -76,7 +77,7 @@ def parse(raw: bytes, header: str, url: str) -> tuple[str, str, list[str], bool]
     host = urlparse(url).hostname
     links = []
     for href in root.xpath("//a/@href"):
-        link = urljoin(url, href.strip()).split("#")[0]
+        link = SESSION.sub(r"\1", urljoin(url, href.strip()).split("#")[0]).rstrip("?&")
         if urlparse(link).hostname == host and link.startswith("http") and not SKIP_EXT.search(link):
             links.append(link)
     return title, text, links, converted
