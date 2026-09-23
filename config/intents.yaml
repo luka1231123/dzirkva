@@ -1,0 +1,281 @@
+# What a query wants: its words → the sites made for that need.
+# ka: the name the page shows. words: dictionary forms; any form in the query matches (ამინდი matches ამინდს,
+# ამინდის); a_b is a phrase (ახალი_ამბები).
+# sites: hosts, best first; a host covers its subdomains. trusted: a category of config/sources.yaml (more sites).
+# The intent with the most matching query words wins; a word in several intents counts for each in part.
+# Ties: the first in this file, so narrow intents come before broad ones (crypto before currency). Its sites get one
+# site: query in round 1 and a ranking bonus (search.INTENT_BONUS). No intent: category "reference".
+
+weather:
+  ka: ამინდი
+  words: ამინდი პროგნოზი ტემპერატურა ნალექი წვიმა თოვლი ქარი მეტეო სეტყვა ყინვა
+  sites: amindi.ge meteo.gov.ge nea.gov.ge amindi.org amindi.info ka.meteotrend.com weather.com
+
+crypto:
+  ka: კრიპტოვალუტა
+  words: ბიტკოინი კრიპტოვალუტა ეთერიუმი კრიპტო ბლოკჩეინი
+  sites: coingecko.com coinmarketcap.com binance.com xe.com
+
+currency:
+  ka: ვალუტის კურსი
+  words: კურსი ვალუტა დოლარი ევრო ლარი რუბლი ფუნტი ლირა გაცვლა კონვერტაცია
+  sites: nbg.gov.ge myvaluta.ge meter.ge kursi.ge bankofgeorgia.ge tbcbank.ge
+
+banking:
+  ka: ბანკები
+  words: ბანკი სესხი კრედიტი ანაბარი დეპოზიტი ბარათი იპოთეკა განვადება ბანკომატი
+  sites: bankofgeorgia.ge tbcbank.ge libertybank.ge credobank.ge procreditbank.ge basisbank.ge nbg.gov.ge
+
+tax:
+  ka: გადასახადები
+  words: გადასახადი საშემოსავლო დღგ დეკლარაცია ბაჟი განბაჟება აქციზი
+  sites: rs.ge mof.ge finedu.gov.ge matsne.gov.ge
+
+news:
+  ka: სიახლეები
+  words: სიახლე ახალი_ამბები ამბავი აქცია პროტესტი არჩევნები ინციდენტი ბრიფინგი
+  sites: interpressnews.ge netgazeti.ge radiotavisupleba.ge 1tv.ge publika.ge civil.ge tabula.ge on.ge formulanews.ge imedinews.ge
+  trusted: news
+
+elections:
+  ka: არჩევნები
+  words: არჩევნები ცესკო ბიულეტენი კანდიდატი პარტია გამოკითხვა მანდატი
+  sites: cesko.ge cec.gov.ge civil.ge matsne.gov.ge isfed.ge
+  trusted: government
+
+football:
+  ka: ფეხბურთი
+  words: ფეხბურთი ნაკრები ევრო მატჩი გოლი ჩემპიონატი ლიგა ტურნირი ცხრილი მეკარე თავდამსხმელი ტრანსფერი
+  sites: gff.ge erovnuliliga.ge nakrebi.ge sportall.ge setantasports.com lelo.ge flashscore.ge goal.ge
+
+rugby:
+  ka: რაგბი
+  words: რაგბი ლელო ბორჯღალოსანი სკრამი
+  sites: rugby.ge stat.rugby.ge lelo.ge sportall.ge
+
+sport:
+  ka: სპორტი
+  words: სპორტი კალათბურთი ჭიდაობა ძიუდო ჩოგბურთი ფიგურული ოლიმპიადა ჭადრაკი ცურვა კრივი
+  sites: sportall.ge setantasports.com lelo.ge 1tv.ge worldsport.ge
+  trusted: sport
+
+recipe:
+  ka: რეცეპტები
+  words: რეცეპტი მომზადება ცომი სოუსი მარინადი ტორტი ნამცხვარი სალათი კერძი ღვეზელი ხაჭაპური ხინკალი მწვადი საცივი ფხალი ჩურჩხელა მურაბა
+  sites: gemrielia.ge kulinaria.ge sakhluri.ge receptebi.ge gastronomia.ge radiocafe.ge shenisupra.ge
+
+health:
+  ka: ჯანმრთელობა
+  words: სიმპტომი დაავადება მკურნალობა ტკივილი სიცხე ცხელება წნევა ქოლესტერინი შაქარი ვირუსი გრიპი ალერგია ანალიზი ექიმი ვაქცინა დიეტა ორსულობა
+  sites: mkurnali.ge vidal.ge aversi.ge psp.ge ncdc.ge moh.gov.ge redmed.ge apollohospitals.com
+
+clinic:
+  ka: კლინიკები
+  words: კლინიკა საავადმყოფო ჰოსპიტალი სტომატოლოგი სტომატოლოგია ფსიქოლოგი ფსიქიატრი ექიმთან ჩაწერა კონსულტაცია
+  sites: tsamali.ge med-zahid.ge servisebi.ge aversiclinic.ge evex.ge newhospitals.ge
+
+pharmacy:
+  ka: აფთიაქები
+  words: აფთიაქი წამალი მედიკამენტი აბი ანტიბიოტიკი სიროფი
+  sites: aversi.ge psp.ge gpc.ge pharmadepot.ge repharma.ge
+
+documents:
+  ka: საბუთები
+  words: პირადობა პასპორტი მოწმობა ცნობა ნასამართლობა რეგისტრაცია ამონაწერი აპოსტილი ვიზა მოქალაქეობა
+  sites: sda.gov.ge my.gov.ge sa.gov.ge psh.gov.ge napr.gov.ge geoconsul.gov.ge mfa.gov.ge
+
+fines:
+  ka: ჯარიმები
+  words: ჯარიმა პატრული საჯარიმო გადახდა ქულა პოლიცია ევაკუატორი
+  sites: police.ge pay.ge tbcpay.ge bogpay.ge my.gov.ge
+
+driving:
+  ka: მართვის მოწმობა
+  words: მართვის ავტოსკოლა ბილეთი თეორიული პრაქტიკული გამოცდა ტესტი
+  sites: sa.gov.ge teoria.on.ge starti.ge emsi.ge drivex.ge martiviteoria.ge
+
+social_help:
+  ka: სოციალური დახმარება
+  words: პენსია საპენსიო სოციალური დახმარება შემწეობა ვაუჩერი დევნილი სარეიტინგო
+  sites: ssa.gov.ge my.gov.ge moh.gov.ge pensions.ge legalaid.ge
+
+law:
+  ka: სამართალი
+  words: კანონი კოდექსი კონსტიტუცია სასამართლო დადგენილება ბრძანებულება მუხლი უფლება ხელშეკრულება მემკვიდრეობა ანდერძი განქორწინება ალიმენტი ადვოკატი იურისტი სარჩელი
+  sites: matsne.gov.ge iuristi.ge legalaid.ge myadvokat.ge constcourt.ge supremecourt.ge court.ge
+  trusted: law
+
+labour:
+  ka: შრომითი სამართალი
+  words: შრომის შვებულება დეკრეტული ხელფასი დასაქმებული დამსაქმებელი სამუშაო_დრო ზეგანაკვეთური
+  sites: matsne.gov.ge gtuc.ge ombudsman.ge publika.ge
+
+exams:
+  ka: გამოცდები
+  words: გამოცდა ეროვნული_გამოცდები ერთიანი შეფასება ქულა აბიტურიენტი ჩარიცხვა გრანტი სტიპენდია
+  sites: naec.ge online.naec.ge mes.gov.ge emis.ge edu.aris.ge abituri.ge
+  trusted: education
+
+school:
+  ka: სკოლა
+  words: სკოლა კლასი გაკვეთილი მოსწავლე მასწავლებელი სახელმძღვანელო დავალება ამოცანა
+  sites: mes.gov.ge ka.khanacademy.org mastsavlebeli.ge kings.ge sulakauri.ge math.ge
+  trusted: education
+
+university:
+  ka: უნივერსიტეტი
+  words: უნივერსიტეტი ფაკულტეტი სტუდენტი ბაკალავრიატი მაგისტრატურა დოქტორანტურა ლექტორი სემესტრი
+  sites: tsu.ge iliauni.edu.ge gtu.ge freeuni.edu.ge tsmu.edu ibsu.edu.ge sangu.edu.ge btu.edu.ge
+  trusted: science
+
+languages:
+  ka: ენის კურსები
+  words: ინგლისური გერმანული ფრანგული რუსული ესპანური კურსი ენა რეპეტიტორი
+  sites: britishcouncil.ge bekas.school ihtbilisi.ge levels.ge servisebi.ge edu.aris.ge
+
+translation:
+  ka: თარგმანი და ლექსიკონი
+  words: თარგმანი თარგმნა ინგლისურად რუსულად გერმანულად ფრანგულად ლექსიკონი ნიშნავს მნიშვნელობა განმარტება
+  sites: translate.ge ena.ge def.ge ka.glosbe.com ganmarteba.ge ka.wiktionary.org nplg.gov.ge
+  trusted: reference
+
+jobs:
+  ka: ვაკანსიები
+  words: ვაკანსია სამსახური დასაქმება რეზიუმე მუშაობა შტატი
+  sites: hr.ge jobs.ge jobs.ss.ge myjobs.ge samushao.ge joob.ge rivo.ge biznesebi.ge
+
+real_estate:
+  ka: უძრავი ქონება
+  words: ბინა სახლი ქირა ქირავდება იყიდება გაქირავება აგარაკი მიწა ნაკვეთი ოფისი უძრავი
+  sites: myhome.ge home.ss.ge ss.ge korter.ge livo.ge home.ge binebi.ge
+
+cars:
+  ka: მანქანები
+  words: ავტომობილი მანქანა ტოიოტა მერსედესი ბმვ ჰიუნდაი ავტონაწილი ნაწილები საბურავი იყიდება
+  sites: myauto.ge auto.ss.ge manqanebi.ge autopapa.ge nawilebi.ge
+
+classifieds:
+  ka: განცხადებები
+  words: განცხადება იყიდება ვყიდი ვიყიდი მეორადი ჩუქება
+  sites: ss.ge mymarket.ge gancxadebebi.ge livo.ge
+
+shopping:
+  ka: შოპინგი
+  words: ფასი იაფად ფასდაკლება ყიდვა შეძენა მაღაზია აიფონი ტელეფონი ლეპტოპი ტელევიზორი მაცივარი სარეცხი ტექნიკა
+  sites: zoommer.ge alta.ge ee.ge megatechnica.ge mymarket.ge veli.store extra.ge ispace.ge
+
+travel:
+  ka: მოგზაურობა
+  words: ტური ტურები მოგზაურობა ექსკურსია დასვენება კურორტი სათხილამურო ლაშქრობა ბილიკი ღირსშესანიშნაობა
+  sites: georgia.travel turebi.ge georgiantravelguide.com sunnygeorgia.travel tripify.ge gnta.ge
+
+hotels:
+  ka: სასტუმროები
+  words: სასტუმრო ჰოსტელი კოტეჯი გესტჰაუსი ოთახი დღიურად ჯავშანი
+  sites: booking.com sastumroebi.ge hotels.ge airbnb.com
+
+trains_buses:
+  ka: მატარებელი და ავტობუსი
+  words: მატარებელი ავტობუსი მარშრუტკა სადგური ვაგზალი განრიგი რეისი ბილეთი
+  sites: railway.ge tkt.ge biletebi.ge ttc.com.ge georgianbus.com
+
+flights:
+  ka: ფრენები
+  words: აეროპორტი ფრენა ავიაბილეთი ჩამოფრენა გაფრენა ავიაკომპანია თვითმფრინავი
+  sites: tbilisiairport.com kutaisi.aero batumiairport.com avia.ge tkt.ge
+
+city_transport:
+  ka: ქალაქის ტრანსპორტი
+  words: მეტრო ავტობუსი მარშრუტკა გაჩერება ტაქსი საბაგირო მეტროსადგური
+  sites: ttc.com.ge tbilisi.gov.ge moovitapp.com bolt.eu
+
+maps:
+  ka: მისამართები
+  words: მისამართი რუკა სად_მდებარეობს ტელეფონის_ნომერი საათები
+  sites: 2gis.ge yell.ge 08.ge maps.google.com
+
+films:
+  ka: ფილმები
+  words: ფილმი სერიალი კინო მულტფილმი ანიმე ტრეილერი ფილმები_ქართულად ქართულად_გახმოვანებული
+  sites: adjaranet.com mykadri.tv ge.movie movs.ge kinoafisha.ge gnfc.ge
+  trusted: culture
+
+cinema:
+  ka: კინოთეატრი
+  words: კინოთეატრი სეანსი აფიშა კინოს_ბილეთი
+  sites: kinoafisha.ge cavea.ge tkt.ge biletebi.ge
+
+tv:
+  ka: ტელევიზია
+  words: ტელევიზია ეთერი ლაივი პირდაპირი_ეთერი არხი გადაცემა
+  sites: 1tv.ge imedi.ge rustavi2.ge mtavari.tv formula.ge myvideo.ge
+
+music:
+  ka: მუსიკა
+  words: სიმღერა მუსიკა ტექსტი აკორდი კლიპი ალბომი მომღერალი ჯგუფი
+  sites: myvideo.ge youtube.com polyphony.ge
+  trusted: culture
+
+events:
+  ka: ღონისძიებები
+  words: კონცერტი სპექტაკლი თეატრი გამოფენა ფესტივალი ბილეთები ღონისძიება
+  sites: tkt.ge biletebi.ge culture.gov.ge rustavelitheatre.ge
+
+books:
+  ka: წიგნები და ლიტერატურა
+  words: წიგნი რომანი მოთხრობა პოემა ლექსი ავტორი მწერალი პოეტი შინაარსი ანალიზი
+  sites: biblusi.ge poetry.ge lib.ge sulakauri.ge palitral.ge nplg.gov.ge ka.wikisource.org
+  trusted: reference
+
+history:
+  ka: ისტორია
+  words: ისტორია მეფე ომი საუკუნე არქივი ძეგლი ბრძოლა იმპერია დინასტია ტრაგედია
+  sites: archive.gov.ge nplg.gov.ge georgianencyclopedia.ge museum.ge sovlab.ge
+  trusted: history
+
+religion:
+  ka: რელიგია
+  words: ლოცვა ხატი წმინდა ეკლესია მონასტერი პატრიარქი ბიბლია დღესასწაული მარხვა აღდგომა შობა ტაძარი მღვდელი ზიარება
+  sites: patriarchate.ge orthodoxy.ge ambioni.ge karibche.ge orthodox.ge
+  trusted: religion
+
+telecom:
+  ka: მობილური და ინტერნეტი
+  words: ინტერნეტი ტარიფი პაკეტი მობილური ოპერატორი ნომერი ბალანსი როუმინგი მაგთი სილქნეტი სელფი
+  sites: magticom.ge silknet.com cellfie.ge
+
+utilities:
+  ka: კომუნალური
+  words: დენი ელექტროენერგია წყალი გაზი გადასახადი_კომუნალური ტელასი აბონენტი მრიცხველი ჩაჭრა
+  sites: telasi.ge gwp.ge energo-pro.ge
+
+payments:
+  ka: გადახდები
+  words: გადახდა ბალანსის_შევსება ტერმინალი ჩარიცხვა გზავნილი
+  sites: pay.ge tbcpay.ge bogpay.ge emoney.ge
+
+food_delivery:
+  ka: საჭმლის მიტანა
+  words: მიტანა შეკვეთა პიცა ბურგერი სუში რესტორანი კაფე მენიუ
+  sites: wolt.com glovoapp.com
+
+tech_help:
+  ka: ტექნიკური დახმარება
+  words: არ_მუშაობს ნელა_მუშაობს არ_ირთვება როგორ_შევცვალო როგორ_დავაყენო პაროლი ვაიფაი როუტერი კომპიუტერი ტელეფონი ვინდოუსი ანდროიდი აიფონი აპლიკაცია პროგრამა პრინტერი პულტი
+  sites: rogor.ge forum.ge magticom.ge silknet.com
+
+parenting:
+  ka: მშობლები
+  words: ბავშვი ჩვილი ორსული მშობელი ბაღი ძუძუ ძიძა
+  sites: mshoblebi.ge modernmoms.ge babyexpress.ge dedamicis.ge
+
+agriculture:
+  ka: სოფლის მეურნეობა
+  words: ვენახი ყურძენი მოსავალი ნერგი სასუქი ფუტკარი ფერმერი მცენარე ხეხილი
+  sites: agronews.ge agrokavkaz.ge agroforce.ge mepa.gov.ge
+
+statistics:
+  ka: სტატისტიკა
+  words: მოსახლეობა სტატისტიკა მშპ ინფლაცია უმუშევრობა აღწერა ექსპორტი იმპორტი
+  sites: geostat.ge nbg.gov.ge
+  trusted: government

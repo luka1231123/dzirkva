@@ -161,7 +161,7 @@ def _query_name(name: str) -> str:
     fixed = {"original": "როგორც დაიწერა", "corrected": "გასწორებული", "lemmas": "ლექსიკონის ფორმები",
              "lemmas:corrected": "გასწორებულის ლექსიკონის ფორმები"}
     if kind == "site":
-        return f"სანდო საიტები: {CATEGORY_NAMES.get(arg, arg)}"
+        return f"საიტები: {intents()[arg]['ka'] if arg in intents() else CATEGORY_NAMES.get(arg, arg)}"
     if kind == "named":
         return f"დასახელებული საიტი: {arg}"
     if kind == "feedback":

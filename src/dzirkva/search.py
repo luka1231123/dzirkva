@@ -26,10 +26,13 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass, field
+from functools import cache
+from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 import httpx
 import numpy as np
+import yaml
 
 from dzirkva import engines
 from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, typo_weight, words
@@ -48,16 +51,9 @@ STOPWORDS = set(
     "ვიკიპედია ფოტო ვიდეო სტატია ბლოგი ახალი ამბები გაიგე მეტი წაიკითხე სრულად".split()
 )
 CLITICS = ("აა", "ა", "ც", "ღა", "ვე")  # ვინაა = ვინ + (ა)ა "is", რაც, ესეც
-# Words that point a query to a source category (checked against lemmas and families).
-INTENT = {
-    "law": "კანონი კოდექსი კონსტიტუცია სასამართლო დადგენილება ბრძანებულება მუხლი უფლება ჯარიმა",
-    "history": "ისტორია მეფე ომი საუკუნე არქივი ძეგლი ეკლესია მონასტერი",
-    "religion": "ლოცვა ხატი წმინდა ეკლესია მონასტერი პატრიარქი ბიბლია დღესასწაული მარხვა",
-    "education": "გამოცდა სკოლა უნივერსიტეტი სტუდენტი მასწავლებელი ჩარიცხვა გრანტი",
-    "government": "ამინდი კურსი სტატისტიკა არჩევნები გადასახადი პირადობა პასპორტი",
-    "culture": "ფილმი მუსიკა სიმღერა პოეზია მხატვარი რეცეპტი",
-}
+INTENTS_FILE = Path(__file__).resolve().parents[2] / "config" / "intents.yaml"  # what a query wants → its sites
 DEFAULT_CATEGORY = "reference"
+INTENT_BONUS = 0.25     # page on a site made for what the query wants (intents.yaml): like a tier-2 source
 SITES_PER_QUERY = 6
 MIN_GEORGIAN = 0.3      # share of Georgian letters in title + snippet to keep a result
 RRF_K = 60
@@ -111,6 +107,7 @@ class Result:
     coverage: float = 0.0
     small: bool = False
     named: bool = False
+    wanted: bool = False  # on a site made for what the query wants (intents.yaml)
     cited: bool = False
     clicks: int = 0        # good clicks on this page for the same question
     rank: int = 0          # position in the final list (1 = first)
@@ -171,9 +168,44 @@ def _lemma(word: str) -> str:
     return word
 
 
-def _category(content: list[str]) -> str:
-    fams = {f for w in content for f in families(w)} | set(content)
-    return next((c for c, ws in INTENT.items() if any(f in fams for f in ws.split())), DEFAULT_CATEGORY)
+@cache
+def intents() -> dict[str, dict]:
+    """config/intents.yaml: name → {ka, words (set), phrases (list), sites (hosts + the trusted category's)}."""
+    out = {}
+    for name, it in yaml.safe_load(INTENTS_FILE.read_text(encoding="utf-8")).items():
+        words = it["words"].split()
+        sites = it["sites"].split() + (by_category(it["trusted"]) if "trusted" in it else [])
+        out[name] = {"ka": it["ka"], "words": {w for w in words if "_" not in w},
+                     "phrases": [w.replace("_", " ") for w in words if "_" in w], "sites": list(dict.fromkeys(sites))}
+    return out
+
+
+def _lemmas(word: str) -> set[str]:
+    """The word and its dictionary forms (guesses of the verb rules left out: შემოსილი is not მოსავს)."""
+    return {word} | {a.lemma for a in analyze(word) if a.source != "verb-rule"}
+
+
+@cache
+def _share(word: str) -> float:
+    """A word's weight: 1 / the number of intents that list it (ბილეთი: driving, trains, events)."""
+    return 1 / sum(word in it["words"] for it in intents().values())
+
+
+def intent(content: list[str], text: str) -> str | None:
+    """What the query wants: the intent whose matching words weigh most. A word listed by several intents splits
+    its weight (_share): სათხილამურო ბილეთი is travel. A phrase weighs 1 and matches the query text with its
+    small words (არ მუშაობს). Ties: the first intent in the file."""
+    lemmas = set().union(*map(_lemmas, content)) if content else set()
+    text = f" {text} "
+    score = {name: sum(map(_share, it["words"] & lemmas)) + sum(f" {p} " in text for p in it["phrases"])
+             for name, it in intents().items()}
+    best = max(score, key=score.get)
+    return best if score[best] else None
+
+
+def _on(url: str, hosts: set[str]) -> bool:
+    h = host(url)
+    return h in hosts or any(h.endswith("." + x) for x in hosts)
 
 
 def round1_queries(query: str) -> tuple[dict[str, str], list[str], dict[str, str], list[tuple[str, float, str]]]:
@@ -186,10 +218,11 @@ def round1_queries(query: str) -> tuple[dict[str, str], list[str], dict[str, str
     fixes = spelling_fixes(content)
     fixed = [fixes.get(w, w) for w in content]
     lemmas, fixed_lemmas = (" ".join(_lemma(w) for w in ws) for ws in (content, fixed))
-    cat = _category(fixed)
-    sites = " OR ".join(f"site:{d}" for d in by_category(cat)[:SITES_PER_QUERY])
+    want = intent(fixed, " ".join(fixes.get(w, w) for w in typed))
+    sites = " OR ".join(f"site:{d}" for d in (intents()[want]["sites"] if want else by_category(DEFAULT_CATEGORY))
+                        [:SITES_PER_QUERY])
     qs = {"original": query, "corrected": " ".join(fixes.get(w, w) for w in typed), "lemmas": lemmas,
-          "lemmas:corrected": fixed_lemmas, f"site:{cat}": f"{fixed_lemmas} ({sites})"}
+          "lemmas:corrected": fixed_lemmas, f"site:{want or DEFAULT_CATEGORY}": f"{fixed_lemmas} ({sites})"}
     named = named_sites(query.split(), fixed, fixed_lemmas.split())
     for h, share, name in named[:1]:
         if share >= NAVIGATIONAL:  # ფეისბუქი შესვლა → შესვლა site:facebook.com
@@ -297,7 +330,7 @@ def _family_share(text: str, query_fams: list[set[str]]) -> float:
 
 def _trust(r: Result) -> float:
     return max(TIER_BONUS.get(r.tier, 0.0), SMALL_BONUS if r.small else 0.0, CITED_BONUS if r.cited else 0.0,
-               NAMED_BONUS if r.named else 0.0)
+               NAMED_BONUS if r.named else 0.0, INTENT_BONUS if r.wanted else 0.0)
 
 
 def _wiki_page(url: str) -> tuple[str, str] | None:
@@ -308,7 +341,8 @@ def _wiki_page(url: str) -> tuple[str, str] | None:
 
 
 def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[str] = frozenset(),
-          clicked: Counter[str] = Counter(), named: set[str] = frozenset()) -> list[Result]:
+          clicked: Counter[str] = Counter(), named: set[str] = frozenset(),
+          wanted: set[str] = frozenset()) -> list[Result]:
     """RRF over all lists (Wikipedia pages: best rank only), Georgian filter, trust tier and word-family bonuses.
 
     cited: canonical URLs of the pages the matching Wikipedia articles cite; clicked: good clicks per canonical URL."""
@@ -327,9 +361,8 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[st
     out = []
     for m in merged.values():
         m.georgian = georgian_ratio(m.title + " " + m.snippet)
-        h = host(m.url)
-        m.named = h in named or any(h.endswith("." + n) for n in named)
-        if m.georgian < MIN_GEORGIAN and not m.named and h not in georgian_hosts():  # Latin title, Georgian site
+        m.named, m.wanted = _on(m.url, named), _on(m.url, wanted)
+        if m.georgian < MIN_GEORGIAN and not m.named and host(m.url) not in georgian_hosts():  # Latin title, Georgian site
             continue
         m.category, m.tier = lookup(m.url) or (None, None)
         m.kind = kind(m.url)
@@ -442,6 +475,8 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
                             for h, share, name in named if share >= NAVIGATIONAL]))
     fixes, suggested = confirm_fixes(fixes, lists)
     content = [fixes.get(w, w) for w in typed]
+    want = intent(content, " ".join(fixes.get(w, w) for w in map(_fix_word, query.split())))
+    wanted = set(intents()[want]["sites"]) if want else set()
     lists.append(("wikipedia", wiki.search(content)))   # local Georgian Wikipedia, every search
     lists.append(("wikisource", wiki.search(content, 10, "wikisource")))  # classic texts: poems, prose, laws
     lists.append(("archive", archive.search(content)))  # old Georgian web, local index
@@ -465,7 +500,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     # the covered snippets (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
     explain = question_type(query) in ANSWER_TYPES and bool(near)
     answer_v = answer_vector(near) if explain else None
-    merged = merge(lists, content, cited, clicked, named_hosts)
+    merged = merge(lists, content, cited, clicked, named_hosts, wanted)
     first = rank_by_meaning(query, wiki_snippets(merged, qv, content), qv, answer_v)
     t1 = time.time()
     covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]
@@ -480,7 +515,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     if more:
         qs.update(more)
         lists += asyncio.run(fan_out(more))
-    merged = merge(lists, content, cited, clicked, named_hosts)
+    merged = merge(lists, content, cited, clicked, named_hosts, wanted)
     results = group_copies(rank_by_meaning(query, wiki_snippets(merged, qv, content), qv,
                                            answer_v))
     for i, r in enumerate(results, 1):
@@ -488,7 +523,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     # why/how: no answer text (a wrong paragraph reads like a fact), only the nearest articles to read
     links = [(p["title"].removesuffix(" — ვიკიპედია"), p["url"]) for p in near[:WIKI_LINKS]] if explain else []
     debug = {
-        "content": content, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "named": [h for h, _, _ in named], "read_as": " ".join(fixes.get(w, w) for w in map(_fix_word, query.split())), "feedback": terms, "answer": answer,
+        "content": content, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "named": [h for h, _, _ in named], "intent": want, "read_as": " ".join(fixes.get(w, w) for w in map(_fix_word, query.split())), "feedback": terms, "answer": answer,
         "wiki_links": links,
         "related": related(content, base, terms, wiki_hits, near, answer),
         "definition": dictionary.define(qs.get("corrected", query)),  # "სახლი რას ნიშნავს"
