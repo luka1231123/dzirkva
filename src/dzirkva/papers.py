@@ -37,6 +37,9 @@ VERSION = re.compile(r"(?i)version$|^draft$|peer-reviewed|^text$")  # dc:type va
 ISSN = re.compile(r"^\d{4}-\d{3}[\dXx]$")
 OJS_GALLEY = re.compile(r"/article/view/\d+/\d+")
 PAGES = re.compile(r"\d+\s*[-–]\s*\d+")
+KIND_WORDS = {"დისერტაცია": ("doctoralthesis", "thesis", "masterthesis", "bachelorthesis"),  # query word → types
+              "სტატია": ("article",), "მონოგრაფია": ("book",), "წიგნი": ("book", "bookpart"),
+              "თეზისი": ("conferenceobject",), "რეცენზია": ("review",)}
 TYPE_NAMES = {"article": "სტატია", "doctoralthesis": "დისერტაცია", "thesis": "ნაშრომი", "masterthesis": "სამაგისტრო",
               "bachelorthesis": "საბაკალავრო", "book": "წიგნი", "bookpart": "წიგნის თავი", "review": "რეცენზია",
               "conferenceobject": "კონფერენციის მასალა", "report": "ანგარიში", "lecture": "ლექცია"}
@@ -143,15 +146,18 @@ def citation(m: dict) -> str:
                                  journal(m["source"]), m["url"]) if x)
 
 
-def search(words: list[str], limit: int = 10) -> list[dict]:
-    """Papers with all words (any form) in title, authors, keywords, abstract or journal; titles weigh most."""
+def search(words: list[str], limit: int = 10, kinds: set[str] = frozenset()) -> list[dict]:
+    """Papers with all words (any form) in title, authors, keywords, abstract or journal; titles weigh most.
+    kinds: words of KIND_WORDS in the query (დისერტაცია): papers of those types come first."""
     db = _db()
     if db is None or not words:
         return []
     expr = " AND ".join(any_form(w) for w in words)
+    types = sorted({t for k in kinds for t in KIND_WORDS.get(k, ())})
+    first = f"lower(type) IN ({','.join('?' * len(types))}) DESC, " if types else ""
     rows = db.execute(
         "SELECT url, title, creator, description, year, type, source FROM papers WHERE papers MATCH ? "
-        "ORDER BY bm25(papers, 0, 0, 0, 10, 3, 3, 1, 1) LIMIT ?", (expr, limit)).fetchall()
+        f"ORDER BY {first}bm25(papers, 0, 0, 0, 10, 3, 3, 1, 1) LIMIT ?", (expr, *types, limit)).fetchall()
     out = []
     for url, title, creator, desc, year, typ, source in rows:
         meta = " · ".join(x for x in (type_name(typ), year, creator[:80], journal(source)) if x)

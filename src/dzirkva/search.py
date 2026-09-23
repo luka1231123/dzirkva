@@ -48,8 +48,9 @@ STOPWORDS = set(
     "არის არიან იყო იქნება და თუ რომ ეს ის ამ იმ ეგ კი არ ვერ ნუ მაგრამ ან ანუ უნდა შეიძლება "
     "მე შენ ჩვენ თქვენ მისი მათი ჩემი შენი ჩვენი თქვენი ამის იმის აქ იქ ასე ისე ძალიან უფრო "
     "ერთი ორი სამი ყველა ყველაფერი მხოლოდ ასევე თავის თავად შემდეგ წლის წელს მიერ შესახებ "
-    # page furniture that repeats in snippets but says nothing about the topic
-    "ვიკიპედია ფოტო ვიდეო სტატია ბლოგი ახალი ამბები გაიგე მეტი წაიკითხე სრულად".split()
+    # page furniture that repeats in snippets but says nothing about the topic (სტატია stays: research intent;
+    # too common to become a feedback term)
+    "ვიკიპედია ფოტო ვიდეო ბლოგი ახალი ამბები გაიგე მეტი წაიკითხე სრულად".split()
 )
 CLITICS = ("აა", "ა", "ც", "ღა", "ვე")  # ვინაა = ვინ + (ა)ა "is", რაც, ესეც
 INTENTS_FILE = Path(__file__).resolve().parents[2] / "config" / "intents.yaml"  # what a query wants → its sites
@@ -426,7 +427,7 @@ def _title_fit(r: Result, content: list[str], qv) -> float:
 
 
 def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, answer=None,
-                    encyclopedia: bool = True) -> list[Result]:
+                    encyclopedia: bool = True, topic: list[str] | None = None) -> list[Result]:
     """Final order: fusion of the engine rank and the meaning rank.
 
     Meaning = similarity to the question; with an answer vector, the mean of both. Only the top
@@ -435,7 +436,8 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
     A Wikipedia or Wikisource page that only our local indexes found needs its title to be about the query
     (_title_fit): the body of a long article mentions every word somewhere (აფთიაქი ღამის → აღდგომის კუნძული).
     A query that wants a service (encyclopedia=False: a pharmacy, a flat) gets no such page high, however close
-    its title (აფთიაქი ღამის → პოლარული ღამე).
+    its title (აფთიაქი ღამის → პოლარული ღამე). topic: the query words without research words (დისერტაცია):
+    the title of a thesis on ვეფხისტყაოსანი fits ვეფხისტყაოსანი დისერტაცია.
     """
     qtype = question_type(query)
     shape = re.compile(SHAPES[qtype][1]) if qtype else None
@@ -452,7 +454,7 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
             r.score *= 1 + SHAPE_BONUS
         r.score *= 1 + CLICK_BONUS * min(r.clicks, CLICK_MAX)
         if r.queries <= LOCAL_LISTS:  # no web engine found it: a long text mentions every word somewhere
-            r.score *= LOCAL_FLOOR + (1 - LOCAL_FLOOR) * (_title_fit(r, content, qv) if encyclopedia else 0.0)
+            r.score *= LOCAL_FLOOR + (1 - LOCAL_FLOOR) * (_title_fit(r, topic or content, qv) if encyclopedia else 0.0)
     return sorted(results, key=lambda r: r.score, reverse=True)
 
 
@@ -526,7 +528,11 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     lists.append(("archive", archive.search(content)))  # old Georgian web, local index
     lists.append(("crawl", crawl.search(content)))  # trusted sites, own crawl
     lists.append(("iverieli", iverieli.search(content)))  # National Library catalog: books, journals, press
-    lists.append(("papers", papers.search(content)))  # Georgian journals and university repositories
+    # Georgian journals and university repositories; research words (დისერტაცია, სტატია) name the kind of text,
+    # not its topic: an abstract seldom says them. დისერტაცია puts theses first.
+    topic = [w for w in content if not _lemmas(w) & intents()["research"]["words"]] or content
+    kinds = {k for w in content for k in _lemmas(w) if k in papers.KIND_WORDS}
+    lists.append(("papers", papers.search(topic, kinds=kinds)))
     near = passages.search(query)                    # Wikipedia paragraphs nearest in meaning
     lists.append(("passages", near))
     answer = wiki.article(content)
@@ -547,7 +553,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     answer_v = answer_vector(near) if explain else None
     merged = merge(lists, content, cited, clicked, named_hosts, wanted)
     encyclopedia = intents()[want]["encyclopedia"] if want else True
-    first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia)
+    first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia, topic)
     t1 = time.time()
     covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]
     terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
@@ -563,7 +569,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
         qs.update(more)
         lists += asyncio.run(fan_out(more))
         merged = merge(lists, content, cited, clicked, named_hosts, wanted)
-        first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia)
+        first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia, topic)
     results = diversify(group_copies(first))
     for i, r in enumerate(results, 1):
         r.rank = i
