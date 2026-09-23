@@ -1,6 +1,6 @@
-"""Meaning index: Georgian Wikipedia paragraphs + one BGE-M3 vector each → data/passages.db.
+"""Meaning index: Georgian Wikipedia + Wikisource paragraphs, one BGE-M3 vector each → data/passages.db.
 
-Step 1 (~1 min): cut every article of data/wiki.db into passages of ~600 characters.
+Step 1 (~1 min): cut every article of each local index (wiki.SITES) not cut yet into passages of ~600 characters.
 Step 2 (~2 h on the Mac GPU, fp16): a vector for each passage that has none. Resumable: run again after a stop.
 Run in background: nohup uv run python scripts/build_passages.py > data/passages.log 2>&1 &
 """
@@ -13,18 +13,19 @@ import torch
 
 from dzirkva.meaning import _model
 from dzirkva.passages import chunks, connect, embed_text
-from dzirkva.wiki import DB as WIKI
+from dzirkva.wiki import SITES
 
 BATCH = 2048
 MIN_CHARS = 100  # shorter articles are empty stubs
 
 db = connect()
-if not db.execute("SELECT 1 FROM passages LIMIT 1").fetchone():
-    wiki = sqlite3.connect(WIKI)
-    for title, body in wiki.execute("SELECT title, body FROM wiki"):
-        if len(body) >= MIN_CHARS:
-            db.executemany("INSERT INTO passages (title, text) VALUES (?, ?)", [(title, c) for c in chunks(body)])
-    db.commit()
+for site, (path, _, _) in SITES.items():
+    if path.exists() and not db.execute("SELECT 1 FROM passages WHERE site = ? LIMIT 1", (site,)).fetchone():
+        for title, body in sqlite3.connect(path).execute("SELECT title, body FROM wiki"):
+            if len(body) >= MIN_CHARS:
+                db.executemany("INSERT INTO passages (title, text, site) VALUES (?, ?, ?)",
+                               [(title, c, site) for c in chunks(body)])
+        db.commit()
 total = db.execute("SELECT count(*) FROM passages").fetchone()[0]
 print(f"{total} passages", flush=True)
 

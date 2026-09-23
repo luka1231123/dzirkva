@@ -23,6 +23,8 @@ DIM = 1024
 def connect() -> sqlite3.Connection:
     db = sqlite3.connect(DB, check_same_thread=False)
     db.executescript(SCHEMA)
+    if "site" not in {c[1] for c in db.execute("PRAGMA table_info(passages)")}:  # wiki.SITES key
+        db.execute("ALTER TABLE passages ADD COLUMN site TEXT DEFAULT 'wikipedia'")
     return db
 
 
@@ -57,9 +59,10 @@ def _index():
     return ids, torch.from_numpy(vecs.copy()).to(device)
 
 
-def best(title: str, qv) -> str | None:
+def best(title: str, qv, site: str = "wikipedia") -> str | None:
     """The paragraph of one article nearest to the question vector (a better snippet than the engine's)."""
-    rows = connect().execute("SELECT text, v FROM passages WHERE title = ? AND v IS NOT NULL", (title,)).fetchall()
+    rows = connect().execute("SELECT text, v FROM passages WHERE title = ? AND site = ? AND v IS NOT NULL",
+                             (title, site)).fetchall()
     if not rows:
         return None
     vecs = np.frombuffer(b"".join(v for _, v in rows), dtype=np.float16).reshape(-1, DIM).astype(np.float32)
@@ -67,8 +70,9 @@ def best(title: str, qv) -> str | None:
 
 
 def search(query: str, limit: int = 20) -> list[dict]:
-    """The paragraphs nearest to the question in meaning, best one per article."""
+    """The paragraphs nearest to the question in meaning, best one per article (Wikipedia and Wikisource)."""
     from dzirkva.meaning import _model
+    from dzirkva.wiki import SITES
 
     index = _index()
     if index is None:
@@ -79,12 +83,13 @@ def search(query: str, limit: int = 20) -> list[dict]:
     db = connect()
     out, seen = [], set()
     for score, i in zip(scores.tolist(), top.tolist()):
-        title, text = db.execute("SELECT title, text FROM passages WHERE id = ?", (int(ids[i]),)).fetchone()
-        if title in seen:
+        title, text, site = db.execute("SELECT title, text, site FROM passages WHERE id = ?", (int(ids[i]),)).fetchone()
+        if (site, title) in seen:
             continue
-        seen.add(title)
-        out.append({"url": "https://ka.wikipedia.org/wiki/" + quote(title.replace(" ", "_")),
-                    "title": f"{title} — ვიკიპედია", "snippet": text, "engine": "passages", "score": score})
+        seen.add((site, title))
+        _, prefix, name = SITES[site]
+        out.append({"url": prefix + quote(title.replace(" ", "_")), "title": f"{title} — {name}",
+                    "snippet": text, "engine": "passages", "score": score})
         if len(out) == limit:
             break
     return out

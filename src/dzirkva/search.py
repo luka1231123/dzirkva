@@ -301,11 +301,12 @@ def answer_vector(near: list[dict]):
 
 
 def wiki_snippets(results: list[Result], qv, content: list[str]) -> list[Result]:
-    """Wikipedia results show their paragraph nearest to the question, not the engine's snippet."""
+    """Wikipedia and Wikisource results show their paragraph nearest to the question, not the engine's snippet."""
     for r in results:
         p = urlparse(r.url)
-        if p.hostname and p.hostname.endswith("ka.wikipedia.org") and p.path.startswith("/wiki/"):
-            if text := passages.best(unquote(p.path[6:]).replace("_", " "), qv):
+        site = {"ka.wikipedia.org": "wikipedia", "ka.wikisource.org": "wikisource"}.get(p.hostname or "")
+        if site and p.path.startswith("/wiki/"):
+            if text := passages.best(unquote(p.path[6:]).replace("_", " "), qv, site):
                 r.snippet = text
                 r.coverage = coverage(r.text, content)
     return results
