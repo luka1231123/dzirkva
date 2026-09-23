@@ -21,7 +21,8 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 - `src/dzirkva/engines.py` — SearXNG and Brave clients
 - `src/dzirkva/georgian.py` — normalize, Latin→Georgian, spelling, Georgian ratio
 - `src/dzirkva/morph.py` — word form → lemma + word family (lexicon first, then grammar rules)
-- `config/searxng.yml` — engines: google, bing, brave (duckduckgo gives CAPTCHA). SearXNG has no `ka` language.
+- `config/searxng.yml` — engines: google, bing, brave (duckduckgo gives CAPTCHA). Google and Bing are disabled in SearXNG defaults, so the file enables them. SearXNG has no `ka` language. SearXNG's Brave scraper gets rate-limited; the Brave API is separate.
+- `config/sources.yaml` + `src/dzirkva/sources.py` — trusted Georgian sites: category and tier; check with `uv run python scripts/check_sources.py`
 - `vendor/searxng` — SearXNG source, own venv (gitignored)
 - `.env` — `BRAVE_API_KEY`, `SEARXNG_SECRET` (gitignored)
 

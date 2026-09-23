@@ -12,3 +12,8 @@ server:
   image_proxy: false
 outgoing:
   request_timeout: 6.0
+engines:  # google and bing are disabled in SearXNG's defaults
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false

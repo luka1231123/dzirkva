@@ -26,9 +26,11 @@ Budget rules:
 - [x] Accuracy check vs UniMorph (`scripts/check_morph.py`): nouns 100%, adjectives 96%, verbs 88%, 23/23 hand pairs
 
 ## Session 3: Trusted source list (`config/sources.yaml`)
-- [ ] ~100 Georgian sites in categories: news, government, law, education, health, encyclopedia, culture, business
-- [ ] Trust tier per site (1 = best, 3 = lowest)
-- [ ] Script checks that each site is online and has Georgian pages
+- [x] 94 Georgian sites in 15 categories: news, government, law, finance, education, reference, health, culture, transport, weather, sport, jobs, real estate, shopping, telecom
+- [x] Trust tier per site (1 = official/public/academic/reference, 2 = established media and companies, 3 = tabloid)
+- [x] `scripts/check_sources.py`: home page Georgian text, else `site:` search through the engines; 92/94 OK (civil.ge, translate.ge kept on purpose)
+- [x] `src/dzirkva/sources.py`: URL → (category, tier), subdomains included
+- [x] Fix: SearXNG had Google and Bing disabled by default; now enabled
 
 ## Session 4: Query variants and fan-out (`src/dzirkva/search.py`)
 - [ ] 5–8 variants per query: original, normalized, stem form, Latin fix, spelling fix, `site:` variants by category
