@@ -25,7 +25,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 - `src/dzirkva/georgian.py` — normalize, Latin→Georgian, spelling (a rare word is fixed only when a sound-alike or keyboard-slip word is 20× more frequent in `vocab.tsv`), Georgian ratio
 - `src/dzirkva/morph.py` — word form → lemma + word family (lexicon first, then grammar rules), synonyms
 - `src/dzirkva/web.py` — test page: `uv run python -m dzirkva.web` → http://127.0.0.1:8000. Single thread on purpose: the GPU model hangs in other threads.
-- `src/dzirkva/search.py` — simple queries → engines → feedback round → rank (engine + meaning + tier + coverage) → group copies. Demo: `uv run python -m dzirkva.search <query>`
+- `src/dzirkva/search.py` — simple queries → engines → feedback round (only when fewer than 5 of the top 10 have every query word) → rank (engine + meaning + tier + coverage) → group copies. Demo: `uv run python -m dzirkva.search <query>`
 - `src/dzirkva/archive.py` + `scripts/archive_collect.py` — old web from the Internet Archive → `data/archive.db`. Run collector in background: `nohup uv run python scripts/archive_collect.py > data/archive.log 2>&1 &` (resumable)
 - `src/dzirkva/dictionary.py` — Georgian word meanings from ka.wiktionary: answer box for "X რას ნიშნავს" / one-word queries
 - `src/dzirkva/wiki.py` — local Georgian Wikipedia FTS5 index: article counts for spelling in context

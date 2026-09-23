@@ -5,7 +5,8 @@
    Their job is recall (collect candidate pages), not precision.
    Search by meaning (passages.py) adds the Wikipedia paragraphs nearest to the question:
    they find answers that use other words than the question.
-2. Feedback: read the paragraphs nearest in meaning (else the top snippets that contain every
+2. Feedback (only when round 1 is bad: fewer than ROUND1_GOOD of its top 10 contain every query word):
+   read the paragraphs nearest in meaning (else the top snippets that contain every
    query word) and find the words and names that repeat there but are rare in Georgian overall
    (ბოლტი, უსწრაფესი, სპრინტერი). These are the words the answer pages use. Round 2 searches with them.
 3. Rank: combine the engine ranking (RRF over all lists + trust tier + word-family match; a Wikipedia page
@@ -78,6 +79,7 @@ LOCAL_FLOOR = 0.3       # a Wikipedia/Wikisource page only our local indexes fou
 TITLE_FIT = (0.5, 0.65)   # title-query similarity: filler 0.23-0.55, the right article 0.60-1.00 → fit 0..1
 LOCAL_LISTS = {"wikipedia", "wikisource", "passages"}
 FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every query word
+ROUND1_GOOD = 5         # round 1 is good when this many of its top 10 contain every query word: no round 2
 SITE_FREE = 2           # results per site before the site penalty (თბილისი: half the page was Wikipedia)
 SITE_PENALTY = 0.5      # × for each further result from the same site
 VOICE_BONUS = 0.3       # × (1 + bonus × coverage) for people: small web, blogs, forums, social posts (ხალხი)
@@ -548,20 +550,21 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     # verbs stay out: ბნელდება would bring back the eclipse pages (დაბნელება)
     base = " ".join(_lemma(w) for w in content if not _is_verb(w)) or " ".join(_lemma(w) for w in content)
     more = {}
-    if terms:
+    bad = sum(r.coverage >= FEEDBACK_MIN_COVERAGE for r in first[:10]) < ROUND1_GOOD
+    if terms and bad:
         more[f"feedback:{terms[0]}"] = f"{base} {terms[0]}"
         if len(terms) > 1:
             more[f"feedback:{terms[1]}"] = " ".join(terms[:2])
     if more:
         qs.update(more)
         lists += asyncio.run(fan_out(more))
-    merged = merge(lists, content, cited, clicked, named_hosts, wanted)
-    results = diversify(group_copies(rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv,
-                                                     answer_v, encyclopedia)))
+        merged = merge(lists, content, cited, clicked, named_hosts, wanted)
+        first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia)
+    results = diversify(group_copies(first))
     for i, r in enumerate(results, 1):
         r.rank = i
     debug = {
-        "content": content, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "named": [h for h, _, _ in named], "intent": want, "read_as": " ".join(fixes.get(w, w) for w in map(_fix_word, query.split())), "feedback": terms, "answer": answer,
+        "content": content, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "named": [h for h, _, _ in named], "intent": want, "read_as": " ".join(fixes.get(w, w) for w in map(_fix_word, query.split())), "feedback": terms if more else [], "answer": answer,
         "related": related(content, base, terms, wiki_hits, near, answer),
         "definition": dictionary.define(qs.get("corrected", query)),  # "სახლი რას ნიშნავს"
         "counts": {name: len(res) for name, res in lists}, "cites": len(cites),
