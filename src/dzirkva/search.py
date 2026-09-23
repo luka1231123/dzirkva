@@ -31,7 +31,7 @@ import numpy as np
 
 from dzirkva import engines
 from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, typo_weight, words
-from dzirkva.meaning import vectors
+from dzirkva.meaning import cached_vectors, vectors
 from dzirkva.morph import analyze, families, family_members
 from dzirkva import archive, crawl, dictionary, iverieli, passages, wiki
 from dzirkva.sources import by_category, kind, lookup, tags
@@ -70,6 +70,7 @@ FEEDBACK_PASSAGES = 10  # or: paragraphs nearest in meaning
 FEEDBACK_TERMS = 3
 FEEDBACK_MIN_IDF = 4.0  # ignore common words (idf of მსოფლიოში ≈ 3.9, სწრაფი ≈ 5.3, rare names ≈ 9)
 MEANING_WEIGHT = 1.5    # meaning rank vs engine rank in the final fusion
+MEANING_TOP = 40        # results (engine order) compared by meaning; the rest keep their engine rank
 COVERAGE_FLOOR = 0.2    # score × (floor + (1 - floor) × coverage)
 FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every query word
 COPY_SIMILARITY = 0.6   # word overlap (Jaccard) of two snippets that makes them copies
@@ -328,23 +329,23 @@ def wiki_snippets(results: list[Result], qv, content: list[str]) -> list[Result]
     return results
 
 
-def rank_by_meaning(query: str, results: list[Result], known: dict, qv, answer=None) -> list[Result]:
-    """Final order: fusion of the engine rank and the meaning rank. `known` caches vectors by URL.
+def rank_by_meaning(query: str, results: list[Result], qv, answer=None) -> list[Result]:
+    """Final order: fusion of the engine rank and the meaning rank.
 
-    Meaning = similarity to the question; with an answer vector, the mean of both.
+    Meaning = similarity to the question; with an answer vector, the mean of both. Only the top
+    MEANING_TOP results in engine order get a vector (cached, meaning.cached_vectors); results below
+    rank 40 seldom reach the top 10, so they keep their engine rank as their meaning rank.
     """
     qtype = question_type(query)
     shape = re.compile(SHAPES[qtype][1]) if qtype else None
-    todo = [r for r in results if r.url not in known]
-    if todo:
-        known.update(zip((r.url for r in todo), vectors([r.text for r in todo])))
-    for r in results:
-        r.meaning = float(known[r.url] @ qv)
+    top = results[:MEANING_TOP]
+    for r, v in zip(top, cached_vectors([r.text for r in top]) if top else []):
+        r.meaning = float(v @ qv)
         if answer is not None:
-            r.meaning = (r.meaning + float(known[r.url] @ answer)) / 2
-    by_meaning = {id(r): i for i, r in enumerate(sorted(results, key=lambda r: r.meaning, reverse=True))}
+            r.meaning = (r.meaning + float(v @ answer)) / 2
+    by_meaning = {id(r): i for i, r in enumerate(sorted(top, key=lambda r: r.meaning, reverse=True))}
     for i, r in enumerate(results):  # results are in engine order here
-        fused = 1 / (RRF_K + i) + MEANING_WEIGHT / (RRF_K + by_meaning[id(r)])
+        fused = 1 / (RRF_K + i) + MEANING_WEIGHT / (RRF_K + by_meaning.get(id(r), i))
         r.score = fused * (1 + _trust(r)) * (COVERAGE_FLOOR + (1 - COVERAGE_FLOOR) * r.coverage)
         if shape and shape.search(r.snippet):
             r.score *= 1 + SHAPE_BONUS
@@ -411,8 +412,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     # the covered snippets (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
     explain = question_type(query) in ANSWER_TYPES and bool(near)
     answer_v = answer_vector(near) if explain else None
-    known: dict = {}
-    first = rank_by_meaning(query, wiki_snippets(merge(lists, content, cited), qv, content), known, qv, answer_v)
+    first = rank_by_meaning(query, wiki_snippets(merge(lists, content, cited), qv, content), qv, answer_v)
     t1 = time.time()
     covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]
     terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
@@ -426,7 +426,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     if more:
         qs.update(more)
         lists += asyncio.run(fan_out(more))
-    results = group_copies(rank_by_meaning(query, wiki_snippets(merge(lists, content, cited), qv, content), known, qv,
+    results = group_copies(rank_by_meaning(query, wiki_snippets(merge(lists, content, cited), qv, content), qv,
                                            answer_v))
     # why/how: no answer text (a wrong paragraph reads like a fact), only the nearest articles to read
     links = [(p["title"].removesuffix(" — ვიკიპედია"), p["url"]) for p in near[:WIKI_LINKS]] if explain else []
