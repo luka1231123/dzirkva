@@ -30,7 +30,7 @@ from dzirkva import engines
 from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, typo_weight, words
 from dzirkva.meaning import vectors
 from dzirkva.morph import analyze, families, family_members
-from dzirkva import archive, crawl, dictionary, passages, wiki
+from dzirkva import archive, crawl, dictionary, iverieli, passages, wiki
 from dzirkva.sources import by_category, kind, lookup, tags
 
 # Question words and function words: dropped from keyword queries and feedback terms.
@@ -376,6 +376,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     lists.append(("wikipedia", wiki.search(content)))   # local Georgian Wikipedia, every search
     lists.append(("archive", archive.search(content)))  # old Georgian web, local index
     lists.append(("crawl", crawl.search(content)))  # trusted sites, own crawl
+    lists.append(("iverieli", iverieli.search(content)))  # National Library catalog: books, journals, press
     near = passages.search(query)                    # Wikipedia paragraphs nearest in meaning
     lists.append(("passages", near))
     qv = vectors([query])[0]
