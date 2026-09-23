@@ -5,62 +5,75 @@
 # The intent with the most matching query words wins; a word in several intents counts for each in part.
 # Ties: the first in this file, so narrow intents come before broad ones (crypto before currency). Its sites get one
 # site: query in round 1 and a ranking bonus (search.INTENT_BONUS). No intent: category "reference".
+# encyclopedia: false = the query wants a service (a pharmacy, a flat, a ticket), not an article: Wikipedia pages
+# that only our local indexes found get the lowest weight (search.LOCAL_FLOOR), however close their title.
 
 weather:
   ka: ამინდი
+  encyclopedia: false
   words: ამინდი პროგნოზი ტემპერატურა ნალექი წვიმა თოვლი ქარი მეტეო სეტყვა ყინვა
   sites: amindi.ge meteo.gov.ge nea.gov.ge amindi.org amindi.info ka.meteotrend.com weather.com
 
 crypto:
   ka: კრიპტოვალუტა
+  encyclopedia: false
   words: ბიტკოინი კრიპტოვალუტა ეთერიუმი კრიპტო ბლოკჩეინი
   sites: coingecko.com coinmarketcap.com binance.com xe.com
 
 currency:
   ka: ვალუტის კურსი
+  encyclopedia: false
   words: კურსი ვალუტა დოლარი ევრო ლარი რუბლი ფუნტი ლირა გაცვლა კონვერტაცია
   sites: nbg.gov.ge myvaluta.ge meter.ge kursi.ge bankofgeorgia.ge tbcbank.ge
 
 banking:
   ka: ბანკები
+  encyclopedia: false
   words: ბანკი სესხი კრედიტი ანაბარი დეპოზიტი ბარათი იპოთეკა განვადება ბანკომატი
   sites: bankofgeorgia.ge tbcbank.ge libertybank.ge credobank.ge procreditbank.ge basisbank.ge nbg.gov.ge
 
 tax:
   ka: გადასახადები
+  encyclopedia: false
   words: გადასახადი საშემოსავლო დღგ დეკლარაცია ბაჟი განბაჟება აქციზი
   sites: rs.ge mof.ge finedu.gov.ge matsne.gov.ge
 
 news:
   ka: სიახლეები
+  encyclopedia: false
   words: სიახლე ახალი_ამბები ამბავი აქცია პროტესტი არჩევნები ინციდენტი ბრიფინგი
   sites: interpressnews.ge netgazeti.ge radiotavisupleba.ge 1tv.ge publika.ge civil.ge tabula.ge on.ge formulanews.ge imedinews.ge
   trusted: news
 
 elections:
   ka: არჩევნები
+  encyclopedia: false
   words: არჩევნები ცესკო ბიულეტენი კანდიდატი პარტია გამოკითხვა მანდატი
   sites: cesko.ge cec.gov.ge civil.ge matsne.gov.ge isfed.ge
   trusted: government
 
 football:
   ka: ფეხბურთი
+  encyclopedia: false
   words: ფეხბურთი ნაკრები ევრო მატჩი გოლი ჩემპიონატი ლიგა ტურნირი ცხრილი მეკარე თავდამსხმელი ტრანსფერი
   sites: gff.ge erovnuliliga.ge nakrebi.ge sportall.ge setantasports.com lelo.ge flashscore.ge goal.ge
 
 rugby:
   ka: რაგბი
+  encyclopedia: false
   words: რაგბი ლელო ბორჯღალოსანი სკრამი
   sites: rugby.ge stat.rugby.ge lelo.ge sportall.ge
 
 sport:
   ka: სპორტი
+  encyclopedia: false
   words: სპორტი კალათბურთი ჭიდაობა ძიუდო ჩოგბურთი ფიგურული ოლიმპიადა ჭადრაკი ცურვა კრივი
   sites: sportall.ge setantasports.com lelo.ge 1tv.ge worldsport.ge
   trusted: sport
 
 recipe:
   ka: რეცეპტები
+  encyclopedia: false
   words: რეცეპტი მომზადება ცომი სოუსი მარინადი ტორტი ნამცხვარი სალათი კერძი ღვეზელი ხაჭაპური ხინკალი მწვადი საცივი ფხალი ჩურჩხელა მურაბა
   sites: gemrielia.ge kulinaria.ge sakhluri.ge receptebi.ge gastronomia.ge radiocafe.ge shenisupra.ge
 
@@ -71,31 +84,37 @@ health:
 
 clinic:
   ka: კლინიკები
+  encyclopedia: false
   words: კლინიკა საავადმყოფო ჰოსპიტალი სტომატოლოგი სტომატოლოგია ფსიქოლოგი ფსიქიატრი ექიმთან ჩაწერა კონსულტაცია
   sites: tsamali.ge med-zahid.ge servisebi.ge aversiclinic.ge evex.ge newhospitals.ge
 
 pharmacy:
   ka: აფთიაქები
+  encyclopedia: false
   words: აფთიაქი წამალი მედიკამენტი აბი ანტიბიოტიკი სიროფი
   sites: aversi.ge psp.ge gpc.ge pharmadepot.ge repharma.ge
 
 documents:
   ka: საბუთები
+  encyclopedia: false
   words: პირადობა პასპორტი მოწმობა ცნობა ნასამართლობა რეგისტრაცია ამონაწერი აპოსტილი ვიზა მოქალაქეობა
   sites: sda.gov.ge my.gov.ge sa.gov.ge psh.gov.ge napr.gov.ge geoconsul.gov.ge mfa.gov.ge
 
 fines:
   ka: ჯარიმები
+  encyclopedia: false
   words: ჯარიმა პატრული საჯარიმო გადახდა ქულა პოლიცია ევაკუატორი
   sites: police.ge pay.ge tbcpay.ge bogpay.ge my.gov.ge
 
 driving:
   ka: მართვის მოწმობა
+  encyclopedia: false
   words: მართვის ავტოსკოლა ბილეთი თეორიული პრაქტიკული გამოცდა ტესტი
   sites: sa.gov.ge teoria.on.ge starti.ge emsi.ge drivex.ge martiviteoria.ge
 
 social_help:
   ka: სოციალური დახმარება
+  encyclopedia: false
   words: პენსია საპენსიო სოციალური დახმარება შემწეობა ვაუჩერი დევნილი სარეიტინგო
   sites: ssa.gov.ge my.gov.ge moh.gov.ge pensions.ge legalaid.ge
 
@@ -112,6 +131,7 @@ labour:
 
 exams:
   ka: გამოცდები
+  encyclopedia: false
   words: გამოცდა ეროვნული_გამოცდები ერთიანი შეფასება ქულა აბიტურიენტი ჩარიცხვა გრანტი სტიპენდია
   sites: naec.ge online.naec.ge mes.gov.ge emis.ge edu.aris.ge abituri.ge
   trusted: education
@@ -130,6 +150,7 @@ university:
 
 languages:
   ka: ენის კურსები
+  encyclopedia: false
   words: ინგლისური გერმანული ფრანგული რუსული ესპანური კურსი ენა რეპეტიტორი
   sites: britishcouncil.ge bekas.school ihtbilisi.ge levels.ge servisebi.ge edu.aris.ge
 
@@ -141,72 +162,86 @@ translation:
 
 jobs:
   ka: ვაკანსიები
+  encyclopedia: false
   words: ვაკანსია სამსახური დასაქმება რეზიუმე მუშაობა შტატი
   sites: hr.ge jobs.ge jobs.ss.ge myjobs.ge samushao.ge joob.ge rivo.ge biznesebi.ge
 
 real_estate:
   ka: უძრავი ქონება
+  encyclopedia: false
   words: ბინა სახლი ქირა ქირავდება იყიდება გაქირავება აგარაკი მიწა ნაკვეთი ოფისი უძრავი
   sites: myhome.ge home.ss.ge ss.ge korter.ge livo.ge home.ge binebi.ge
 
 cars:
   ka: მანქანები
+  encyclopedia: false
   words: ავტომობილი მანქანა ტოიოტა მერსედესი ბმვ ჰიუნდაი ავტონაწილი ნაწილები საბურავი იყიდება
   sites: myauto.ge auto.ss.ge manqanebi.ge autopapa.ge nawilebi.ge
 
 classifieds:
   ka: განცხადებები
+  encyclopedia: false
   words: განცხადება იყიდება ვყიდი ვიყიდი მეორადი ჩუქება
   sites: ss.ge mymarket.ge gancxadebebi.ge livo.ge
 
 shopping:
   ka: შოპინგი
+  encyclopedia: false
   words: ფასი იაფად ფასდაკლება ყიდვა შეძენა მაღაზია აიფონი ტელეფონი ლეპტოპი ტელევიზორი მაცივარი სარეცხი ტექნიკა
   sites: zoommer.ge alta.ge ee.ge megatechnica.ge mymarket.ge veli.store extra.ge ispace.ge
 
 travel:
   ka: მოგზაურობა
+  encyclopedia: false
   words: ტური ტურები მოგზაურობა ექსკურსია დასვენება კურორტი სათხილამურო ლაშქრობა ბილიკი ღირსშესანიშნაობა
   sites: georgia.travel turebi.ge georgiantravelguide.com sunnygeorgia.travel tripify.ge gnta.ge
 
 hotels:
   ka: სასტუმროები
+  encyclopedia: false
   words: სასტუმრო ჰოსტელი კოტეჯი გესტჰაუსი ოთახი დღიურად ჯავშანი
   sites: booking.com sastumroebi.ge hotels.ge airbnb.com
 
 trains_buses:
   ka: მატარებელი და ავტობუსი
+  encyclopedia: false
   words: მატარებელი ავტობუსი მარშრუტკა სადგური ვაგზალი განრიგი რეისი ბილეთი
   sites: railway.ge tkt.ge biletebi.ge ttc.com.ge georgianbus.com
 
 flights:
   ka: ფრენები
+  encyclopedia: false
   words: აეროპორტი ფრენა ავიაბილეთი ჩამოფრენა გაფრენა ავიაკომპანია თვითმფრინავი
   sites: tbilisiairport.com kutaisi.aero batumiairport.com avia.ge tkt.ge
 
 city_transport:
   ka: ქალაქის ტრანსპორტი
+  encyclopedia: false
   words: მეტრო ავტობუსი მარშრუტკა გაჩერება ტაქსი საბაგირო მეტროსადგური
   sites: ttc.com.ge tbilisi.gov.ge moovitapp.com bolt.eu
 
 maps:
   ka: მისამართები
+  encyclopedia: false
   words: მისამართი რუკა სად_მდებარეობს ტელეფონის_ნომერი საათები
   sites: 2gis.ge yell.ge 08.ge maps.google.com
 
 films:
   ka: ფილმები
+  encyclopedia: false
   words: ფილმი სერიალი კინო მულტფილმი ანიმე ტრეილერი ფილმები_ქართულად ქართულად_გახმოვანებული
   sites: adjaranet.com mykadri.tv ge.movie movs.ge kinoafisha.ge gnfc.ge
   trusted: culture
 
 cinema:
   ka: კინოთეატრი
+  encyclopedia: false
   words: კინოთეატრი სეანსი აფიშა კინოს_ბილეთი
   sites: kinoafisha.ge cavea.ge tkt.ge biletebi.ge
 
 tv:
   ka: ტელევიზია
+  encyclopedia: false
   words: ტელევიზია ეთერი ლაივი პირდაპირი_ეთერი არხი გადაცემა
   sites: 1tv.ge imedi.ge rustavi2.ge mtavari.tv formula.ge myvideo.ge
 
@@ -218,6 +253,7 @@ music:
 
 events:
   ka: ღონისძიებები
+  encyclopedia: false
   words: კონცერტი სპექტაკლი თეატრი გამოფენა ფესტივალი ბილეთები ღონისძიება
   sites: tkt.ge biletebi.ge culture.gov.ge rustavelitheatre.ge
 
@@ -241,31 +277,37 @@ religion:
 
 telecom:
   ka: მობილური და ინტერნეტი
+  encyclopedia: false
   words: ინტერნეტი ტარიფი პაკეტი მობილური ოპერატორი ნომერი ბალანსი როუმინგი მაგთი სილქნეტი სელფი
   sites: magticom.ge silknet.com cellfie.ge
 
 utilities:
   ka: კომუნალური
+  encyclopedia: false
   words: დენი ელექტროენერგია წყალი გაზი გადასახადი_კომუნალური ტელასი აბონენტი მრიცხველი ჩაჭრა
   sites: telasi.ge gwp.ge energo-pro.ge
 
 payments:
   ka: გადახდები
+  encyclopedia: false
   words: გადახდა ბალანსის_შევსება ტერმინალი ჩარიცხვა გზავნილი
   sites: pay.ge tbcpay.ge bogpay.ge emoney.ge
 
 food_delivery:
   ka: საჭმლის მიტანა
+  encyclopedia: false
   words: მიტანა შეკვეთა პიცა ბურგერი სუში რესტორანი კაფე მენიუ
   sites: wolt.com glovoapp.com
 
 tech_help:
   ka: ტექნიკური დახმარება
+  encyclopedia: false
   words: არ_მუშაობს ნელა_მუშაობს არ_ირთვება როგორ_შევცვალო როგორ_დავაყენო პაროლი ვაიფაი როუტერი კომპიუტერი ტელეფონი ვინდოუსი ანდროიდი აიფონი აპლიკაცია პროგრამა პრინტერი პულტი
   sites: rogor.ge forum.ge magticom.ge silknet.com
 
 parenting:
   ka: მშობლები
+  encyclopedia: false
   words: ბავშვი ჩვილი ორსული მშობელი ბაღი ძუძუ ძიძა
   sites: mshoblebi.ge modernmoms.ge babyexpress.ge dedamicis.ge
 

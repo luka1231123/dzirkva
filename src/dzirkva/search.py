@@ -75,7 +75,7 @@ MEANING_WEIGHT = 1.5    # meaning rank vs engine rank in the final fusion
 MEANING_TOP = 40        # results (engine order) compared by meaning; the rest keep their engine rank
 COVERAGE_FLOOR = 0.2    # score × (floor + (1 - floor) × coverage)
 LOCAL_FLOOR = 0.3       # a Wikipedia/Wikisource page only our local indexes found: × (floor + (1 - floor) × title fit)
-TITLE_FIT = (0.45, 0.65)  # title-query similarity: filler 0.23-0.55, the right article 0.60-1.00 → fit 0..1
+TITLE_FIT = (0.5, 0.65)   # title-query similarity: filler 0.23-0.55, the right article 0.60-1.00 → fit 0..1
 LOCAL_LISTS = {"wikipedia", "wikisource", "passages"}
 FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every query word
 COPY_SIMILARITY = 0.6   # word overlap (Jaccard) of two snippets that makes them copies
@@ -178,7 +178,8 @@ def intents() -> dict[str, dict]:
     for name, it in yaml.safe_load(INTENTS_FILE.read_text(encoding="utf-8")).items():
         words = it["words"].split()
         sites = it["sites"].split() + (by_category(it["trusted"]) if "trusted" in it else [])
-        out[name] = {"ka": it["ka"], "words": {w for w in words if "_" not in w},
+        out[name] = {"ka": it["ka"], "encyclopedia": it.get("encyclopedia", True),
+                     "words": {w for w in words if "_" not in w},
                      "phrases": [w.replace("_", " ") for w in words if "_" in w], "sites": list(dict.fromkeys(sites))}
     return out
 
@@ -417,7 +418,8 @@ def _title_fit(r: Result, content: list[str], qv) -> float:
     return min(max((sim - low) / (high - low), 0.0), 1.0)
 
 
-def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, answer=None) -> list[Result]:
+def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, answer=None,
+                    encyclopedia: bool = True) -> list[Result]:
     """Final order: fusion of the engine rank and the meaning rank.
 
     Meaning = similarity to the question; with an answer vector, the mean of both. Only the top
@@ -425,6 +427,8 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
     rank 40 seldom reach the top 10, so they keep their engine rank as their meaning rank.
     A Wikipedia or Wikisource page that only our local indexes found needs its title to be about the query
     (_title_fit): the body of a long article mentions every word somewhere (აფთიაქი ღამის → აღდგომის კუნძული).
+    A query that wants a service (encyclopedia=False: a pharmacy, a flat) gets no such page high, however close
+    its title (აფთიაქი ღამის → პოლარული ღამე).
     """
     qtype = question_type(query)
     shape = re.compile(SHAPES[qtype][1]) if qtype else None
@@ -441,7 +445,7 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
             r.score *= 1 + SHAPE_BONUS
         r.score *= 1 + CLICK_BONUS * min(r.clicks, CLICK_MAX)
         if r.queries <= LOCAL_LISTS:  # no web engine found it: a long article mentions every word somewhere
-            r.score *= LOCAL_FLOOR + (1 - LOCAL_FLOOR) * _title_fit(r, content, qv)
+            r.score *= LOCAL_FLOOR + (1 - LOCAL_FLOOR) * (_title_fit(r, content, qv) if encyclopedia else 0.0)
     return sorted(results, key=lambda r: r.score, reverse=True)
 
 
@@ -520,7 +524,8 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     explain = question_type(query) in ANSWER_TYPES and bool(near)
     answer_v = answer_vector(near) if explain else None
     merged = merge(lists, content, cited, clicked, named_hosts, wanted)
-    first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v)
+    encyclopedia = intents()[want]["encyclopedia"] if want else True
+    first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia)
     t1 = time.time()
     covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]
     terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
@@ -536,7 +541,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
         lists += asyncio.run(fan_out(more))
     merged = merge(lists, content, cited, clicked, named_hosts, wanted)
     results = group_copies(rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv,
-                                           answer_v))
+                                           answer_v, encyclopedia))
     for i, r in enumerate(results, 1):
         r.rank = i
     # why/how: no answer text (a wrong paragraph reads like a fact), only the nearest articles to read
