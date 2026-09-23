@@ -74,6 +74,8 @@ FEEDBACK_MIN_IDF = 4.0  # ignore common words (idf of მსოფლიოშ�
 MEANING_WEIGHT = 1.5    # meaning rank vs engine rank in the final fusion
 MEANING_TOP = 40        # results (engine order) compared by meaning; the rest keep their engine rank
 COVERAGE_FLOOR = 0.2    # score × (floor + (1 - floor) × coverage)
+LOCAL_FLOOR = 0.3       # a Wikipedia/Wikisource page only our local indexes found: × (floor + (1 - floor) × title coverage)
+LOCAL_LISTS = {"wikipedia", "wikisource", "passages"}
 FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every query word
 COPY_SIMILARITY = 0.6   # word overlap (Jaccard) of two snippets that makes them copies
 # Question word → the shape of a text that answers it. A result with that shape gets SHAPE_BONUS.
@@ -261,12 +263,12 @@ def _is_verb(word: str) -> bool:
     return analyze(word)[0].pos == "verb"
 
 
-def coverage(text: str, content: list[str]) -> float:
+def coverage(text: str, content: list[str], verbs: bool = False) -> float:
     """Share of query words present in the text in any form, weighted by rarity (idf).
 
-    Verbs do not count: answers rephrase them (დავუწიო → სიცხის დამწევი, ღირს → კურსი).
+    Verbs do not count: answers rephrase them (დავუწიო → სიცხის დამწევი, ღირს → კურსი). A title check counts them.
     """
-    content = [w for w in content if not _is_verb(w)] or content
+    content = content if verbs else [w for w in content if not _is_verb(w)] or content
     toks = re.findall(r"\w+", normalize(text))
     text_fams = {f for w in toks for f in families(w)} | set(toks)
     weights = [(_idf(w), bool(families(w) & text_fams) or w in text_fams) for w in content]
@@ -402,12 +404,14 @@ def wiki_snippets(results: list[Result], qv, content: list[str]) -> list[Result]
     return results
 
 
-def rank_by_meaning(query: str, results: list[Result], qv, answer=None) -> list[Result]:
+def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, answer=None) -> list[Result]:
     """Final order: fusion of the engine rank and the meaning rank.
 
     Meaning = similarity to the question; with an answer vector, the mean of both. Only the top
     MEANING_TOP results in engine order get a vector (cached, meaning.cached_vectors); results below
     rank 40 seldom reach the top 10, so they keep their engine rank as their meaning rank.
+    A Wikipedia or Wikisource page that only our local indexes found needs its title to be about the query:
+    the body of a long article mentions every word somewhere (აფთიაქი ღამის → აღდგომის კუნძული).
     """
     qtype = question_type(query)
     shape = re.compile(SHAPES[qtype][1]) if qtype else None
@@ -423,6 +427,8 @@ def rank_by_meaning(query: str, results: list[Result], qv, answer=None) -> list[
         if shape and shape.search(r.snippet):
             r.score *= 1 + SHAPE_BONUS
         r.score *= 1 + CLICK_BONUS * min(r.clicks, CLICK_MAX)
+        if r.queries <= LOCAL_LISTS:  # no web engine found it: a long article mentions every word somewhere
+            r.score *= LOCAL_FLOOR + (1 - LOCAL_FLOOR) * coverage(r.title, content, verbs=True)
     return sorted(results, key=lambda r: r.score, reverse=True)
 
 
@@ -501,7 +507,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     explain = question_type(query) in ANSWER_TYPES and bool(near)
     answer_v = answer_vector(near) if explain else None
     merged = merge(lists, content, cited, clicked, named_hosts, wanted)
-    first = rank_by_meaning(query, wiki_snippets(merged, qv, content), qv, answer_v)
+    first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v)
     t1 = time.time()
     covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]
     terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
@@ -516,7 +522,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
         qs.update(more)
         lists += asyncio.run(fan_out(more))
     merged = merge(lists, content, cited, clicked, named_hosts, wanted)
-    results = group_copies(rank_by_meaning(query, wiki_snippets(merged, qv, content), qv,
+    results = group_copies(rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv,
                                            answer_v))
     for i, r in enumerate(results, 1):
         r.rank = i
