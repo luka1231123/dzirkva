@@ -1,0 +1,6 @@
+eval/queries.tsv
+.env
+.venv/
+vendor/
+data/
+__pycache__/

@@ -1,0 +1,14 @@
+use_default_settings:
+  engines:
+    keep_only: [google, bing, brave]
+general:
+  instance_name: dzirkva
+search:
+  formats: [html, json]
+server:
+  bind_address: 127.0.0.1
+  port: 8888
+  limiter: false
+  image_proxy: false
+outgoing:
+  request_timeout: 6.0
