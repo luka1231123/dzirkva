@@ -1,6 +1,13 @@
+# Engines tested with Georgian queries (2026-09):
+#   google  - good, but blocks with CAPTCHA after fast bursts (SearXNG then suspends it)
+#   yandex  - good Georgian index
+#   yahoo   - Bing's index, handles Georgian queries
+#   bing    - REMOVED: ignores Georgian queries, returns random English pages
+#   brave   - REMOVED: scraper gets rate-limited; the official Brave API is used instead
+#   duckduckgo, qwant - REMOVED: CAPTCHA
 use_default_settings:
   engines:
-    keep_only: [google, bing, brave]
+    keep_only: [google, yandex, yahoo]
 general:
   instance_name: dzirkva
 search:
@@ -12,8 +19,8 @@ server:
   image_proxy: false
 outgoing:
   request_timeout: 6.0
-engines:  # google and bing are disabled in SearXNG's defaults
+engines:  # google and yandex are disabled in SearXNG's defaults
   - name: google
     disabled: false
-  - name: bing
+  - name: yandex
     disabled: false

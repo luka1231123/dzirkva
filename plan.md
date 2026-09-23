@@ -35,11 +35,13 @@ Budget rules:
 - [x] Found: Google blocks SearXNG with CAPTCHA after a few dozen fast queries → session 4 needs per-engine limits + Brave API fallback
 
 ## Session 4: Query variants and fan-out (`src/dzirkva/search.py`)
-- [ ] 5–8 variants per query: original, normalized, stem form, Latin fix, spelling fix, `site:` variants by category
-- [ ] Send all variants in parallel: SearXNG for most, Brave API for 1–2
-- [ ] Merge with RRF: pages found by many variants rank higher
-- [ ] Bonus for trusted-source tier
-- [ ] Remove duplicate URLs (normalize `www`, `http/https`, tracking parameters)
+- [x] Variants: original, corrected (Latin → Georgian, typos), lemmas, expanded (OR groups of forms, family members, Wiktionary synonyms), `site:` by detected category
+- [x] Category detection from query words (law, history, reference, religion, education, government, news, culture)
+- [x] Parallel fan-out: SearXNG for all variants (0.3 s spacing), Brave API for 2 (corrected/original + lemmas)
+- [x] Merge with RRF + tier bonus + word-family match bonus (query families in title/snippet)
+- [x] Duplicate URLs removed (https, no www, no tracking parameters, no fragment)
+- [x] Engines re-tested with Georgian: Google + Yandex + Yahoo kept; Bing (junk for Georgian), Brave scraper, DuckDuckGo, Qwant removed
+- [x] Synonyms: 4,126 pairs from Wiktionary (`data/synonyms.tsv`)
 
 ## Session 5: Filter, rerank, cache
 - [ ] Georgian filter: keep results with >50% Georgian letters in title + snippet

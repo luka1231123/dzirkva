@@ -18,6 +18,7 @@ from pathlib import Path
 from dzirkva.georgian import freq
 
 LEXICON_FILE = Path(__file__).resolve().parents[2] / "data" / "lexicon.tsv"
+SYNONYMS_FILE = LEXICON_FILE.with_name("synonyms.tsv")
 VOWELS = set("აეიოუ")
 SYNCOPE_BEFORE = set("ლრნმვ")  # წყალ-ი -> წყლ-ის, ფანჯარ-ა -> ფანჯრ-ის, სოფელ-ი -> სოფლ-ის
 
@@ -220,6 +221,35 @@ def analyze(word: str, exact: bool = True) -> tuple[Analysis, ...]:
     seen: set[str] = set()
     out = [a for a in out if not (a.family in seen or seen.add(a.family))]
     return tuple(out) or (Analysis(word, "?", word, "unknown"),)
+
+
+@cache
+def _members() -> dict[str, list[str]]:
+    """family -> its lemmas, most frequent first."""
+    out: dict[str, list[str]] = {}
+    for lemma, fam in _lexicon()[1].items():
+        out.setdefault(fam, []).append(lemma)
+    return {f: sorted(ls, key=freq, reverse=True) for f, ls in out.items()}
+
+
+def family_members(family: str) -> list[str]:
+    return _members().get(family, [])
+
+
+@cache
+def _synonyms() -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    if SYNONYMS_FILE.exists():
+        with open(SYNONYMS_FILE, encoding="utf-8") as f:
+            for line in f:
+                a, b = line.rstrip("\n").split("\t")
+                out.setdefault(a, []).append(b)
+    return out
+
+
+def synonyms(lemma: str) -> list[str]:
+    """Wiktionary synonyms of a lemma, most frequent first."""
+    return sorted(_synonyms().get(lemma, []), key=freq, reverse=True)
 
 
 def lemmas(word: str) -> list[str]:

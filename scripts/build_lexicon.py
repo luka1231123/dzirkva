@@ -1,6 +1,7 @@
 """Build the Georgian lexicon from Wiktionary (kaikki.org JSONL).
 
 Output data/lexicon.tsv: form<TAB>lemma<TAB>pos<TAB>family
+       data/synonyms.tsv: word<TAB>synonym (both directions, single words only)
 - lemma: the dictionary headword (nouns: nominative; verbs: 3rd person present, e.g. ხედავს)
 - family: one id for a whole word family: the verb, its verbal noun (ხედვა, დანახვა),
   participles, passives, and preverb variants (წერს, ჩაწერს). Id = most frequent member.
@@ -48,6 +49,7 @@ def join(a: str, b: str) -> None:
 
 
 rows: set[tuple[str, str, str]] = set()  # (form, lemma, pos)
+synonyms: set[tuple[str, str]] = set()
 
 with open(DATA / "kaikki-ka.jsonl", encoding="utf-8") as f:
     for line in f:
@@ -81,6 +83,10 @@ with open(DATA / "kaikki-ka.jsonl", encoding="utf-8") as f:
             if "noun-from-verb" in tags or "participle" in tags:
                 join(fw, word)
             rows.add((fw, word, pos))
+        for syn in d.get("synonyms", []) + [x for sense in d.get("senses", []) for x in sense.get("synonyms", [])]:
+            w2 = syn.get("word", "")
+            if GEORGIAN.match(w2) and w2 != word:
+                synonyms.update({(word, w2), (w2, word)})
         for rel in d.get("related", []) + d.get("derived", []):
             r = rel.get("word", "")
             if GEORGIAN.match(r) and any(r == p + word or word == p + r for p in PREVERBS):
@@ -121,4 +127,8 @@ with open(DATA / "lexicon.tsv", "w", encoding="utf-8") as out:
     for form, lemma, pos in sorted(rows):
         out.write(f"{form}\t{lemma}\t{pos}\t{family_id[find(lemma)]}\n")
 
+with open(DATA / "synonyms.tsv", "w", encoding="utf-8") as out:
+    out.writelines(f"{a}\t{b}\n" for a, b in sorted(synonyms))
+
+print(f"{len(synonyms):,} synonym pairs")
 print(f"{len(rows):,} rows, {len({r[1] for r in rows}):,} lemmas, {len(members):,} families")
