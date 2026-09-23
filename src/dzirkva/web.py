@@ -103,12 +103,6 @@ mark.fb{background:var(--fb);border-radius:3px;padding:0 2px}
 
 
 
-def _answer_text(a: dict) -> str:
-    """Answer box text; a paragraph answer shows its sentence nearest to the question in bold."""
-    if "more" not in a:
-        return escape(a["text"])
-    return escape(a["more"]).replace(escape(a["text"]), f"<b>{escape(a['text'])}</b>", 1)
-
 def _page(q: str, body: str) -> str:
     return (f"<!doctype html><html lang=ka><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{escape(q) + ' · ' if q else ''}ძირკვა</title>"
@@ -331,7 +325,10 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
         body += _definition(d)
     elif (a := debug.get("answer")) and tab == "all" and not chosen:
         body += (f"<div class=ans><a class=t href='{escape(a['url'])}'>{escape(a['title'])}</a>"
-                 f"<p>{_answer_text(a)}</p><div class=cap>{cap('ვიკიპედია')}</div></div>")
+                 f"<p>{escape(a['text'])}</p><div class=cap>{cap('ვიკიპედია')}</div></div>")
+    elif (links := debug.get("wiki_links")) and tab == "all" and not chosen:
+        body += ("<div class=ans>" + "<br>".join(f"<a class=t href='{escape(u)}'>{escape(t)}</a>" for t, u in links)
+                 + f"<div class=cap>{cap('წაიკითხეთ ვიკიპედიაში')}</div></div>")
     body += (f"<details class=dbg open><summary>{cap(f"როგორ ვიპოვეთ · {len(results)} შედეგი · {debug['seconds']['total']} წმ")}</summary>"
              f"<div>საძიებო სიტყვები: {escape(' · '.join(debug['content']))}</div>"
              f"<div>კითხვა: {QUESTION.get(debug['type'], '—')}</div>"

@@ -75,9 +75,8 @@ SHAPES = {
     "amount": ("რამდენი ღირს", r"\d"),
 }
 SHAPE_BONUS = 0.3
-ANSWER_TYPES = ("why", "how")  # answer box from the nearest paragraph
-ANSWER_MIN = 0.62       # meaning score of that paragraph (full index: answer 0.65, eclipse for "ბნელდება" 0.61)
-ANSWER_FROM = 5         # read the 5 nearest paragraphs
+ANSWER_TYPES = ("why", "how")  # explanation questions
+WIKI_LINKS = 3          # why/how: links to the Wikipedia articles nearest in meaning
 ANSWER_VECTOR = 3       # why/how: results are also compared with the mean of the 3 nearest paragraphs
 RELATED = 8             # related searches under the results
 BRAVE_QUERIES = ("corrected", "lemmas")      # Brave API: monthly quota
@@ -294,23 +293,6 @@ def question_type(query: str) -> str | None:
     return None
 
 
-def passage_answer(qtype: str | None, near: list[dict], qv) -> dict | None:
-    """Answer box for why/how questions: the nearest paragraph that has the answer shape (რადგან …).
-
-    `text` is its sentence nearest to the question, `more` the whole paragraph.
-    """
-    if qtype not in ANSWER_TYPES:
-        return None
-    shape = re.compile(SHAPES[qtype][1])
-    for p in near[:ANSWER_FROM]:
-        if p["score"] >= ANSWER_MIN and shape.search(p["snippet"]):
-            sents = [s for s in re.split(r"(?<=[.!?])\s+", p["snippet"]) if s.strip()]
-            best = sents[int(np.argmax(vectors(sents) @ qv))]
-            return {"title": p["title"].removesuffix(" — ვიკიპედია"), "text": best, "more": p["snippet"],
-                    "url": p["url"]}
-    return None
-
-
 def answer_vector(near: list[dict]):
     """Questions and answers read differently (რატომ წითლდება ≠ მიმოფანტვის გამო): the mean of the
     nearest paragraphs is a vector of the answer, like HyDE but with real paragraphs, no LLM."""
@@ -418,10 +400,13 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
         lists += asyncio.run(fan_out(more))
     results = group_copies(rank_by_meaning(query, wiki_snippets(merge(lists, content), qv, content), known, qv,
                                            answer_v))
-    answer = wiki.article(content) or passage_answer(question_type(query), near, qv)
+    answer = wiki.article(content)
+    # why/how: no answer text (a wrong paragraph reads like a fact), only the nearest articles to read
+    links = [(p["title"].removesuffix(" — ვიკიპედია"), p["url"]) for p in near[:WIKI_LINKS]] if explain else []
     wiki_hits = next(res for name, res in lists if name == "wikipedia")
     debug = {
         "content": content, "type": question_type(query), "spelling": fixes, "feedback": terms, "answer": answer,
+        "wiki_links": links,
         "related": related(content, base, terms, wiki_hits, near, answer),
         "definition": dictionary.define(qs.get("corrected", query)),  # "სახლი რას ნიშნავს"
         "counts": {name: len(res) for name, res in lists},
