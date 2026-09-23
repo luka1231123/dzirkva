@@ -7,6 +7,7 @@ import sqlite3
 from functools import cache
 from pathlib import Path
 from urllib.parse import quote
+from urllib.parse import quote
 
 from dzirkva.georgian import freq
 from dzirkva.morph import analyze, families, forms_of
@@ -76,3 +77,20 @@ def article(words: list[str]) -> dict | None:
         return None
     _, title, body = best
     return {"title": title, "text": _opening(body), "url": WIKI_URL + quote(title.replace(" ", "_"))}
+
+
+def search(words: list[str], limit: int = 20) -> list[dict]:
+    """Articles with all words (any form), title matches weigh 10×; if too few, any of the words."""
+    db = _db()
+    if db is None or not words:
+        return []
+    rows = []
+    for op in (" AND ", " OR "):
+        expr = op.join(any_form(w) for w in words)
+        rows = db.execute(
+            "SELECT title, snippet(wiki, 1, '', '', '…', 30) FROM wiki WHERE wiki MATCH ? "
+            "ORDER BY bm25(wiki, 10, 1) LIMIT ?", (expr, limit)).fetchall()
+        if len(rows) >= 5 or len(words) == 1:
+            break
+    return [{"url": "https://ka.wikipedia.org/wiki/" + quote(title.replace(" ", "_")), "title": f"{title} — ვიკიპედია",
+             "snippet": snip, "engine": "wikipedia"} for title, snip in rows]

@@ -300,6 +300,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     t0 = time.time()
     qs, content, fixes = round1_queries(query)
     lists = asyncio.run(fan_out(qs, BRAVE_QUERIES if "corrected" in qs else ("original", "lemmas")))
+    lists.append(("wikipedia", wiki.search(content)))   # local Georgian Wikipedia, every search
     lists.append(("archive", archive.search(content)))  # old Georgian web, local index
     lists.append(("crawl", crawl.search(content)))  # trusted sites, own crawl
     known: dict[str, float] = {}

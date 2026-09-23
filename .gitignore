@@ -4,3 +4,4 @@ eval/queries.tsv
 vendor/
 data/
 __pycache__/
+.DS_Store
