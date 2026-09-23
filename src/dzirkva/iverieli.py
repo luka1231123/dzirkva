@@ -46,7 +46,7 @@ def parse(xml: bytes) -> tuple[list[tuple], str | None, int]:
             continue
         dc = lambda f: [(e.text or "").strip() for e in rec.iterfind(f".//dc:{f}", NS) if (e.text or "").strip()]
         handle = next((re.sub(r"^.*/handle/", "", i) for i in dc("identifier") if "/handle/" in i), None)
-        if not handle:
+        if not handle or any("Image" in t for t in dc("type")):  # single photos and posters: no text to find
             continue
         issued = next((d for d in dc("date") if "T" not in d), "")  # the others are upload times
         rows.append((handle, " — ".join(dc("title")), "; ".join(dc("creator") + dc("contributor")),
