@@ -122,6 +122,14 @@ def from_keyboard(text: str) -> str:
     return "".join(KEYBOARD.get(c, KEYBOARD.get(c.lower(), c)) if c.isascii() and c.isalpha() else c for c in text)
 
 
+# Georgian → Latin as site names write it (silknet, magti, bolt, amindi).
+TO_LATIN = dict(zip(ALPHABET, "a b g d e v z t i k l m n o p zh r s t u p k gh q sh ch ts dz ts ch kh j h".split()))
+
+
+def to_latin(word: str) -> str:
+    return "".join(TO_LATIN.get(c, c) for c in word)
+
+
 def _phonetic_options(word: str) -> list[str]:
     options, i = [], 0
     while i < len(word):

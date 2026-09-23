@@ -37,6 +37,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 - `config/searxng.yml` — engines: google, yandex, yahoo (tested with Georgian; reasons in the file). Google blocks fast bursts with CAPTCHA.
 - `config/easter_eggs.yaml` — query → one Mtavruli line above the results (აფხაზეთი → აფხაზეთი საქართველოა)
 - `config/sources.yaml` + `src/dzirkva/sources.py` — trusted Georgian sites: category and tier; check with `uv run python scripts/check_sources.py`
+- Named sites (`sources.named_sites`): query names a site → its pages rank higher, and a navigational query (name = half the words or more) also searches `site:` and shows the home page. Names from Wikidata: `uv run python scripts/build_sites.py` (→ `data/sites.tsv`, ~2 min, QLever endpoint); Georgian site names and languages from Common Crawl: `data/cc_hosts.db` (`scripts/cc_hosts.py`). Sites that write mostly Georgian pass the Georgian filter even with a Latin title.
 - `vendor/searxng` — SearXNG source, own venv (gitignored)
 - `.env` — `BRAVE_API_KEY`, `SEARXNG_SECRET` (gitignored)
 

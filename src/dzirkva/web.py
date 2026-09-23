@@ -36,7 +36,7 @@ SITE_LIMIT = {"ka.wikipedia.org": 2, "ka.wikisource.org": 1}  # local indexes mu
 MAX_SOCIAL = 3  # social posts in the main list (all social sites together)
 ENGINE_NAMES = {"google": "გუგლი", "yandex": "იანდექსი", "yahoo": "იაჰუ", "brave-api": "ბრეივი",
                 "wikipedia": "ვიკიპედია", "passages": "ვიკიპედია (აზრით)", "archive": "ძველი ვები", "crawl": "ჩვენი ინდექსი", "iverieli": "ივერიელი", "wikisource": "ვიკიწყარო",
-                "cited": "ვიკიპედიის წყაროები"}
+                "cited": "ვიკიპედიის წყაროები", "named": "დასახელებული საიტი"}
 KIND_NAMES = {"knowledge": "ცოდნა", "news": "სიახლე", "web": "ვები", "forum": "ფორუმი", "social": "სოციალური ქსელი",
               "video": "ვიდეო", "film": "ფილმი"}
 CATEGORY_NAMES = {"reference": "ცნობარი", "law": "სამართალი", "history": "ისტორია", "religion": "რელიგია",
@@ -162,6 +162,8 @@ def _query_name(name: str) -> str:
              "lemmas:corrected": "გასწორებულის ლექსიკონის ფორმები"}
     if kind == "site":
         return f"სანდო საიტები: {CATEGORY_NAMES.get(arg, arg)}"
+    if kind == "named":
+        return f"დასახელებული საიტი: {arg}"
     if kind == "feedback":
         return f"პასუხის სიტყვა: {arg}"
     return fixed.get(name) or ENGINE_NAMES.get(name, name)

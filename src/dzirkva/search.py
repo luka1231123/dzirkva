@@ -36,7 +36,7 @@ from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize,
 from dzirkva.meaning import cached_vectors, vectors
 from dzirkva.morph import analyze, families, family_members
 from dzirkva import archive, clicks, crawl, dictionary, iverieli, passages, wiki
-from dzirkva.sources import by_category, kind, lookup, tags
+from dzirkva.sources import by_category, georgian_hosts, host, kind, lookup, named_sites, tags
 
 # Question words and function words: dropped from keyword queries and feedback terms.
 STOPWORDS = set(
@@ -64,6 +64,8 @@ RRF_K = 60
 TIER_BONUS = {1: 0.5, 2: 0.25, 3: 0.0}
 SMALL_BONUS = 0.25     # small, non-commercial, Georgian site found by the crawl (crawl.small_site)
 CITED_BONUS = 0.5      # page cited by a Wikipedia article that matches the query
+NAMED_BONUS = 1.0      # page on a site the query names (ფეისბუქი → facebook.com)
+NAVIGATIONAL = 0.5     # the name covers this share of the query words: search the site itself, show its home page
 CITING_ARTICLES = 3    # articles read for citations: top word matches + top meaning matches (+ answer box)
 CLICK_BONUS = 0.3      # × good clicks on the same question (max CLICK_MAX)
 CLICK_MAX = 3
@@ -108,6 +110,7 @@ class Result:
     georgian: float = 0.0
     coverage: float = 0.0
     small: bool = False
+    named: bool = False
     cited: bool = False
     clicks: int = 0        # good clicks on this page for the same question
     rank: int = 0          # position in the final list (1 = first)
@@ -173,8 +176,8 @@ def _category(content: list[str]) -> str:
     return next((c for c, ws in INTENT.items() if any(f in fams for f in ws.split())), DEFAULT_CATEGORY)
 
 
-def round1_queries(query: str) -> tuple[dict[str, str], list[str], dict[str, str]]:
-    """Simple recall queries, the content words as typed, and the spelling fixes to check.
+def round1_queries(query: str) -> tuple[dict[str, str], list[str], dict[str, str], list[tuple[str, float, str]]]:
+    """Simple recall queries, the content words as typed, the spelling fixes to check, and the sites the query names.
 
     The query is always searched as typed (Latin letters turned into Georgian) and with its dictionary forms.
     Words that look like typos are also searched corrected; confirm_fixes decides after round 1."""
@@ -187,11 +190,16 @@ def round1_queries(query: str) -> tuple[dict[str, str], list[str], dict[str, str
     sites = " OR ".join(f"site:{d}" for d in by_category(cat)[:SITES_PER_QUERY])
     qs = {"original": query, "corrected": " ".join(fixes.get(w, w) for w in typed), "lemmas": lemmas,
           "lemmas:corrected": fixed_lemmas, f"site:{cat}": f"{fixed_lemmas} ({sites})"}
+    named = named_sites(query.split(), fixed, fixed_lemmas.split())
+    for h, share, name in named[:1]:
+        if share >= NAVIGATIONAL:  # ფეისბუქი შესვლა → შესვლა site:facebook.com
+            rest = [w for w in fixed if w not in name.split() and _lemma(w) not in name.split()]
+            qs[f"named:{h}"] = " ".join(rest + [f"site:{h}"])
     unique: dict[str, str] = {}
     for name, q in qs.items():
         if q not in unique.values():
             unique[name] = q
-    return unique, content, fixes
+    return unique, content, fixes, named
 
 
 def _uses(word: str, texts: list[str]) -> int:
@@ -288,7 +296,8 @@ def _family_share(text: str, query_fams: list[set[str]]) -> float:
 
 
 def _trust(r: Result) -> float:
-    return max(TIER_BONUS.get(r.tier, 0.0), SMALL_BONUS if r.small else 0.0, CITED_BONUS if r.cited else 0.0)
+    return max(TIER_BONUS.get(r.tier, 0.0), SMALL_BONUS if r.small else 0.0, CITED_BONUS if r.cited else 0.0,
+               NAMED_BONUS if r.named else 0.0)
 
 
 def _wiki_page(url: str) -> tuple[str, str] | None:
@@ -299,7 +308,7 @@ def _wiki_page(url: str) -> tuple[str, str] | None:
 
 
 def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[str] = frozenset(),
-          clicked: Counter[str] = Counter()) -> list[Result]:
+          clicked: Counter[str] = Counter(), named: set[str] = frozenset()) -> list[Result]:
     """RRF over all lists (Wikipedia pages: best rank only), Georgian filter, trust tier and word-family bonuses.
 
     cited: canonical URLs of the pages the matching Wikipedia articles cite; clicked: good clicks per canonical URL."""
@@ -318,7 +327,9 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[st
     out = []
     for m in merged.values():
         m.georgian = georgian_ratio(m.title + " " + m.snippet)
-        if m.georgian < MIN_GEORGIAN:
+        h = host(m.url)
+        m.named = h in named or any(h.endswith("." + n) for n in named)
+        if m.georgian < MIN_GEORGIAN and not m.named and h not in georgian_hosts():  # Latin title, Georgian site
             continue
         m.category, m.tier = lookup(m.url) or (None, None)
         m.kind = kind(m.url)
@@ -424,8 +435,11 @@ def click_key(content: list[str]) -> str:
 def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     """Returns the queries sent, the ranked results, and debug information (with the answer box)."""
     t0 = time.time()
-    qs, typed, fixes = round1_queries(query)
+    qs, typed, fixes, named = round1_queries(query)
     lists = asyncio.run(fan_out(qs, BRAVE_QUERIES if "corrected" in qs else ("original", "lemmas")))
+    named_hosts = {h for h, _, _ in named}
+    lists.append(("named", [{"url": f"https://{h}/", "title": name, "snippet": "", "engine": "named"}
+                            for h, share, name in named if share >= NAVIGATIONAL]))
     fixes, suggested = confirm_fixes(fixes, lists)
     content = [fixes.get(w, w) for w in typed]
     lists.append(("wikipedia", wiki.search(content)))   # local Georgian Wikipedia, every search
@@ -451,7 +465,8 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     # the covered snippets (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
     explain = question_type(query) in ANSWER_TYPES and bool(near)
     answer_v = answer_vector(near) if explain else None
-    first = rank_by_meaning(query, wiki_snippets(merge(lists, content, cited, clicked), qv, content), qv, answer_v)
+    merged = merge(lists, content, cited, clicked, named_hosts)
+    first = rank_by_meaning(query, wiki_snippets(merged, qv, content), qv, answer_v)
     t1 = time.time()
     covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]
     terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
@@ -465,14 +480,15 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     if more:
         qs.update(more)
         lists += asyncio.run(fan_out(more))
-    results = group_copies(rank_by_meaning(query, wiki_snippets(merge(lists, content, cited, clicked), qv, content), qv,
+    merged = merge(lists, content, cited, clicked, named_hosts)
+    results = group_copies(rank_by_meaning(query, wiki_snippets(merged, qv, content), qv,
                                            answer_v))
     for i, r in enumerate(results, 1):
         r.rank = i
     # why/how: no answer text (a wrong paragraph reads like a fact), only the nearest articles to read
     links = [(p["title"].removesuffix(" — ვიკიპედია"), p["url"]) for p in near[:WIKI_LINKS]] if explain else []
     debug = {
-        "content": content, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "read_as": " ".join(fixes.get(w, w) for w in map(_fix_word, query.split())), "feedback": terms, "answer": answer,
+        "content": content, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "named": [h for h, _, _ in named], "read_as": " ".join(fixes.get(w, w) for w in map(_fix_word, query.split())), "feedback": terms, "answer": answer,
         "wiki_links": links,
         "related": related(content, base, terms, wiki_hits, near, answer),
         "definition": dictionary.define(qs.get("corrected", query)),  # "სახლი რას ნიშნავს"
