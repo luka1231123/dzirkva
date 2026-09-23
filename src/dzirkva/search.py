@@ -39,7 +39,7 @@ from dzirkva import engines
 from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, typo_weight, words
 from dzirkva.meaning import cached_vectors, vectors
 from dzirkva.morph import analyze, families, family_members
-from dzirkva import archive, clicks, crawl, dictionary, iverieli, passages, wiki
+from dzirkva import archive, clicks, crawl, dictionary, iverieli, papers, passages, wiki
 from dzirkva.sources import by_category, georgian_hosts, host, kind, lookup, named_sites, tags
 
 # Question words and function words: dropped from keyword queries and feedback terms.
@@ -378,7 +378,7 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[st
         m.small = crawl.small_site(m.url)
         m.cited = canonical_url(m.url) in cited
         m.clicks = clicked[canonical_url(m.url)]
-        m.tags = tags(m.url, m.title, crawl.domain_signals(m.url), m.small)
+        m.tags = tags(m.url, m.title, crawl.domain_signals(m.url), m.small, papers.is_repo(m.url))
         m.score *= 1 + _trust(m) + FAMILY_BONUS * _family_share(m.text, query_fams)
         out.append(m)
     return sorted(out, key=lambda m: m.score, reverse=True)

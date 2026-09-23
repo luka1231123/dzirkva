@@ -7,7 +7,7 @@ Domains (table `domains`):
   (cited pages first). Full budget only if its pages are >30% Georgian and it is not commercial.
 Rules, no ML (signals in the HTML of each page, collected per domain):
 - commercial score: ad/tracker scripts 1, WooCommerce 2, shop page (3+ shop words on one page: კალათა, ყიდვა, ₾ …) 2
-- kind: academic (.edu, OJS, DSpace, or two of ISSN / DOI / ანოტაცია), blog (Blogger, WordPress, blogspot, RSS)
+- kind: academic (.edu, OJS or DSpace generator), blog (Blogger, WordPress, blogspot, RSS)
 Full domains: pages cited in Georgian Wikipedia first (outside the budget), then home page + sitemaps
 (newest first) each run, same-site links up to MAX_DEPTH, max PER_HOST new pages per run.
 Polite: robots.txt, one request per second per domain.
@@ -66,8 +66,8 @@ LASTMOD = re.compile(r"<lastmod>\s*(.*?)\s*</lastmod>")
 SIGNALS = {
     "ads": re.compile(r"googlesyndication|adsbygoogle|doubleclick\.net|adocean|admixer|taboola|outbrain|mgid\.com|fbevents\.js"),
     "woocommerce": re.compile(r"woocommerce", re.I),
-    "ojs": re.compile(r"Open Journal Systems|/index\.php/[^/\"]+/article/view|pkp_structure"),
-    "dspace": re.compile(r"dspace", re.I),
+    "ojs": re.compile(r'content="Open Journal Systems|pkp_structure'),  # the site's own software, not a link
+    "dspace": re.compile(r'content="DSpace', re.I),
     "issn": re.compile(r"\bISSN\b"),
     "doi": re.compile(r"doi\.org/10\.|\bdoi:\s*10\.", re.I),
     "ანოტაცია": re.compile(r"ანოტაცია"),
@@ -95,7 +95,7 @@ def commercial(signals: set[str]) -> int:
 
 
 def kind(signals: set[str]) -> str:
-    if signals & {"edu", "ojs", "dspace"} or len(signals & {"issn", "doi", "ანოტაცია"}) >= 2:
+    if signals & {"edu", "ojs", "dspace"}:  # ISSN, DOI, ანოტაცია: news sites have them too (signals add up per site)
         return "academic"
     if signals & {"blog-engine", "blog-host", "rss"}:
         return "blog"
@@ -192,7 +192,7 @@ def seed_wiki(db, sites: dict[str, Site]) -> None:
 async def get(client: httpx.AsyncClient, url: str) -> httpx.Response | None:
     try:
         return await client.get(url)
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ValueError):  # ValueError: a relative or broken URL (Sitemap: /sitemap.xml)
         return None
 
 
@@ -232,9 +232,9 @@ async def sitemap_urls(client: httpx.AsyncClient, site: Site, maps: list[str]) -
             if not loc:
                 continue
             if tag == "sitemap":
-                children.append((mod.group(1) if mod else "", loc.group(1)))
+                children.append((mod.group(1) if mod else "", urljoin(url, loc.group(1))))
             else:
-                pages[loc.group(1)] = mod.group(1) if mod else ""
+                pages[urljoin(url, loc.group(1))] = mod.group(1) if mod else ""
         todo = [u for _, u in sorted(children, reverse=True)] + todo
     return sorted(pages, key=pages.get, reverse=True)
 
@@ -245,7 +245,8 @@ async def seed(client: httpx.AsyncClient, db, site: Site) -> None:
         home = f"{site.base}/"
         site.todo += db.execute("UPDATE queue SET status='todo' WHERE url=? AND status!='todo'", (home,)).rowcount
         enqueue(db, site, [home], 0)
-        enqueue(db, site, await sitemap_urls(client, site, site.robots.site_maps() or [f"{home}sitemap.xml"]), 1)
+        maps = [urljoin(home, u) for u in site.robots.site_maps() or ["sitemap.xml"]]
+        enqueue(db, site, await sitemap_urls(client, site, maps), 1)
         db.executemany("INSERT INTO queue(url, host, depth, cited) VALUES (?, ?, 1, 1) ON CONFLICT(url) DO UPDATE SET cited=1",
                        [(u, site.host) for u in clean(site, cited_on(site.host))])
         site.todo = db.execute("SELECT count(*) FROM queue WHERE host=? AND status='todo'", (site.host,)).fetchone()[0]

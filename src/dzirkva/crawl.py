@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS queue (url TEXT PRIMARY KEY, host TEXT, depth INT, st
 CREATE INDEX IF NOT EXISTS queue_status ON queue(status, host);
 CREATE VIRTUAL TABLE IF NOT EXISTS pages USING fts5(url UNINDEXED, title, date UNINDEXED, text, tokenize='unicode61');
 CREATE INDEX IF NOT EXISTS pages_url ON pages_content(c0);  -- page by URL (c0 = url): pages cited in Wikipedia
+CREATE INDEX IF NOT EXISTS pages_date ON pages_content(c2);  -- newest pages (c2 = date): discover.newest_posts
 CREATE TABLE IF NOT EXISTS domains (
     host TEXT PRIMARY KEY, source TEXT, state TEXT,   -- source: trusted/wiki/link; state: probe/full/rejected
     pages INT DEFAULT 0, georgian REAL DEFAULT 0,     -- pages with text, mean share of Georgian letters

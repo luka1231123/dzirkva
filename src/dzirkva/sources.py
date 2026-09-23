@@ -147,12 +147,14 @@ FILTERS = ("knowledge", "texts", "people", "small", "academic", "old")
 BLOG_HOSTS = {"blogspot.com", "wordpress.com", "medium.com", "livejournal.com", "tumblr.com", "substack.com"}
 TEXT_HOSTS = {"ka.wikisource.org", "lib.ge", "poetry.ge", "geolit.ge", "scribd.com"}  # scribd: user documents (PDF)
 TEXT_TITLE = re.compile(r"ლექს(?!იკ)|ტექსტ|სიმღერ|ნოტებ|ლოცვ|პოემ|მოთხრობ|წიგნ|lyrics|\bpdf\b", re.I)  # scribd titles end "| PDF"
-ACADEMIC_URL = re.compile(r"(?i)\.edu(\.ge)?$|\.ac\.ge$|^dspace\.|^journals?\.|/handle/\d|/article/view/")
+ACADEMIC_URL = re.compile(r"(?i)\.edu(\.ge)?/|\.ac\.ge/|^dspace\.|^journals?\.|/handle/\d|/article/view/|/id/eprint/")
 WAYBACK = re.compile(r"^https?://web\.archive\.org/web/[^/]+/")
 
 
-def tags(url: str, title: str, signals: set[str], small: bool = False) -> set[str]:
-    """Filter tags of one result. `signals` come from the crawl (crawl.domain_signals), `small` from crawl.small_site."""
+def tags(url: str, title: str, signals: set[str], small: bool = False, repo: bool = False) -> set[str]:
+    """Filter tags of one result. `signals` come from the crawl (crawl.domain_signals), `small` from crawl.small_site,
+    `repo` from papers.is_repo (the site has an OAI-PMH repository). Academic needs evidence on the page's own
+    site: words and links in its pages do not count (a link to dspace.nplg.gov.ge made netgazeti.ge academic)."""
     out = {"old"} if WAYBACK.match(url) else set()
     if small:
         out.add("small")
@@ -167,6 +169,6 @@ def tags(url: str, title: str, signals: set[str], small: bool = False) -> set[st
         out.add("texts")
     if k in ("forum", "social") or base in BLOG_HOSTS or "blog-host" in signals:
         out.add("people")
-    if category == "science" or "academic" in signals or ACADEMIC_URL.search(host + urlparse(url).path):
+    if category == "science" or repo or ACADEMIC_URL.search(host + (urlparse(url).path or "/")):
         out |= {"academic", "knowledge"}
     return out
