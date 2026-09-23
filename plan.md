@@ -81,7 +81,8 @@ English: entity + fact 47%, media 12%, local/shop/site/quick 22%. No browsing qu
 Naver sections, Kagi Small Web + Marginalia Explore pages.
 
 Rule: separate page = no query; tab = the layout changes; filter = source type, same list; section = intent, automatic.
-- [x] Tabs: ყველა (sections), ვიდეო (thumbnail grid, films included), სიახლეები (newest first, date shown)
+- [x] Tabs: ყველა (sections), ვიდეო (films included), სიახლეები
+- [ ] Tab layouts: ვიდეო as thumbnail grid, სიახლეები newest first with date shown
 - [x] Tab order by intent: film/music words → ვიდეო first; news words → სიახლეები first
 - [x] Filters (chips, combine): ცოდნა, ტექსტები, ხალხი (forums + blogs + social), სამეცნიერო, იშვიათი (small web), ძველი ვები (archive)
 - [x] Remove tabs ფილმები, სოციალური, არქივი, ცოდნა (now tab ვიდეო or filters)
