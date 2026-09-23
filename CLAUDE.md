@@ -15,14 +15,15 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 - Grammar demo: `uv run python -m dzirkva.morph <words>`; accuracy: `uv run python scripts/check_morph.py`
 - Rebuild data (in `data/`, gitignored): download `kawiki-latest-pages-articles.xml.bz2` → `kawiki.xml.bz2`,
   kaikki.org Georgian JSONL → `kaikki-ka.jsonl`, unimorph/kat → `unimorph-kat.tsv`; then
-  `scripts/build_words.py`, then `scripts/build_lexicon.py`
+  `scripts/build_words.py`, then `scripts/build_lexicon.py`, then `scripts/build_wiki_index.py` (→ `data/wiki.db`, ~1 min)
 
 ## Layout
 - `src/dzirkva/engines.py` — SearXNG and Brave clients
 - `src/dzirkva/georgian.py` — normalize, Latin→Georgian, spelling, Georgian ratio
 - `src/dzirkva/morph.py` — word form → lemma + word family (lexicon first, then grammar rules), synonyms
-- `src/dzirkva/web.py` — barebone test page: `uv run python -m dzirkva.web` → http://127.0.0.1:8000
+- `src/dzirkva/web.py` — test page: `uv run python -m dzirkva.web` → http://127.0.0.1:8000. Single thread on purpose: the GPU model hangs in other threads.
 - `src/dzirkva/search.py` — simple queries → engines → feedback round → rank (engine + meaning + tier + coverage) → group copies. Demo: `uv run python -m dzirkva.search <query>`
+- `src/dzirkva/wiki.py` — local Georgian Wikipedia FTS5 index: article counts for spelling in context
 - `src/dzirkva/meaning.py` — BGE-M3 similarity (first load ~5 s; model in ~/.cache/huggingface)
 - `config/searxng.yml` — engines: google, yandex, yahoo (tested with Georgian; reasons in the file). Google blocks fast bursts with CAPTCHA.
 - `config/sources.yaml` + `src/dzirkva/sources.py` — trusted Georgian sites: category and tier; check with `uv run python scripts/check_sources.py`

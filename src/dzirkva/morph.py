@@ -232,6 +232,20 @@ def _members() -> dict[str, list[str]]:
     return {f: sorted(ls, key=freq, reverse=True) for f, ls in out.items()}
 
 
+@cache
+def _forms_by_lemma() -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for form, pairs in _lexicon()[0].items():
+        for lemma, _ in pairs:
+            out.setdefault(lemma, []).append(form)
+    return out
+
+
+def forms_of(lemma: str) -> list[str]:
+    """All known inflected forms of a lemma (from Wiktionary tables)."""
+    return _forms_by_lemma().get(lemma, [])
+
+
 def family_members(family: str) -> list[str]:
     return _members().get(family, [])
 

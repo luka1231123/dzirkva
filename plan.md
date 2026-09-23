@@ -51,6 +51,8 @@ Budget rules:
 - [x] Trust tier kept in the final score
 - [x] Copies grouped: same text on many sites → one result + "also on N"
 - [x] Tabs: ყველა, ცოდნა, სიახლეები, ვიდეო, ფილმები, სოციალური; All tab: max 2 per site, video/film/social blocks
+- [x] Spelling in context: candidates one edit away, chosen by co-occurrence with the other query words in local Wikipedia (`wiki.py`, `data/wiki.db`, 174k articles)
+- [x] Web page: highlighted matched words (yellow = query, blue = feedback), why-line and 'found by' per result, debug panel, 'showing results for'
 - [x] Manual review of 14 queries (Claude read and rated results): 9 good, 3 mixed, 2 fail
 - [ ] Answer boxes with live data: currency (NBG API), weather — like Google's widgets
 - [ ] SQLite cache (now: in-memory cache in the web page only)

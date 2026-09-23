@@ -24,9 +24,10 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import httpx
 
 from dzirkva import engines
-from dzirkva.georgian import GEORGIAN_WORD, freq, georgian_ratio, latin_to_georgian, normalize, spell, words
+from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, words
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families, family_members
+from dzirkva import wiki
 from dzirkva.sources import by_category, kind, lookup
 
 # Question words and function words: dropped from keyword queries and feedback terms.
@@ -80,6 +81,7 @@ class Result:
     kind: str = "web"
     queries: set[str] = field(default_factory=set)
     engines: set[str] = field(default_factory=set)
+    hits: list[tuple[str, str, int]] = field(default_factory=list)  # (query name, engine, rank)
     copies: list["Result"] = field(default_factory=list)
 
     @property
@@ -94,10 +96,33 @@ def is_stop(word: str) -> bool:
 
 
 def _fix_word(word: str) -> str:
+    """Latin → Georgian. Typos are fixed later, from evidence in the round-1 results."""
     if word.isascii() and word.isalpha():
         return latin_to_georgian(word) or word
-    w = normalize(word)
-    return spell(w) if GEORGIAN_WORD.fullmatch(w) else w
+    return normalize(word)
+
+
+def spelling_fixes(content: list[str]) -> dict[str, str]:
+    """Unknown query word → the candidate that appears most often with the other query words.
+
+    Counts articles in the local Georgian Wikipedia index (any word form). Word counts alone
+    choose badly (კანოები → კანონები "laws"); with აბულაძის the context chooses კინოები (53 articles).
+    Score = co-occurrence / √(candidate article count), so very common words do not win by size.
+    """
+    fixes = {}
+    for w in content:
+        cands = spell_candidates(w)
+        if not cands:
+            continue
+        context = [c for c in content if c != w and not is_stop(c)]
+        if not context:
+            fixes[w] = cands[0]
+            continue
+        scores = {c: sum(wiki.count(c, x) for x in context) / max(wiki.count(c), 1) ** 0.5 for c in cands}
+        best = max(scores, key=scores.get)
+        if scores[best] > 0:
+            fixes[w] = best
+    return fixes
 
 
 def _lemma(word: str) -> str:
@@ -113,9 +138,11 @@ def _category(content: list[str]) -> str:
     return next((c for c, ws in INTENT.items() if any(f in fams for f in ws.split())), DEFAULT_CATEGORY)
 
 
-def round1_queries(query: str) -> tuple[dict[str, str], list[str]]:
-    """Simple recall queries, and the content words of the question."""
+def round1_queries(query: str) -> tuple[dict[str, str], list[str], dict[str, str]]:
+    """Simple recall queries, the content words of the question, and spelling fixes."""
     corrected = [_fix_word(w) for w in query.split()]
+    fixes = spelling_fixes([w for w in corrected if not is_stop(w)])
+    corrected = [fixes.get(w, w) for w in corrected]
     content = [w for w in corrected if not is_stop(w)] or corrected
     lemmas = " ".join(_lemma(w) for w in content)
     cat = _category(content)
@@ -125,7 +152,7 @@ def round1_queries(query: str) -> tuple[dict[str, str], list[str]]:
     for name, q in qs.items():
         if q not in unique.values():
             unique[name] = q
-    return unique, content
+    return unique, content, fixes
 
 
 # ---- feedback -----------------------------------------------------------
@@ -216,6 +243,7 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str]) -> list[Resul
             m.score += 1 / (RRF_K + rank)
             m.queries.add(name)
             m.engines.update(r["engine"].split("+"))
+            m.hits += [(name, e, rank + 1) for e in r["engine"].split("+")]
     query_fams = [families(w) for w in content]
     out = []
     for m in merged.values():
@@ -258,27 +286,39 @@ def group_copies(results: list[Result]) -> list[Result]:
     return [k for k, _ in kept]
 
 
-def search(query: str) -> tuple[dict[str, str], list[Result]]:
-    qs, content = round1_queries(query)
+def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
+    """Returns the queries sent, the ranked results, and debug information."""
+    t0 = time.time()
+    qs, content, fixes = round1_queries(query)
     lists = asyncio.run(fan_out(qs, BRAVE_QUERIES if "corrected" in qs else ("original", "lemmas")))
     known: dict[str, float] = {}
     first = rank_by_meaning(query, merge(lists, content), known)
+    t1 = time.time()
     terms = feedback_terms(content, first)
+    base = " ".join(_lemma(w) for w in content)
+    more = {}
     if terms:
-        base = qs.get("lemmas") or qs.get("corrected") or qs["original"]
-        more = {f"feedback:{terms[0]}": f"{base} {terms[0]}"}
+        more[f"feedback:{terms[0]}"] = f"{base} {terms[0]}"
         if len(terms) > 1:
             more[f"feedback:{terms[1]}"] = " ".join(terms[:2])
+    if more:
         qs.update(more)
         lists += asyncio.run(fan_out(more))
-    return qs, group_copies(rank_by_meaning(query, merge(lists, content), known))
+    results = group_copies(rank_by_meaning(query, merge(lists, content), known))
+    debug = {
+        "content": content, "spelling": fixes, "feedback": terms,
+        "counts": {name: len(res) for name, res in lists},
+        "seconds": {"round1": round(t1 - t0, 1), "round2+rank": round(time.time() - t1, 1)},
+    }
+    return qs, results, debug
 
 
 if __name__ == "__main__":
     import sys
 
     t = time.time()
-    qs, results = search(" ".join(sys.argv[1:]))
+    qs, results, debug = search(" ".join(sys.argv[1:]))
+    print(debug)
     for name, q in qs.items():
         print(f"{name:>22}: {q}")
     print(f"\n{len(results)} results in {time.time() - t:.1f}s\n")

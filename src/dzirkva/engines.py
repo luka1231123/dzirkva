@@ -1,7 +1,9 @@
 """Clients for the outside search engines: local SearXNG and the Brave Search API."""
 
 import asyncio
+import html
 import os
+import re
 
 import httpx
 from dotenv import load_dotenv
@@ -12,12 +14,17 @@ SEARXNG_URL = "http://127.0.0.1:8888/search"
 BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
 
 
+def clean(text: str) -> str:
+    """Engines send snippets with HTML (<strong>, &quot;): plain text only."""
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", "", text or "")).split())
+
+
 async def searxng(client: httpx.AsyncClient, query: str) -> list[dict]:
     """Google + Bing + Brave (web pages) through the local SearXNG."""
     r = await client.get(SEARXNG_URL, params={"q": query, "format": "json"}, timeout=15)
     r.raise_for_status()
     return [
-        {"url": x["url"], "title": x.get("title", ""), "snippet": x.get("content", ""),
+        {"url": x["url"], "title": clean(x.get("title")), "snippet": clean(x.get("content")),
          "engine": "+".join(x.get("engines", []))}
         for x in r.json()["results"]
     ]
@@ -33,7 +40,7 @@ async def brave(client: httpx.AsyncClient, query: str) -> list[dict]:
     )
     r.raise_for_status()
     return [
-        {"url": x["url"], "title": x.get("title", ""), "snippet": x.get("description", ""),
+        {"url": x["url"], "title": clean(x.get("title")), "snippet": clean(x.get("description")),
          "engine": "brave-api"}
         for x in r.json().get("web", {}).get("results", [])
     ]

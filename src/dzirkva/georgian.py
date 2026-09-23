@@ -101,6 +101,15 @@ def _edits(word: str) -> set[str]:
     )
 
 
+def spell_candidates(word: str, limit: int = 12) -> list[str]:
+    """Known words one edit away (typing mix-ups first), most frequent first. Empty if the word is known."""
+    if freq(word) or not GEORGIAN_WORD.fullmatch(word):
+        return []
+    confused = {word[:i] + r + word[i + 1:] for i, c in enumerate(word) for r in CONFUSION.get(c, "")}
+    known = sorted({w for w in confused | _edits(word) if freq(w)}, key=lambda w: (w not in confused, -freq(w)))
+    return known[:limit]
+
+
 def spell(word: str) -> str:
     """Fix a typo if the word is unknown. Mix-ups from CONFUSION rank first."""
     if freq(word) or not GEORGIAN_WORD.fullmatch(word):
