@@ -23,8 +23,19 @@ DIM = 1024
 def connect() -> sqlite3.Connection:
     db = sqlite3.connect(DB, check_same_thread=False)
     db.executescript(SCHEMA)
-    if "site" not in {c[1] for c in db.execute("PRAGMA table_info(passages)")}:  # wiki.SITES key
+    columns = {c[1] for c in db.execute("PRAGMA table_info(passages)")}
+    if "site" not in columns:  # wiki.SITES key, or 'iverieli'
         db.execute("ALTER TABLE passages ADD COLUMN site TEXT DEFAULT 'wikipedia'")
+    if "url" not in columns:  # set for pages outside the wikis (scripts/iverieli_text.py)
+        db.execute("ALTER TABLE passages ADD COLUMN url TEXT")
+    return db
+
+
+@cache
+def _db() -> sqlite3.Connection:
+    """One read connection per process. WAL: the web page reads while scripts add passages."""
+    db = connect()
+    db.execute("PRAGMA journal_mode=WAL")
     return db
 
 
@@ -50,7 +61,7 @@ def _index():
 
     if not DB.exists():
         return None
-    rows = connect().execute("SELECT id, v FROM passages WHERE v IS NOT NULL").fetchall()
+    rows = _db().execute("SELECT id, v FROM passages WHERE v IS NOT NULL").fetchall()
     if not rows:
         return None
     ids = np.array([i for i, _ in rows])
@@ -61,8 +72,8 @@ def _index():
 
 def best(title: str, qv, site: str = "wikipedia") -> str | None:
     """The paragraph of one article nearest to the question vector (a better snippet than the engine's)."""
-    rows = connect().execute("SELECT text, v FROM passages WHERE title = ? AND site = ? AND v IS NOT NULL",
-                             (title, site)).fetchall()
+    rows = _db().execute("SELECT text, v FROM passages WHERE title = ? AND site = ? AND v IS NOT NULL",
+                         (title, site)).fetchall()
     if not rows:
         return None
     vecs = np.frombuffer(b"".join(v for _, v in rows), dtype=np.float16).reshape(-1, DIM).astype(np.float32)
@@ -70,7 +81,7 @@ def best(title: str, qv, site: str = "wikipedia") -> str | None:
 
 
 def search(query: str, limit: int = 20) -> list[dict]:
-    """The paragraphs nearest to the question in meaning, best one per article (Wikipedia and Wikisource)."""
+    """The paragraphs nearest to the question in meaning, best one per article (Wikipedia, Wikisource, Iverieli)."""
     from dzirkva.meaning import _model
     from dzirkva.wiki import SITES
 
@@ -80,15 +91,20 @@ def search(query: str, limit: int = 20) -> list[dict]:
     ids, vecs = index
     q = _model().encode([query], normalize_embeddings=True, convert_to_tensor=True).to(vecs)
     scores, top = (vecs @ q[0]).topk(min(limit * 4, len(ids)))
-    db = connect()
+    db = _db()
     out, seen = [], set()
     for score, i in zip(scores.tolist(), top.tolist()):
-        title, text, site = db.execute("SELECT title, text, site FROM passages WHERE id = ?", (int(ids[i]),)).fetchone()
-        if (site, title) in seen:
+        title, text, site, url = db.execute("SELECT title, text, site, url FROM passages WHERE id = ?",
+                                            (int(ids[i]),)).fetchone()
+        if (site, url or title) in seen:
             continue
-        seen.add((site, title))
-        _, prefix, name = SITES[site]
-        out.append({"url": prefix + quote(title.replace(" ", "_")), "title": f"{title} — {name}",
+        seen.add((site, url or title))
+        if url:
+            name = "ივერიელი"
+        else:
+            _, prefix, name = SITES[site]
+            url = prefix + quote(title.replace(" ", "_"))
+        out.append({"url": url, "title": f"{title} — {name}",
                     "snippet": text, "engine": "passages", "score": score})
         if len(out) == limit:
             break
