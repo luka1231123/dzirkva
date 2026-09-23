@@ -496,7 +496,7 @@ def related(content: list[str], base: str, terms: list[str], wiki_hits: list[dic
     strip = lambda t: t.removesuffix(" — ვიკიპედია")
     cands = [(strip(h["title"]), "wiki") for h in wiki_hits if coverage(h["title"], content) >= FEEDBACK_MIN_COVERAGE][:4]
     cands += [(f"{base} {t}", "feedback") for t in terms]
-    cands += [(strip(p["title"]), "meaning") for p in near]
+    cands += [(strip(p["title"]), "meaning") for p in near if p["title"].endswith(" — ვიკიპედია")]  # not papers
     seen = {normalize(" ".join(content)), normalize(answer["title"]) if answer else ""}
     out = []
     for q, source in cands:
