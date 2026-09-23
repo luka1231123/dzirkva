@@ -35,6 +35,38 @@ for _a, _b in ("თტ", "ქკ", "ქყ", "კყ", "ცწ", "ჩჭ", "ფ�
     CONFUSION[_a] = CONFUSION.get(_a, "") + _b
     CONFUSION[_b] = CONFUSION.get(_b, "") + _a
 
+# Key position (row, column) of each letter; Shift letters (თ ჭ ღ შ ჟ ძ ჩ) share the key of their base letter.
+KEY_POS = {KEYBOARD[c]: (r, i + (0, 0.25, 0.75)[r]) for r, row in enumerate(("qwertyuiop", "asdfghjkl", "zxcvbnm"))
+           for i, c in enumerate(row)}
+KEY_POS.update({KEYBOARD[c]: KEY_POS[KEYBOARD[c.lower()]] for c in "CJRSTWZ"})
+# How probable a typo is, by kind (rough typing statistics: neighbor keys and missed Shift dominate).
+TYPO = {"shift": 1.0, "confusion": 0.8, "neighbor": 0.6, "swap": 0.5, "double": 0.4, "drop": 0.3, "far": 0.1}
+
+
+def _near(a: str, b: str) -> bool:
+    (r1, c1), (r2, c2) = KEY_POS.get(a, (9, 99)), KEY_POS.get(b, (-9, -99))
+    return abs(r1 - r2) <= 1 and abs(c1 - c2) <= 1.25
+
+
+def typo_weight(typed: str, fixed: str) -> float:
+    """How probable it is that someone who meant `fixed` typed `typed` (one edit), from the keyboard."""
+    if len(typed) == len(fixed):
+        diff = [i for i, (x, y) in enumerate(zip(typed, fixed)) if x != y]
+        if len(diff) == 2 and typed[diff[0]] == fixed[diff[1]] and typed[diff[1]] == fixed[diff[0]]:
+            return TYPO["swap"]
+        if len(diff) != 1:
+            return TYPO["far"]
+        x, y = typed[diff[0]], fixed[diff[0]]
+        if KEY_POS.get(x) == KEY_POS.get(y):
+            return TYPO["shift"]
+        return TYPO["confusion"] if y in CONFUSION.get(x, "") else TYPO["neighbor"] if _near(x, y) else TYPO["far"]
+    if len(typed) == len(fixed) + 1:  # extra letter: the same key twice or a neighbor key pressed too
+        i = next((i for i, (x, y) in enumerate(zip(typed, fixed)) if x != y), len(fixed))
+        around = fixed[max(i - 1, 0): i + 1]
+        return TYPO["double"] if any(typed[i] == c or _near(typed[i], c) for c in around) else TYPO["far"]
+    return TYPO["drop"]
+
+
 @cache
 def words() -> dict[str, int]:
     """Georgian word form -> count in ka.wikipedia. Empty if the list is not built yet."""
@@ -106,7 +138,7 @@ def spell_candidates(word: str, limit: int = 12) -> list[str]:
     if freq(word) or not GEORGIAN_WORD.fullmatch(word):
         return []
     confused = {word[:i] + r + word[i + 1:] for i, c in enumerate(word) for r in CONFUSION.get(c, "")}
-    known = sorted({w for w in confused | _edits(word) if freq(w)}, key=lambda w: (w not in confused, -freq(w)))
+    known = sorted({w for w in confused | _edits(word) if freq(w)}, key=lambda w: -typo_weight(word, w) * freq(w) ** 0.5)
     return known[:limit]
 
 
@@ -118,7 +150,7 @@ def spell(word: str) -> str:
     for group in (confused, _edits(word)):
         known = [w for w in group if freq(w)]
         if known:
-            return max(known, key=freq)
+            return max(known, key=lambda w: typo_weight(word, w) * freq(w) ** 0.5)
     return word
 
 
