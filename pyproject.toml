@@ -5,6 +5,7 @@ description = "Georgian-only search engine"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "duckdb>=1.5.5",
     "httpx>=0.28.1",
     "lxml>=6.1.3",
     "python-dotenv>=1.2.3",
