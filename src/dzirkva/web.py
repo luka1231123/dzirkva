@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 import yaml
 
 from dzirkva.georgian import normalize
+from dzirkva import passages
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families
 from dzirkva.search import search
@@ -370,6 +371,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     similarity("გამარჯობა", ["გამარჯობა"])  # load the meaning model once, before the first search
+    passages._index()  # ~35 s: load the 743k paragraph vectors before the first search, not during it
     print("http://127.0.0.1:8000", flush=True)
     # One thread: the meaning model on the Mac GPU hangs when called from other threads.
     HTTPServer(("127.0.0.1", 8000), Handler).serve_forever()
