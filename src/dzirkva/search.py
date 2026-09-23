@@ -287,7 +287,7 @@ def group_copies(results: list[Result]) -> list[Result]:
 
 
 def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
-    """Returns the queries sent, the ranked results, and debug information."""
+    """Returns the queries sent, the ranked results, and debug information (with the answer box)."""
     t0 = time.time()
     qs, content, fixes = round1_queries(query)
     lists = asyncio.run(fan_out(qs, BRAVE_QUERIES if "corrected" in qs else ("original", "lemmas")))
@@ -307,7 +307,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
         lists += asyncio.run(fan_out(more))
     results = group_copies(rank_by_meaning(query, merge(lists, content), known))
     debug = {
-        "content": content, "spelling": fixes, "feedback": terms,
+        "content": content, "spelling": fixes, "feedback": terms, "answer": wiki.article(content),
         "counts": {name: len(res) for name, res in lists},
         "seconds": {"round1": round(t1 - t0, 1), "round2+rank": round(time.time() - t1, 1)},
     }

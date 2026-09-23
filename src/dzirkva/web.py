@@ -30,6 +30,7 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>dzirkva</title>
 input{{width:75%;font-size:18px}} .r{{margin:14px 0}} .u{{color:#070;font-size:13px}} .m{{color:#888;font-size:12px}}
 .tabs a,.tabs b{{margin-right:14px}} .blk{{border:1px solid #ddd;border-radius:6px;padding:4px 12px;margin:18px 0}}
 mark{{background:#fff3a0}} mark.fb{{background:#cdeaff}} .why{{color:#555;font-size:12px}} .dbg{{font:12px monospace;background:#f6f6f6;padding:8px}}
+.ans{{border:1px solid #ccd;background:#f7f8ff;border-radius:6px;padding:8px 12px;margin:12px 0}}
 table{{border-collapse:collapse}} td{{padding:1px 8px 1px 0;vertical-align:top}}</style>
 <form><input name="q" value="{q}" autofocus> <button>ძებნა</button></form>{body}"""
 
@@ -123,6 +124,9 @@ class Handler(BaseHTTPRequestHandler):
             if debug["spelling"]:
                 fixed = " ".join(debug["spelling"].get(normalize(w), w) for w in q.split())
                 body += f"<p>ნაჩვენებია შედეგები: <b>{escape(fixed)}</b> <span class=m>(typed: {escape(q)})</span></p>"
+            if (a := debug.get("answer")) and tab == "all":
+                body += (f"<div class=ans><a href='{escape(a['url'])}'><b>{escape(a['title'])}</b></a>"
+                         f"<div>{escape(a['text'])}</div><div class=m>ვიკიპედია</div></div>")
             body += (f"<details class=dbg><summary>debug · {len(results)} results · {debug['seconds']['total']}s</summary>"
                      f"<div>content words: {escape(' · '.join(debug['content']))}</div>"
                      f"<div>spelling: {escape(str(debug['spelling']) if debug['spelling'] else '—')}</div>"
