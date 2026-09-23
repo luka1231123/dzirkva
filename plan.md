@@ -43,11 +43,19 @@ Budget rules:
 - [x] Engines re-tested with Georgian: Google + Yandex + Yahoo kept; Bing (junk for Georgian), Brave scraper, DuckDuckGo, Qwant removed
 - [x] Synonyms: 4,126 pairs from Wiktionary (`data/synonyms.tsv`)
 
-## Session 5: Filter, rerank, cache
-- [ ] Georgian filter: keep results with >50% Georgian letters in title + snippet
-- [ ] Local reranker `bge-reranker-v2-m3` orders the top 50
-- [ ] SQLite cache: full result page (1 day, news 1 hour), single engine query (7 days)
-- [ ] Engine limits: max queries per engine, wait longer after a block, other engines continue
+## Session 5: Ranking by meaning, tabs, grouping
+- [x] Georgian filter: keep results with >30% Georgian letters in title + snippet
+- [x] Meaning ranking: local BGE-M3 embeddings (`meaning.py`), fused with engine rank
+- [x] Feedback round: rare terms from top results that contain all query words → second search
+- [x] Coverage: rare query nouns count more; verbs do not count (answers rephrase them)
+- [x] Trust tier kept in the final score
+- [x] Copies grouped: same text on many sites → one result + "also on N"
+- [x] Tabs: ყველა, ცოდნა, სიახლეები, ვიდეო, ფილმები, სოციალური; All tab: max 2 per site, video/film/social blocks
+- [x] Manual review of 14 queries (Claude read and rated results): 9 good, 3 mixed, 2 fail
+- [ ] Answer boxes with live data: currency (NBG API), weather — like Google's widgets
+- [ ] SQLite cache (now: in-memory cache in the web page only)
+- [ ] Engine limits: wait longer after a Google CAPTCHA
+- Known limit: questions that need world knowledge (ვინაა ყველაზე ჩქარი მორბენალი → უსეინ ბოლტი) fail
 
 ## Session 6: Web page and quality check
 - [ ] FastAPI + one HTML page, interface in Georgian

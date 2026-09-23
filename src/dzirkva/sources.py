@@ -2,6 +2,7 @@
 
 from functools import cache
 from pathlib import Path
+import re
 from urllib.parse import urlparse
 
 import yaml
@@ -28,3 +29,32 @@ def lookup(url: str) -> tuple[str, int] | None:
 def by_category(category: str) -> list[str]:
     """Domains of one category, best tier first."""
     return sorted((d for d, (c, _) in sources().items() if c == category), key=lambda d: sources()[d][1])
+
+
+# ---- result kinds (tabs) ----------------------------------------------------
+# Every result stays; its kind decides the tab and the block it appears in.
+VIDEO_HOSTS = {"youtube.com", "youtu.be", "tiktok.com", "vimeo.com", "myvideo.ge", "dailymotion.com", "palitravideo.ge"}
+SOCIAL_HOSTS = {"facebook.com", "ok.ru", "instagram.com", "x.com", "twitter.com", "vk.com", "t.me", "threads.net",
+                "linkedin.com", "reddit.com", "pinterest.com"}
+FILM_HOST = re.compile(r"film|movie|kino|kadri|imovie|adjaranet|saitebi|serial|anime|cinema")
+KNOWLEDGE = {"reference", "science", "history", "religion", "culture", "education", "law", "government"}
+KINDS = ("knowledge", "news", "web", "forum", "video", "film", "social")
+
+
+def kind(url: str) -> str:
+    host = (urlparse(url).hostname or "").removeprefix("www.").removeprefix("m.")
+    base = ".".join(host.split(".")[-2:])
+    category, _ = lookup(url) or (None, None)
+    if host in VIDEO_HOSTS or base in VIDEO_HOSTS:
+        return "video"
+    if host in SOCIAL_HOSTS or base in SOCIAL_HOSTS:
+        return "social"
+    if category in ("news", "investigation", "economy"):
+        return "news"
+    if category == "community":
+        return "forum"
+    if category in KNOWLEDGE or base == "wikipedia.org":
+        return "knowledge"
+    if FILM_HOST.search(host):
+        return "film"
+    return "web"
