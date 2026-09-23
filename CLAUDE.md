@@ -17,10 +17,11 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
   kaikki.org Georgian JSONL → `kaikki-ka.jsonl`, unimorph/kat → `unimorph-kat.tsv`; then
   `scripts/build_words.py`, then `scripts/build_lexicon.py`, then `scripts/build_wiki_index.py` (→ `data/wiki.db`, ~1 min); Wikisource: `kawikisource-latest-pages-articles.xml.bz2` → `kawikisource.xml.bz2`, then `scripts/build_wiki_index.py wikisource` (→ `data/wikisource.db`)
   ka.wiktionary dump → `kawiktionary.xml.bz2`, then `scripts/build_dictionary.py` (→ `data/dictionary.db`, ~10 s)
+  Spelling word list: `data/wordlists/` (Leipzig `kat-ge_web_2019_1M` + `kat_newscrawl_2016_1M` `*-words.txt`, gamag/ka_GE.spell `bumbeishvili.txt` + `crubadan.txt`), then `scripts/build_vocab.py` (→ `data/vocab.tsv`, ~30 s; run again after crawling)
 
 ## Layout
 - `src/dzirkva/engines.py` — SearXNG and Brave clients
-- `src/dzirkva/georgian.py` — normalize, Latin→Georgian, spelling, Georgian ratio
+- `src/dzirkva/georgian.py` — normalize, Latin→Georgian, spelling (a rare word is fixed only when a sound-alike or keyboard-slip word is 20× more frequent in `vocab.tsv`), Georgian ratio
 - `src/dzirkva/morph.py` — word form → lemma + word family (lexicon first, then grammar rules), synonyms
 - `src/dzirkva/web.py` — test page: `uv run python -m dzirkva.web` → http://127.0.0.1:8000. Single thread on purpose: the GPU model hangs in other threads.
 - `src/dzirkva/search.py` — simple queries → engines → feedback round → rank (engine + meaning + tier + coverage) → group copies. Demo: `uv run python -m dzirkva.search <query>`

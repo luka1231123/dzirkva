@@ -135,11 +135,12 @@ def _fix_word(word: str) -> str:
 
 
 def spelling_fixes(content: list[str]) -> dict[str, str]:
-    """Unknown query word → the candidate that appears most often with the other query words.
+    """Likely typo (georgian.spell_candidates) → the candidate that appears most often with the other query words.
 
     Counts articles in the local Georgian Wikipedia index (any word form). Word counts alone
     choose badly (კანოები → კანონები "laws"); with აბულაძის the context chooses კინოები (53 articles).
     Score = co-occurrence / √(candidate article count), so very common words do not win by size.
+    No context evidence: the first candidate (the frequency test already says the typed word is wrong).
     """
     fixes = {}
     for w in content:
@@ -153,8 +154,7 @@ def spelling_fixes(content: list[str]) -> dict[str, str]:
         scores = {c: typo_weight(w, c) * sum(wiki.count(c, x) for x in context) / max(wiki.count(c), 1) ** 0.5
                   for c in cands}
         best = max(scores, key=scores.get)
-        if scores[best] > 0:
-            fixes[w] = best
+        fixes[w] = best if scores[best] > 0 else cands[0]
     return fixes
 
 

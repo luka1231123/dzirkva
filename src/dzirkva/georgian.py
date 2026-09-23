@@ -1,8 +1,9 @@
 """Georgian text layer: normalize, Latin→Georgian, spelling. Grammar is in morph.py.
 
 The engines (Google, Bing, Brave) match surface forms, so this module produces
-real Georgian words that can go into query variants. The word list from
-ka.wikipedia (data/words.tsv) decides which generated forms are real.
+real Georgian words that can go into query variants. Two word lists:
+data/words.tsv (ka.wikipedia counts) measures how rare a word is; data/vocab.tsv (all Georgian text we have:
+Wikipedia, own crawl, Leipzig web + news corpora, spelling lists) decides which forms people really write.
 """
 
 import itertools
@@ -12,6 +13,7 @@ from functools import cache
 from pathlib import Path
 
 WORDS_FILE = Path(__file__).resolve().parents[2] / "data" / "words.tsv"
+VOCAB_FILE = WORDS_FILE.with_name("vocab.tsv")
 
 ALPHABET = "აბგდევზთიკლმნოპჟრსტუფქღყშჩცძწჭხჯჰ"
 GEORGIAN_WORD = re.compile(r"[ა-ჰ]+")
@@ -23,17 +25,24 @@ KEYBOARD = dict(zip("abcdefghijklmnopqrstuvwxyzCJRSTWZ", "აბცდეფგ�
 PHONETIC = {
     "sh": "შ", "ch": "ჩჭ", "ts": "ცწ", "tz": "ცწ", "dz": "ძ", "kh": "ხ", "gh": "ღ", "zh": "ჟ",
     "th": "თ", "ph": "ფ", "dj": "ჯ",
-    "a": "ა", "b": "ბ", "c": "ცწჩ", "d": "დ", "e": "ე", "f": "ფ", "g": "გ", "h": "ჰ", "i": "ი",
+    "a": "ა", "b": "ბ", "c": "ცწჩ", "d": "დ", "e": "ე", "f": "ფ", "g": "გღ", "h": "ჰ", "i": "ი",
     "j": "ჯჟ", "k": "კქ", "l": "ლ", "m": "მ", "n": "ნ", "o": "ო", "p": "პფ", "q": "ქყ", "r": "რ",
     "s": "ს", "t": "ტთ", "u": "უ", "v": "ვ", "w": "წ", "x": "ხ", "y": "ყ", "z": "ზ",
 }
 MAX_CANDIDATES = 4096
 
-# Letters Georgians often mix up when typing.
+# Letters Georgians mix up: each consonant series (voiced, aspirated, ejective: ბ ფ პ, დ თ ტ ...) sounds alike,
+# word ends lose voicing (იაფად → იაფათ), and a few more pairs sound or look close.
 CONFUSION: dict[str, str] = {}
-for _a, _b in ("თტ", "ქკ", "ქყ", "კყ", "ცწ", "ჩჭ", "ფპ", "ძზ", "ღგ", "ხქ"):
-    CONFUSION[_a] = CONFUSION.get(_a, "") + _b
-    CONFUSION[_b] = CONFUSION.get(_b, "") + _a
+for _group in ("ბფპ", "დთტ", "გქკ", "ძცწ", "ჯჩჭ", "ქყ", "კყ", "ძზ", "ღგ", "ხქ", "ზს"):
+    for _a, _b in itertools.permutations(_group, 2):
+        CONFUSION[_a] = CONFUSION.get(_a, "") + _b
+MAX_CONFUSED = 2    # letters mixed up in one word (აპტიაქი → აფთიაქი)
+# A word written KNOWN_COUNT times or more is a real word (სართული, ჩვენო, ბოლტი: never "fixed").
+# A rarer word is fixed when a candidate is KEEP_RATIO times more frequent (after the typo weight):
+# ტბილისი 23 vs თბილისი 85,040 is fixed.
+KNOWN_COUNT = 50
+KEEP_RATIO = 20
 
 # Key position (row, column) of each letter; Shift letters (თ ჭ ღ შ ჟ ძ ჩ) share the key of their base letter.
 KEY_POS = {KEYBOARD[c]: (r, i + (0, 0.25, 0.75)[r]) for r, row in enumerate(("qwertyuiop", "asdfghjkl", "zxcvbnm"))
@@ -54,6 +63,8 @@ def typo_weight(typed: str, fixed: str) -> float:
         diff = [i for i, (x, y) in enumerate(zip(typed, fixed)) if x != y]
         if len(diff) == 2 and typed[diff[0]] == fixed[diff[1]] and typed[diff[1]] == fixed[diff[0]]:
             return TYPO["swap"]
+        if len(diff) <= MAX_CONFUSED and all(fixed[i] in CONFUSION.get(typed[i], "") for i in diff):
+            return TYPO["confusion"] ** len(diff)
         if len(diff) != 1:
             return TYPO["far"]
         x, y = typed[diff[0]], fixed[diff[0]]
@@ -78,6 +89,19 @@ def words() -> dict[str, int]:
 
 def freq(word: str) -> int:
     return words().get(word, 0)
+
+
+@cache
+def vocab() -> dict[str, int]:
+    """Georgian word form -> count in all our Georgian text (scripts/build_vocab.py). Falls back to words()."""
+    if not VOCAB_FILE.exists():
+        return words()
+    with open(VOCAB_FILE, encoding="utf-8") as f:
+        return {w: int(n) for w, n in (line.rstrip("\n").split("\t") for line in f)}
+
+
+def count(word: str) -> int:
+    return vocab().get(word, 0)
 
 
 def normalize(text: str) -> str:
@@ -119,8 +143,8 @@ def latin_to_georgian(word: str) -> str | None:
         total *= len(o)
     if total <= MAX_CANDIDATES:
         candidates.update("".join(p) for p in itertools.product(*options))
-    best = max(candidates, key=freq)
-    return best if freq(best) else None
+    best = max(candidates, key=count)
+    return best if count(best) else None
 
 
 def _edits(word: str) -> set[str]:
@@ -133,25 +157,33 @@ def _edits(word: str) -> set[str]:
     )
 
 
+def _confused(word: str) -> set[str]:
+    """The word with one or two letters swapped for their sound-alikes."""
+    out, frontier = set(), {word}
+    for _ in range(MAX_CONFUSED):
+        frontier = {w[:i] + r + w[i + 1:] for w in frontier for i, c in enumerate(w) for r in CONFUSION.get(c, "")}
+        out |= frontier
+    return out - {word}
+
+
 def spell_candidates(word: str, limit: int = 12) -> list[str]:
-    """Known words one edit away (typing mix-ups first), most frequent first. Empty if the word is known."""
-    if freq(word) or not GEORGIAN_WORD.fullmatch(word):
+    """Likely intended words, best first; empty if the typed word is likely right.
+
+    Rare words are checked too, not only unknown ones (ტბილისი is on the web). A candidate must be a plausible typo
+    (sound-alike letters or a keyboard slip; no far keys: პხალი is ფხალი, never ახალი) and, after the typo
+    weight, KEEP_RATIO times more frequent than the typed word.
+    """
+    if not GEORGIAN_WORD.fullmatch(word) or count(word) >= KNOWN_COUNT:
         return []
-    confused = {word[:i] + r + word[i + 1:] for i, c in enumerate(word) for r in CONFUSION.get(c, "")}
-    known = sorted({w for w in confused | _edits(word) if freq(w)}, key=lambda w: -typo_weight(word, w) * freq(w) ** 0.5)
-    return known[:limit]
+    floor = KEEP_RATIO * max(count(word), 1)
+    score = {c: w for c in _confused(word) | _edits(word)
+             if count(c) and (w := typo_weight(word, c) * count(c)) > floor and typo_weight(word, c) > TYPO["far"]}
+    return sorted(score, key=score.get, reverse=True)[:limit]
 
 
 def spell(word: str) -> str:
-    """Fix a typo if the word is unknown. Mix-ups from CONFUSION rank first."""
-    if freq(word) or not GEORGIAN_WORD.fullmatch(word):
-        return word
-    confused = {word[:i] + r + word[i + 1:] for i, c in enumerate(word) for r in CONFUSION.get(c, "")}
-    for group in (confused, _edits(word)):
-        known = [w for w in group if freq(w)]
-        if known:
-            return max(known, key=lambda w: typo_weight(word, w) * freq(w) ** 0.5)
-    return word
+    """Fix a likely typo; keep the word otherwise."""
+    return next(iter(spell_candidates(word)), word)
 
 
 if __name__ == "__main__":
@@ -162,4 +194,4 @@ if __name__ == "__main__":
             print(f"{w}: latin -> {latin_to_georgian(w)} | keyboard -> {from_keyboard(w)}")
         else:
             w = normalize(w)
-            print(f"{w}: spell {spell(w)} | freq {freq(w)}")
+            print(f"{w}: spell {spell(w)} | count {count(w)} | candidates {spell_candidates(w)[:5]}")
