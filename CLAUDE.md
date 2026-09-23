@@ -21,6 +21,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 - `src/dzirkva/engines.py` — SearXNG and Brave clients
 - `src/dzirkva/georgian.py` — normalize, Latin→Georgian, spelling, Georgian ratio
 - `src/dzirkva/morph.py` — word form → lemma + word family (lexicon first, then grammar rules), synonyms
+- `src/dzirkva/web.py` — barebone test page: `uv run python -m dzirkva.web` → http://127.0.0.1:8000
 - `src/dzirkva/search.py` — query variants → parallel engines → RRF merge. Demo: `uv run python -m dzirkva.search <query>`
 - `config/searxng.yml` — engines: google, yandex, yahoo (tested with Georgian; reasons in the file). Google blocks fast bursts with CAPTCHA.
 - `config/sources.yaml` + `src/dzirkva/sources.py` — trusted Georgian sites: category and tier; check with `uv run python scripts/check_sources.py`
