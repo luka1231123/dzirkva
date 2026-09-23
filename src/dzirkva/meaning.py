@@ -8,6 +8,7 @@ close their meanings are, even when they share no words
 from functools import cache
 
 MODEL = "BAAI/bge-m3"
+MAX_TOKENS = 512  # default 8192: one 9,000-character paragraph pads the whole batch (search 11.9 s → 2.9 s)
 
 
 @cache
@@ -16,8 +17,11 @@ def _model():
     from sentence_transformers import SentenceTransformer
 
     if not torch.backends.mps.is_available():
-        return SentenceTransformer(MODEL, device="cpu")
-    return SentenceTransformer(MODEL, device="mps").half()  # fp16: 3.8× faster, same vectors (0.9998)
+        m = SentenceTransformer(MODEL, device="cpu")
+    else:
+        m = SentenceTransformer(MODEL, device="mps").half()  # fp16: 3.8× faster, same vectors (0.9998)
+    m.max_seq_length = MAX_TOKENS
+    return m
 
 
 def vectors(texts: list[str]):
