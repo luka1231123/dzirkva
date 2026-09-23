@@ -1,4 +1,5 @@
 """Search page for testing. Run: uv run python -m dzirkva.web  → http://127.0.0.1:8000
+Surfing pages without a query: /site?h=host (what we know about a site), /discover, /random (a small site).
 
 Page structure (plan.md, Session 7): a tab changes the layout, a filter narrows the sources.
 Tabs: ყველა, ვიდეო, სიახლეები; the tab that fits the query words comes right after ყველა.
@@ -7,6 +8,7 @@ The All tab without filters shows ordinary results, max 2 per site and max 3 soc
 (Facebook …), with video, people and old-web blocks between them. With a filter it shows the plain filtered list.
 """
 
+import random
 import re
 import time
 from functools import cache
@@ -18,7 +20,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 import yaml
 
 from dzirkva.georgian import normalize
-from dzirkva import clicks, passages
+from dzirkva import clicks, discover, papers, passages
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families
 from dzirkva.search import canonical_url, intents, search
@@ -101,6 +103,10 @@ mark.fb{background:var(--fb);border-radius:3px;padding:0 2px}
 .rel{display:flex;flex-wrap:wrap;gap:8px}
 .rel a{border:1px solid var(--line);border-radius:16px;padding:4px 12px;background:var(--bg);font-size:14px}
 .rel a .m{margin-left:8px;font-size:10px}
+.site a.host,.site a.host:visited{color:var(--ink)}
+.list{margin:8px 0;padding:0;list-style:none} .list li{margin:7px 0;line-height:1.5} .list .m{margin-right:8px}
+.facts{font-size:13px;color:var(--muted);margin:6px 0 4px} .hero .t{font-size:24px}
+.go{display:inline-block;margin-top:10px}
 @media (max-width:520px){.r .t{font-size:17px} .ans,.blk,.dbg{padding:12px 14px;border-radius:10px}}
 """
 
@@ -186,10 +192,15 @@ def _labels(r) -> str:
 
 
 def _site(url: str) -> str:
-    """host › path parts, readable: Wayback prefix removed, %-escapes decoded."""
+    """host › path parts, readable: Wayback prefix removed, %-escapes decoded. The host opens the site's page."""
     url = WAYBACK.sub("", url)
     parts = [unquote(p) for p in urlparse(url).path.split("/") if p][:3]
-    return f"<span class=host>{escape(_host(url))}</span>" + "".join(f" › {escape(p[:40].replace('_', ' '))}" for p in parts)
+    return (f"<a class=host href='{_site_link(_host(url))}'>{escape(_host(url))}</a>"
+            + "".join(f" › {escape(p[:40].replace('_', ' '))}" for p in parts))
+
+
+def _site_link(host: str) -> str:
+    return f"/site?h={quote(host)}"
 
 
 def _understood(q: str, qs: dict[str, str], debug: dict) -> str:
@@ -367,6 +378,102 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
     return body + _related(debug.get("related", []))
 
 
+# ---- surfing: pages without a query -----------------------------------------
+
+def _chips(hosts: list[str]) -> str:
+    return "<div class=rel>" + "".join(f"<a href='{_site_link(h)}'>{escape(h)}</a>" for h in hosts) + "</div>"
+
+
+def _block(name: str, inner: str) -> str:
+    return f"<div class=blk><h3>{cap(name)}</h3>{inner}</div>" if inner else ""
+
+
+def _post(url: str, title: str, date: str, site: bool = True) -> str:
+    host = f" <span class=m>· <a href='{_site_link(_host(url))}'>{escape(_host(url))}</a></span>" if site else ""
+    return f"<li><span class=m>{escape(date[:10])}</span><a href='{escape(url)}'>{escape(title[:110])}</a>{host}</li>"
+
+
+def _paper(url: str, title: str, authors: str, year: str, journal: str) -> str:
+    meta = " · ".join(x for x in (authors.split(";")[0], year, journal.split(";")[0]) if x)
+    return f"<li><a href='{escape(url)}'>{escape(title[:140])}</a><br><span class=m>{escape(meta[:140])}</span></li>"
+
+
+def site_page(host: str) -> str:
+    """What dzirkva knows about one site: kind, labels, newest pages, links in and out, similar sites, old copies."""
+    s = discover.site(host)
+    d = s["domain"]  # (source, state, pages, georgian, kind, inbound) or None
+    labels = ""
+    if s["trusted"]:
+        labels += f"<span class=lbl>{cap('სანდო წყარო')} · {discover.CATEGORY_NAMES.get(s['trusted'][0], '')}</span>"
+    if s["small"]:
+        labels += f"<span class='lbl rare'>{cap('პატარა ვები')}</span>"
+    if s["repos"]:
+        labels += f"<span class=lbl>{cap('სამეცნიერო')}</span>"
+    facts = [f"{s['page_count']:,} გვერდი ჩვენს ინდექსში"]
+    if d:
+        facts.append(f"{d[3]:.0%} ქართული")
+    facts.append(f"{s['in_count']} საიტი მიუთითებს")
+    if s["cited_count"]:
+        facts.append(f"ვიკიპედია ციტირებს {s['cited_count']}-ჯერ")
+    if s["old_count"]:
+        facts.append(f"ძველ ვებში {s['old_count']} გვერდი")
+    for base, name, records in s["repos"]:
+        facts.append(f"{escape(name or base)}: {records:,} ნაშრომი")
+    body = (f"<div class='ans hero'><div class=cap>{cap('საიტი')}</div><span class=t>{escape(s['name'] or s['host'])}</span>"
+            f"<div class=facts>{' · '.join(facts)}</div><div class=tags>{labels}</div>"
+            f"<a class=go href='https://{escape(s['host'])}/'>{cap('საიტზე გადასვლა')} →</a></div>")
+    body += _block("ახალი გვერდები", "<ul class=list>" + "".join(_post(u, t or u, dt, False) for u, t, dt in s["pages"])
+                   + "</ul>" if s["pages"] else "")
+    body += _block("მსგავსი საიტები", _chips(s["similar"]) if s["similar"] else "")
+    body += _block("ამ საიტზე მიუთითებენ", _chips(s["links_in"]) if s["links_in"] else "")
+    body += _block("ეს საიტი მიუთითებს", _chips(s["links_out"]) if s["links_out"] else "")
+    wiki_link = lambda t: "https://ka.wikipedia.org/wiki/" + quote(t.replace(" ", "_"))
+    body += _block("ვიკიპედიის სტატიები, რომლებიც მას ციტირებენ", "<ul class=list>" + "".join(
+        f"<li><a href='{wiki_link(t)}'>{escape(t)}</a> <span class=m>{n}</span></li>" for t, n in s["cited"])
+        + "</ul>" if s["cited"] else "")
+    body += _block("ძველი ვები", "<ul class=list>" + "".join(
+        f"<li><span class=m>{snap[:4]}</span><a href='{discover.archive.WAYBACK.format(snap, u)}'>{escape(t or u)}</a></li>"
+        for u, snap, t in s["old"]) + "</ul>" if s["old"] else "")
+    return body
+
+
+def _finds(rng: random.Random) -> list[str]:
+    """Three finds for the home page: a new post of the small web, an old-web page, a small site."""
+    out = []
+    if posts := discover.newest_posts(12):
+        out.append(_post(*rng.choice(posts)))
+    if old := discover.old_find(rng):
+        out.append(f"<li><span class=m>{cap('ძველი ვები')} · {old[2]}</span><a href='{escape(old[0])}'>{escape(old[1])}</a></li>")
+    if h := discover.random_site(rng):
+        out.append(f"<li><span class=m>{cap('პატარა ვები')}</span><a href='{_site_link(h)}'>{escape(h)}</a></li>")
+    return out
+
+
+def home_page() -> str:
+    finds = _finds(random.Random(time.strftime("%Y-%m-%d")))  # the same finds all day
+    return _block("დღის მიგნებები", "<ul class=list>" + "".join(finds) + "</ul>"
+                  f"<a class=go href=/discover>{cap('აღმოაჩინე მეტი')} →</a>" if finds else "")
+
+
+def discover_page() -> str:
+    rng = random.Random()
+    body = (f"<div class='ans hero'><div class=cap>{cap('აღმოჩენა')}</div><span class=t>ქართული ვები ძიების გარეშე</span>"
+            f"<div class=facts>ახალი პოსტები პატარა ვებში, ძველი ვები, ახალი ნაშრომები, საიტები თემების მიხედვით</div>"
+            f"<a class=go href=/random>{cap('შემთხვევითი საიტი')} →</a></div>")
+    posts = discover.newest_posts()
+    body += _block("ახალი პოსტები პატარა ვებში", "<ul class=list>" + "".join(_post(*p) for p in posts) + "</ul>"
+                   if posts else "")
+    old = [f for f in (discover.old_find(rng) for _ in range(5)) if f]
+    body += _block("ძველი ვებიდან", "<ul class=list>" + "".join(
+        f"<li><span class=m>{y}</span><a href='{escape(u)}'>{escape(t)}</a></li>" for u, t, y in old) + "</ul>"
+        if old else "")
+    new = discover.new_papers()
+    body += _block("ახალი ნაშრომები", "<ul class=list>" + "".join(_paper(*p) for p in new) + "</ul>" if new else "")
+    for name, hosts in discover.shelves():
+        body += _block(name, _chips(hosts) if hosts else "")
+    return body
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path)
@@ -382,6 +489,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Location", url)
             self.end_headers()
             return
+        if path.path == "/random":  # surfing: a random small site, straight to it
+            self.send_response(302)
+            self.send_header("Location", f"https://{discover.random_site()}/")
+            self.end_headers()
+            return
+        if path.path in ("/site", "/discover"):
+            h = params.get("h", [""])[0].strip()
+            body = site_page(h) if path.path == "/site" and h else discover_page()
+            self._send(_page("", body))
+            return
         q = params.get("q", [""])[0].strip()
         tab = params.get("tab", ["all"])[0]
         tab = tab if tab in TABS else "all"
@@ -394,11 +511,13 @@ class Handler(BaseHTTPRequestHandler):
                 debug["seconds"]["total"] = round(time.time() - t, 1)
                 _cache[q] = (qs, results, debug)
             body = render(q, tab, chosen, *_cache[q])
-        html = _page(q, body).encode()
+        self._send(_page(q, body or home_page()))
+
+    def _send(self, html: str) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
-        self.wfile.write(html)
+        self.wfile.write(html.encode())
 
 
 if __name__ == "__main__":
