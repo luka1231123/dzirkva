@@ -15,6 +15,7 @@ reference:            # encyclopedias, dictionaries, libraries, corpora
   gnc.gov.ge: 1               # Georgian National Corpus
   manuscript.ge: 1            # National Centre of Manuscripts
   lib.ge: 2                   # Georgian electronic library (literature)
+  poetry.ge: 2                # poems and prose of Georgian writers (some pages are readers' own poems)
 
 science:              # research institutions and universities
   science.org.ge: 1           # Georgian National Academy of Sciences

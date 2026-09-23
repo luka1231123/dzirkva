@@ -145,8 +145,8 @@ def kind(url: str) -> str:
 # One result can have several filter tags; the page shows one filter at a time.
 FILTERS = ("knowledge", "texts", "people", "small", "academic", "old")
 BLOG_HOSTS = {"blogspot.com", "wordpress.com", "medium.com", "livejournal.com", "tumblr.com", "substack.com"}
-TEXT_HOSTS = {"ka.wikisource.org", "lib.ge", "poetry.ge", "geolit.ge"}
-TEXT_TITLE = re.compile(r"ლექს(?!იკ)|ტექსტ|სიმღერ|ნოტებ|ლოცვ|პოემ|მოთხრობ|წიგნ|lyrics|\.pdf\b", re.I)
+TEXT_HOSTS = {"ka.wikisource.org", "lib.ge", "poetry.ge", "geolit.ge", "scribd.com"}  # scribd: user documents (PDF)
+TEXT_TITLE = re.compile(r"ლექს(?!იკ)|ტექსტ|სიმღერ|ნოტებ|ლოცვ|პოემ|მოთხრობ|წიგნ|lyrics|\bpdf\b", re.I)  # scribd titles end "| PDF"
 ACADEMIC_URL = re.compile(r"(?i)\.edu(\.ge)?$|\.ac\.ge$|^dspace\.|^journals?\.|/handle/\d|/article/view/")
 WAYBACK = re.compile(r"^https?://web\.archive\.org/web/[^/]+/")
 
@@ -163,7 +163,7 @@ def tags(url: str, title: str, signals: set[str], small: bool = False) -> set[st
     category, _ = lookup(url) or (None, None)
     if k == "knowledge":
         out.add("knowledge")
-    if host in TEXT_HOSTS or TEXT_TITLE.search(title) or url.lower().endswith(".pdf"):
+    if host in TEXT_HOSTS or base in TEXT_HOSTS or TEXT_TITLE.search(title) or url.lower().endswith(".pdf"):
         out.add("texts")
     if k in ("forum", "social") or base in BLOG_HOSTS or "blog-host" in signals:
         out.add("people")

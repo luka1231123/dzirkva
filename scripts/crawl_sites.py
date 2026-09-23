@@ -330,6 +330,9 @@ async def main() -> None:
     for d in sources():
         if d not in sites and not SKIP.search(d):
             add_site(db, sites, d, "trusted", "full")
+        elif d in sites and sites[d].source != "trusted":  # found first, trusted later (poetry.ge)
+            sites[d].source, sites[d].state = "trusted", "full"
+            save(db, sites[d])
     if not any(s.source == "wiki" for s in sites.values()):
         seed_wiki(db, sites)
     for host, n in db.execute("SELECT host, count(*) FROM queue WHERE status='todo' GROUP BY host"):

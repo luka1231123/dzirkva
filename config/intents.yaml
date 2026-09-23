@@ -139,7 +139,7 @@ exams:
 school:
   ka: სკოლა
   words: სკოლა კლასი გაკვეთილი მოსწავლე მასწავლებელი სახელმძღვანელო დავალება ამოცანა
-  sites: mes.gov.ge ka.khanacademy.org mastsavlebeli.ge kings.ge sulakauri.ge math.ge
+  sites: mes.gov.ge ka.khanacademy.org mastsavlebeli.ge scribd.com kings.ge math.ge sulakauri.ge
   trusted: education
 
 university:
@@ -260,7 +260,7 @@ events:
 books:
   ka: წიგნები და ლიტერატურა
   words: წიგნი რომანი მოთხრობა პოემა ლექსი ავტორი მწერალი პოეტი შინაარსი ანალიზი
-  sites: biblusi.ge poetry.ge lib.ge sulakauri.ge palitral.ge nplg.gov.ge ka.wikisource.org
+  sites: poetry.ge scribd.com ka.wikisource.org lib.ge nplg.gov.ge geolit.ge biblusi.ge sulakauri.ge palitral.ge
   trusted: reference
 
 history:
