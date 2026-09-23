@@ -75,6 +75,23 @@ Budget rules:
 - [ ] 8-bit encodings Georgian-PS / Georgian-Academy (need verified tables)
 - [ ] More seeds: old directories (top.ge, Open Directory), live .ge sites' old versions
 
+## Session 7: Page structure (tabs, filters, sections, Discover)
+Evidence: author's Safari history, 1,912 queries (Jul–Sep 2026). Georgian: entity 50%, word meaning 23%, texts 18%.
+English: entity + fact 47%, media 12%, local/shop/site/quick 22%. No browsing queries. Models: Google tabs, Kagi lenses,
+Naver sections, Kagi Small Web + Marginalia Explore pages.
+
+Rule: separate page = no query; tab = the layout changes; filter = source type, same list; section = intent, automatic.
+- [ ] Tabs: ყველა (sections), ვიდეო (thumbnail grid, films included), სიახლეები (newest first, date shown)
+- [ ] Tab order by intent: film/music words → ვიდეო first; news words → სიახლეები first
+- [ ] Filters (chips, combine): ცოდნა, ტექსტები, ხალხი (forums + blogs + social), სამეცნიერო, იშვიათი (small web), ძველი ვები (archive)
+- [ ] Remove tabs ფილმები, სოციალური, არქივი, ცოდნა (now tab ვიდეო or filters)
+- [ ] Section: dictionary meaning for a one-word Georgian query (ena.ge / Wiktionary)
+- [ ] Section: texts (ტექსტი, ლექსი, სიმღერა, ნოტები, ლოცვა, pdf)
+- [ ] Sections: people (forums, blogs), video row, news row, საინტერესო მიგნებები (2–3 small sites); weather + currency from Session 5
+- [ ] Discover page `/discover`: new posts from Georgian blogs and small sites (RSS), random rare site, by topic
+- [ ] Discover: similar sites (shared inbound links), old-web gallery from `data/archive.db`
+- [ ] Home page: 3 "today's finds" under the search box
+
 ## Later (optional)
 - [x] Own crawl of the trusted sites (`scripts/crawl_sites.py` → `data/crawl.db`, FTS5): robots.txt, sitemaps newest first, 1 req/s per site, main text by trafilatura; search source `crawl`
 - [x] Discovery of rare Georgian sites (same crawler): seeds = 121k hosts cited in ka.wikipedia + hosts linked from crawled pages (`links`); new domain = robots + home + 5 pages, full budget only if >30% Georgian and not commercial
