@@ -20,6 +20,11 @@ def _model():
     return SentenceTransformer(MODEL, device="mps").half()  # fp16: 3.8× faster, same vectors (0.9998)
 
 
+def vectors(texts: list[str]):
+    """Unit vectors (numpy, one row per text): a dot product of two rows is their cosine similarity."""
+    return _model().encode(texts, batch_size=32, normalize_embeddings=True)
+
+
 def similarity(query: str, texts: list[str]) -> list[float]:
     """Cosine similarity (0-1) between the query and each text."""
     if not texts:

@@ -14,14 +14,15 @@ from urllib.parse import quote
 import numpy as np
 
 DB = Path(__file__).resolve().parents[2] / "data" / "passages.db"
-SCHEMA = "CREATE TABLE IF NOT EXISTS passages (id INTEGER PRIMARY KEY, title TEXT, text TEXT, v BLOB)"
+SCHEMA = """CREATE TABLE IF NOT EXISTS passages (id INTEGER PRIMARY KEY, title TEXT, text TEXT, v BLOB);
+CREATE INDEX IF NOT EXISTS passages_title ON passages(title);"""
 CHARS = 600   # passage size: ~160 tokens, one paragraph
 DIM = 1024
 
 
 def connect() -> sqlite3.Connection:
     db = sqlite3.connect(DB, check_same_thread=False)
-    db.execute(SCHEMA)
+    db.executescript(SCHEMA)
     return db
 
 
@@ -54,6 +55,15 @@ def _index():
     vecs = np.frombuffer(b"".join(v for _, v in rows), dtype=np.float16).reshape(-1, DIM)
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     return ids, torch.from_numpy(vecs.copy()).to(device)
+
+
+def best(title: str, qv) -> str | None:
+    """The paragraph of one article nearest to the question vector (a better snippet than the engine's)."""
+    rows = connect().execute("SELECT text, v FROM passages WHERE title = ? AND v IS NOT NULL", (title,)).fetchall()
+    if not rows:
+        return None
+    vecs = np.frombuffer(b"".join(v for _, v in rows), dtype=np.float16).reshape(-1, DIM).astype(np.float32)
+    return rows[int(np.argmax(vecs @ qv))][0]
 
 
 def search(query: str, limit: int = 20) -> list[dict]:

@@ -21,13 +21,14 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 import httpx
+import numpy as np
 
 from dzirkva import engines
 from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, typo_weight, words
-from dzirkva.meaning import similarity
+from dzirkva.meaning import vectors
 from dzirkva.morph import analyze, families, family_members
 from dzirkva import archive, crawl, dictionary, passages, wiki
 from dzirkva.sources import by_category, kind, lookup, tags
@@ -77,6 +78,7 @@ SHAPE_BONUS = 0.3
 ANSWER_TYPES = ("why", "how")  # answer box from the nearest paragraph
 ANSWER_MIN = 0.62       # meaning score of that paragraph (full index: answer 0.65, eclipse for "ბნელდება" 0.61)
 ANSWER_FROM = 5         # read the 5 nearest paragraphs
+ANSWER_VECTOR = 3       # why/how: results are also compared with the mean of the 3 nearest paragraphs
 RELATED = 8             # related searches under the results
 BRAVE_QUERIES = ("corrected", "lemmas")      # Brave API: monthly quota
 SEARXNG_SPACING = 0.3   # seconds between SearXNG requests: Google blocks fast bursts
@@ -292,26 +294,55 @@ def question_type(query: str) -> str | None:
     return None
 
 
-def passage_answer(qtype: str | None, near: list[dict]) -> dict | None:
-    """Answer box for why/how questions: the nearest paragraph that has the answer shape (რადგან …)."""
+def passage_answer(qtype: str | None, near: list[dict], qv) -> dict | None:
+    """Answer box for why/how questions: the nearest paragraph that has the answer shape (რადგან …).
+
+    `text` is its sentence nearest to the question, `more` the whole paragraph.
+    """
     if qtype not in ANSWER_TYPES:
         return None
     shape = re.compile(SHAPES[qtype][1])
     for p in near[:ANSWER_FROM]:
         if p["score"] >= ANSWER_MIN and shape.search(p["snippet"]):
-            return {"title": p["title"].removesuffix(" — ვიკიპედია"), "text": p["snippet"], "url": p["url"]}
+            sents = [s for s in re.split(r"(?<=[.!?])\s+", p["snippet"]) if s.strip()]
+            best = sents[int(np.argmax(vectors(sents) @ qv))]
+            return {"title": p["title"].removesuffix(" — ვიკიპედია"), "text": best, "more": p["snippet"],
+                    "url": p["url"]}
     return None
 
 
-def rank_by_meaning(query: str, results: list[Result], known: dict[str, float] | None = None) -> list[Result]:
-    """Final order: fusion of the engine rank and the meaning rank. `known` caches scores by URL."""
+def answer_vector(near: list[dict]):
+    """Questions and answers read differently (რატომ წითლდება ≠ მიმოფანტვის გამო): the mean of the
+    nearest paragraphs is a vector of the answer, like HyDE but with real paragraphs, no LLM."""
+    v = vectors([p["snippet"] for p in near[:ANSWER_VECTOR]]).mean(0)
+    return v / np.linalg.norm(v)
+
+
+def wiki_snippets(results: list[Result], qv, content: list[str]) -> list[Result]:
+    """Wikipedia results show their paragraph nearest to the question, not the engine's snippet."""
+    for r in results:
+        p = urlparse(r.url)
+        if p.hostname and p.hostname.endswith("ka.wikipedia.org") and p.path.startswith("/wiki/"):
+            if text := passages.best(unquote(p.path[6:]).replace("_", " "), qv):
+                r.snippet = text
+                r.coverage = coverage(r.text, content)
+    return results
+
+
+def rank_by_meaning(query: str, results: list[Result], known: dict, qv, answer=None) -> list[Result]:
+    """Final order: fusion of the engine rank and the meaning rank. `known` caches vectors by URL.
+
+    Meaning = similarity to the question; with an answer vector, the mean of both.
+    """
     qtype = question_type(query)
     shape = re.compile(SHAPES[qtype][1]) if qtype else None
-    known = {} if known is None else known
     todo = [r for r in results if r.url not in known]
-    known.update(zip((r.url for r in todo), similarity(query, [r.text for r in todo])))
+    if todo:
+        known.update(zip((r.url for r in todo), vectors([r.text for r in todo])))
     for r in results:
-        r.meaning = known[r.url]
+        r.meaning = float(known[r.url] @ qv)
+        if answer is not None:
+            r.meaning = (r.meaning + float(known[r.url] @ answer)) / 2
     by_meaning = {id(r): i for i, r in enumerate(sorted(results, key=lambda r: r.meaning, reverse=True))}
     for i, r in enumerate(results):  # results are in engine order here
         fused = 1 / (RRF_K + i) + MEANING_WEIGHT / (RRF_K + by_meaning[id(r)])
@@ -365,13 +396,15 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     lists.append(("crawl", crawl.search(content)))  # trusted sites, own crawl
     near = passages.search(query)                    # Wikipedia paragraphs nearest in meaning
     lists.append(("passages", near))
-    known: dict[str, float] = {}
-    first = rank_by_meaning(query, merge(lists, content), known)
+    qv = vectors([query])[0]
+    # explanations (why/how): answer vector and feedback from the nearest paragraphs; names and facts: from
+    # the covered snippets (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
+    explain = question_type(query) in ANSWER_TYPES and bool(near)
+    answer_v = answer_vector(near) if explain else None
+    known: dict = {}
+    first = rank_by_meaning(query, wiki_snippets(merge(lists, content), qv, content), known, qv, answer_v)
     t1 = time.time()
     covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]
-    # explanations (why/how): words of the nearest paragraphs; names and facts: words of the covered snippets
-    # (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
-    explain = question_type(query) in ANSWER_TYPES and near
     terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
     # verbs stay out: ბნელდება would bring back the eclipse pages (დაბნელება)
     base = " ".join(_lemma(w) for w in content if not _is_verb(w)) or " ".join(_lemma(w) for w in content)
@@ -383,8 +416,9 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     if more:
         qs.update(more)
         lists += asyncio.run(fan_out(more))
-    results = group_copies(rank_by_meaning(query, merge(lists, content), known))
-    answer = wiki.article(content) or passage_answer(question_type(query), near)
+    results = group_copies(rank_by_meaning(query, wiki_snippets(merge(lists, content), qv, content), known, qv,
+                                           answer_v))
+    answer = wiki.article(content) or passage_answer(question_type(query), near, qv)
     wiki_hits = next(res for name, res in lists if name == "wikipedia")
     debug = {
         "content": content, "type": question_type(query), "spelling": fixes, "feedback": terms, "answer": answer,
