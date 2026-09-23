@@ -107,7 +107,10 @@ Research: data
   OAI-PMH (OJS journals, DSpace, EPrints) → `data/papers.db` table `repos` (`scripts/find_repos.py`)
 - [x] Harvest all found repositories: title, authors, year, journal, abstract, keywords, PDF link → `papers` FTS5
   (`scripts/papers_collect.py`, resumable, 1 request/s per repository)
-- [ ] Full text: small PDFs of Georgian papers → `passages.db` site `papers` (like Iverieli text), then vectors
+- [x] Full text: small PDFs of Georgian papers → `passages.db` site `papers` (like Iverieli text), then vectors
+  (paused to limit downloads: 11,028 of 17,124 PDFs read, 8,930 with Georgian text; `scripts/papers_text.py` resumes)
+- Dropped: OCR of the Iverieli scans that Wikipedia cites (702 items from 1990 = ~26 GB of downloads). Iverieli text
+  paused at 1,820 of 90,804 items (`scripts/iverieli_text.py` resumes)
 - [x] Academic tag only from evidence: .edu host, OAI repository, science source, article/handle URL
   (a link to dspace.nplg.gov.ge made netgazeti.ge "academic")
 

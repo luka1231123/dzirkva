@@ -30,7 +30,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
   Feeds: `uv run python scripts/feeds.py` (→ `data/feeds.db`, ~2 min; run daily)
 - `src/dzirkva/papers.py` — Georgian journals and university repositories (OJS, DSpace, EPrints) by OAI-PMH → `data/papers.db`; search source, paper layout (authors, year, journal, PDF, citation)
   Find endpoints: `uv run python scripts/find_repos.py` (~15 min, asks every Georgian host); harvest: `nohup uv run python scripts/papers_collect.py > data/papers.log 2>&1 &` (resumable; run again for new or failed repositories)
-  Full text: `nohup uv run python scripts/papers_text.py > data/papers_text.log 2>&1 &` (PDFs → `passages.db` site `papers`), then `scripts/build_passages.py` for vectors
+  Full text: `nohup uv run python scripts/papers_text.py > data/papers_text.log 2>&1 &` (PDFs → `passages.db` site `papers`), then `scripts/build_passages.py` for vectors (paused at 11,028 of 17,124)
 - `src/dzirkva/search.py` — simple queries → engines → feedback round (only when fewer than 5 of the top 10 have every query word) → rank (engine + meaning + tier + coverage) → group copies. Demo: `uv run python -m dzirkva.search <query>`
 - `src/dzirkva/archive.py` + `scripts/archive_collect.py` — old web from the Internet Archive → `data/archive.db`. Run collector in background: `nohup uv run python scripts/archive_collect.py > data/archive.log 2>&1 &` (resumable)
 - `src/dzirkva/dictionary.py` — Georgian word meanings from ka.wiktionary: answer box for "X რას ნიშნავს" / one-word queries
@@ -38,7 +38,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 - `src/dzirkva/crawl.py` + `scripts/crawl_sites.py` — own crawl of trusted sites + discovery of rare Georgian sites (Wikipedia-cited and linked hosts, probed, rules for commercial/academic/blog) → `data/crawl.db`. Run in background: `nohup uv run python scripts/crawl_sites.py > data/crawl.log 2>&1 &` (resumable; re-run adds new sitemap pages)
 - `src/dzirkva/engines.py` answers are cached in `data/cache.db`; Google is paused 1–24 h after a CAPTCHA
 - `src/dzirkva/iverieli.py` + `scripts/iverieli_collect.py` — National Library digital library catalog (601k records, OAI-PMH metadata only, most items are scans) → `data/iverieli.db`. Run in background: `nohup uv run python scripts/iverieli_collect.py > data/iverieli.log 2>&1 &` (resumable, ~4 h)
-  Text: `nohup uv run python scripts/iverieli_text.py > data/iverieli_text.log 2>&1 &` — PDFs ≤ 5 MB (text layer; big ones are scans) → `data/passages.db` site `iverieli`, then `scripts/build_passages.py` for vectors (resumable)
+  Text: `nohup uv run python scripts/iverieli_text.py > data/iverieli_text.log 2>&1 &` — PDFs ≤ 5 MB (text layer; big ones are scans) → `data/passages.db` site `iverieli`, then `scripts/build_passages.py` for vectors (resumable; paused at 1,820 of 90,804 items: the user limits downloads)
 - Small web (`crawl.small_site`, filter chip პატარა ვები): personal sites by first-person voice; scores in `data/voice.db` from `uv run python scripts/score_small_web.py` (~1 min, run again after crawling)
 - `src/dzirkva/meaning.py` — BGE-M3 similarity (first load ~5 s; model in ~/.cache/huggingface); result vectors cached in `data/vectors.db`
 - `src/dzirkva/clicks.py` — result links go through `/go` → `data/clicks.db`; pages chosen for the same question (dictionary forms) rank higher; a click followed by another within 30 s does not count
