@@ -84,7 +84,8 @@ Rule: separate page = no query; tab = the layout changes; filter = source type, 
 - [x] Tabs: ყველა (sections), ვიდეო (films included), სიახლეები
 - [ ] Tab layouts: ვიდეო as thumbnail grid, სიახლეები newest first with date shown
 - [x] Tab order by intent: film/music words → ვიდეო first; news words → სიახლეები first
-- [x] Filters (chips, combine): ცოდნა, ტექსტები, ხალხი (forums + blogs + social), სამეცნიერო, იშვიათი (small web), ძველი ვები (archive)
+- [x] Filters (chips, one at a time): ცოდნა, ტექსტები, ხალხი (forums + blogs + social), სამეცნიერო, ძველი ვები (archive); იშვიათი removed: rules cannot tell rare sites well
+- [x] Social posts (Facebook …) in the main list, max 3 per page
 - [x] Remove tabs ფილმები, სოციალური, არქივი, ცოდნა (now tab ვიდეო or filters)
 - [ ] Section: dictionary meaning for a one-word Georgian query (ena.ge / Wiktionary)
 - [ ] Section: texts (ტექსტი, ლექსი, სიმღერა, ნოტები, ლოცვა, pdf)

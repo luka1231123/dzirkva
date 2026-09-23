@@ -65,7 +65,7 @@ def kind(url: str) -> str:
 # ---- filters (source type) ----------------------------------------------
 # A tab changes the layout (kind above); a filter keeps the list and narrows the sources.
 # One result can have several filter tags; the page shows one filter at a time.
-FILTERS = ("knowledge", "texts", "people", "academic", "small", "old")
+FILTERS = ("knowledge", "texts", "people", "academic", "old")
 BLOG_HOSTS = {"blogspot.com", "wordpress.com", "medium.com", "livejournal.com", "tumblr.com", "substack.com"}
 TEXT_HOSTS = {"ka.wikisource.org", "lib.ge", "poetry.ge", "geolit.ge"}
 TEXT_TITLE = re.compile(r"ლექს(?!იკ)|ტექსტ|სიმღერ|ნოტებ|ლოცვ|პოემ|მოთხრობ|წიგნ|lyrics|\.pdf\b", re.I)
@@ -73,7 +73,7 @@ ACADEMIC_URL = re.compile(r"(?i)\.edu(\.ge)?$|\.ac\.ge$|^dspace\.|^journals?\.|/
 WAYBACK = re.compile(r"^https?://web\.archive\.org/web/[^/]+/")
 
 
-def tags(url: str, title: str, signals: set[str], small: bool) -> set[str]:
+def tags(url: str, title: str, signals: set[str]) -> set[str]:
     """Filter tags of one result. `signals` come from the crawl (crawl.domain_signals)."""
     out = {"old"} if WAYBACK.match(url) else set()
     url = WAYBACK.sub("", url)
@@ -89,6 +89,4 @@ def tags(url: str, title: str, signals: set[str], small: bool) -> set[str]:
         out.add("people")
     if category == "science" or "academic" in signals or ACADEMIC_URL.search(host + urlparse(url).path):
         out |= {"academic", "knowledge"}
-    if small:
-        out.add("small")
     return out

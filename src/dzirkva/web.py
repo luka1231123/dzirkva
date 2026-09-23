@@ -2,9 +2,9 @@
 
 Page structure (plan.md, Session 7): a tab changes the layout, a filter narrows the sources.
 Tabs: ყველა, ვიდეო, სიახლეები; the tab that fits the query words comes right after ყველა.
-Filters (chips, one at a time): ცოდნა, ტექსტები, ხალხი, სამეცნიერო, იშვიათი, ძველი ვები.
-The All tab without filters shows ordinary results, max 2 per site, with video, people,
-small-site and old-web blocks between them. With a filter it shows the plain filtered list.
+Filters (chips, one at a time): ცოდნა, ტექსტები, ხალხი, სამეცნიერო, ძველი ვები.
+The All tab without filters shows ordinary results, max 2 per site and max 3 social posts
+(Facebook …), with video, people and old-web blocks between them. With a filter it shows the plain filtered list.
 """
 
 import re
@@ -23,10 +23,11 @@ TAB_KINDS = {"video": {"video", "film"}, "news": {"news"}}
 TAB_WORDS = {"video": "ფილმი სერიალი კინო მულტფილმი ვიდეო კლიპი ტრეილერი სიმღერა მუსიკა ონლაინ",
              "news": "სიახლე ამბავი დღეს გუშინ არჩევნები"}  # query word families that move the tab forward
 FILTERS = {"knowledge": "ცოდნა", "texts": "ტექსტები", "people": "ხალხი", "academic": "სამეცნიერო",
-           "small": "იშვიათი", "old": "ძველი ვები"}
-MAIN_KINDS = {"knowledge", "news", "web", "forum"}
-BLOCKS = {3: "video", 5: "people", 7: "small", 10: "old"}  # All tab: block after the n-th main result
+           "old": "ძველი ვები"}
+MAIN_KINDS = {"knowledge", "news", "web", "forum", "social"}
+BLOCKS = {3: "video", 5: "people", 10: "old"}  # All tab: block after the n-th main result
 PER_SITE = 2
+MAX_SOCIAL = 3  # social posts in the main list (all social sites together)
 _cache: dict[str, tuple[dict, list, dict]] = {}
 
 PAGE = """<!doctype html><meta charset="utf-8"><title>dzirkva</title>
@@ -109,8 +110,9 @@ def _in_tab(r, tab: str) -> bool:
 def _all_tab(q: str, results: list, marks: dict[str, str]) -> str:
     main, per_site = [], {}
     for r in results:
-        if r.kind in MAIN_KINDS and per_site.get(_host(r.url), 0) < PER_SITE:
-            per_site[_host(r.url)] = per_site.get(_host(r.url), 0) + 1
+        key, limit = ("social", MAX_SOCIAL) if r.kind == "social" else (_host(r.url), PER_SITE)
+        if r.kind in MAIN_KINDS and per_site.get(key, 0) < limit:
+            per_site[key] = per_site.get(key, 0) + 1
             main.append(r)
     main = main[:30]
     shown = {id(r) for r in main}
