@@ -5,6 +5,7 @@
 # The intent with the most matching query words wins; a word in several intents counts for each in part.
 # Ties: the first in this file, so narrow intents come before broad ones (crypto before currency). Its sites get one
 # site: query in round 1 and a ranking bonus (search.INTENT_BONUS). No intent: category "reference".
+# papers: true = every harvested journal and repository (papers.py) is a site of the intent.
 # encyclopedia: false = the query wants a service (a pharmacy, a flat, a ticket), not an article: Wikipedia pages
 # that only our local indexes found get the lowest weight (search.LOCAL_FLOOR), however close their title.
 
@@ -141,6 +142,13 @@ school:
   words: სკოლა კლასი გაკვეთილი მოსწავლე მასწავლებელი სახელმძღვანელო დავალება ამოცანა
   sites: mes.gov.ge ka.khanacademy.org mastsavlebeli.ge scribd.com kings.ge math.ge sulakauri.ge
   trusted: education
+
+research:
+  ka: კვლევა და სამეცნიერო ნაშრომები
+  words: კვლევა სტატია დისერტაცია ნაშრომი ჟურნალი მონოგრაფია თეზისი ანოტაცია სამეცნიერო მეცნიერება რეფერატი ბიბლიოგრაფია
+  sites: openscience.ge openjournals.ge eprints.iliauni.edu.ge dspace.tsu.ge dspace.nplg.gov.ge journals.4science.ge
+  trusted: science
+  papers: true
 
 university:
   ka: უნივერსიტეტი

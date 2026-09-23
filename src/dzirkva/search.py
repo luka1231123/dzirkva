@@ -177,11 +177,13 @@ def _lemma(word: str) -> str:
 
 @cache
 def intents() -> dict[str, dict]:
-    """config/intents.yaml: name → {ka, words (set), phrases (list), sites (hosts + the trusted category's)}."""
+    """config/intents.yaml: name → {ka, words (set), phrases (list), sites (hosts + the trusted category's
+    + the repositories of papers.py when the intent has papers: true)}."""
     out = {}
     for name, it in yaml.safe_load(INTENTS_FILE.read_text(encoding="utf-8")).items():
         words = it["words"].split()
         sites = it["sites"].split() + (by_category(it["trusted"]) if "trusted" in it else [])
+        sites += sorted(papers.hosts()) if it.get("papers") else []  # every journal and repository we harvest
         out[name] = {"ka": it["ka"], "encyclopedia": it.get("encyclopedia", True),
                      "words": {w for w in words if "_" not in w},
                      "phrases": [w.replace("_", " ") for w in words if "_" in w], "sites": list(dict.fromkeys(sites))}
@@ -523,6 +525,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     lists.append(("archive", archive.search(content)))  # old Georgian web, local index
     lists.append(("crawl", crawl.search(content)))  # trusted sites, own crawl
     lists.append(("iverieli", iverieli.search(content)))  # National Library catalog: books, journals, press
+    lists.append(("papers", papers.search(content)))  # Georgian journals and university repositories
     near = passages.search(query)                    # Wikipedia paragraphs nearest in meaning
     lists.append(("passages", near))
     answer = wiki.article(content)

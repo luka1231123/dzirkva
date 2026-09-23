@@ -20,6 +20,7 @@ from dzirkva.wiki import any_form
 DB = Path(__file__).resolve().parents[2] / "data" / "papers.db"
 AGENT = "dzirkva/0.1 (Georgian search engine)"
 SCHEMA = """
+PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS repos (base TEXT PRIMARY KEY, ident TEXT, host TEXT, name TEXT, software TEXT,
                                   token TEXT, records INT DEFAULT 0, state TEXT DEFAULT 'new');
 CREATE VIRTUAL TABLE IF NOT EXISTS papers USING fts5(oai UNINDEXED, url UNINDEXED, pdf UNINDEXED, title, creator,
@@ -28,6 +29,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS papers USING fts5(oai UNINDEXED, url UNINDEXE
 CREATE TABLE IF NOT EXISTS seen (oai TEXT PRIMARY KEY);  -- a record once: OJS installs answer under several names
 """
 MIN_GEORGIAN = 0.3   # share of Georgian letters in the title + abstract kept
+CONTROL = re.compile(rb"[\x00-\x08\x0b\x0c\x0e-\x1f]")  # not allowed in XML; abstracts pasted from PDFs have them
 NS = {"oai": "http://www.openarchives.org/OAI/2.0/", "dc": "http://purl.org/dc/elements/1.1/"}
 VERSION = re.compile(r"(?i)version$|^draft$|peer-reviewed|^text$")  # dc:type values that are not the item's type
 ISSN = re.compile(r"^\d{4}-\d{3}[\dXx]$")
@@ -38,7 +40,7 @@ TYPE_NAMES = {"article": "სტატია", "doctoralthesis": "დისე�
 
 
 def connect() -> sqlite3.Connection:
-    db = sqlite3.connect(DB, check_same_thread=False)
+    db = sqlite3.connect(DB, check_same_thread=False, timeout=60)  # the web page reads while scripts write
     db.executescript(SCHEMA)
     return db
 
@@ -54,7 +56,7 @@ def _most_georgian(values: list[str]) -> str:
 
 def parse(xml: bytes, base: str) -> tuple[list[tuple], str | None, int, str | None]:
     """One ListRecords page → paper rows, the next resumption token, the total record count, the OAI error code."""
-    root = ET.fromstring(xml)
+    root = ET.fromstring(CONTROL.sub(b"", xml))
     error = root.find("oai:error", NS)
     if error is not None:
         return [], None, 0, error.get("code")
@@ -86,16 +88,17 @@ def parse(xml: bytes, base: str) -> tuple[list[tuple], str | None, int, str | No
 
 
 @cache
-def _hosts() -> frozenset[str]:
+def hosts() -> frozenset[str]:
+    """Hosts of the repositories (www. removed)."""
     db = _db()
-    return frozenset(h for (h,) in db.execute("SELECT host FROM repos")) if db else frozenset()
+    return frozenset(h.removeprefix("www.") for (h,) in db.execute("SELECT host FROM repos")) if db else frozenset()
 
 
 def is_repo(url: str) -> bool:
     """A page on a site with an OAI-PMH repository (a journal, a university repository): academic."""
     host = (urlparse(url).hostname or "").removeprefix("www.")
     while host.count("."):
-        if host in _hosts():
+        if host in hosts():
             return True
         host = host.partition(".")[2]
     return False
