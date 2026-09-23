@@ -21,7 +21,7 @@ from dzirkva.georgian import normalize
 from dzirkva import clicks, passages
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families
-from dzirkva.search import canonical_url, search
+from dzirkva.search import canonical_url, intents, search
 
 TABS = {"all": "ყველა", "video": "ვიდეო", "news": "სიახლეები"}
 TAB_KINDS = {"video": {"video", "film"}, "news": {"news"}}
