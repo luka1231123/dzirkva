@@ -98,7 +98,7 @@ RELATED = 8             # related searches under the results
 BRAVE_QUERIES = ("corrected", "lemmas")      # Brave API: monthly quota
 TYPED_USES = 3          # round-1 pages that use a typed word: a real word, so a fix is only "did you mean"
 SEARXNG_SPACING = 0.3   # seconds between SearXNG requests: Google blocks fast bursts
-TRACKING = re.compile(r"^(utm_|fbclid|gclid|yclid|mc_|ref$|ref_)")
+TRACKING = re.compile(r"^(utm_|fbclid|gclid|yclid|mc_|ref$|ref_|locale$)")  # locale: DSpace UI language, same record
 
 
 @dataclass
