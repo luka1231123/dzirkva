@@ -1,8 +1,9 @@
 """Check each trusted source has Georgian pages.
 
 1. Home page: online and its text is mostly Georgian.
-2. If not (bot block, JavaScript page, English home page, geo-block): ask SearXNG
-   "site:domain" and check that the engines return Georgian results for it.
+2. If not (bot block, JavaScript page, English home page, geo-block): ask the Brave API
+   "site:domain" and check that it returns Georgian results. (Brave API, not SearXNG:
+   Google blocks SearXNG with a CAPTCHA after a few dozen site: queries.)
 
 Run: uv run python scripts/check_sources.py
 """
@@ -12,11 +13,12 @@ import re
 
 import httpx
 
-from dzirkva.engines import searxng
+from dzirkva.engines import brave
 from dzirkva.georgian import georgian_ratio
 from dzirkva.sources import sources
 
 MIN_GEORGIAN = 0.3
+MIX_MARK = 0.001  # real site, but the engines hold mostly its non-Georgian pages
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Safari/605.1.15",
            "Accept-Language": "ka,en;q=0.5"}
 
@@ -43,12 +45,13 @@ async def check(client: httpx.AsyncClient, sem: asyncio.Semaphore, domain: str) 
 async def check_engines(client: httpx.AsyncClient, domain: str) -> tuple[str, str, float]:
     """Georgian share of titles + snippets that the engines return for site:domain."""
     try:
-        results = await searxng(client, f"site:{domain}")
+        results = await brave(client, f"site:{domain}")
     except httpx.HTTPError as e:
         return domain, f"engines: {type(e).__name__}", 0.0
     on_site = [r for r in results if domain in r["url"]]
     text = " ".join(r["title"] + " " + r["snippet"] for r in on_site)
-    return domain, f"engines: {len(on_site)} results", georgian_ratio(text) if len(on_site) >= 3 else 0.0
+    ratio = georgian_ratio(text) if len(on_site) >= 3 else 0.0
+    return domain, f"engines: {len(on_site)} results", max(ratio, MIX_MARK if len(on_site) >= 3 else 0.0)
 
 
 async def main() -> None:
@@ -60,11 +63,12 @@ async def main() -> None:
             if ratio < MIN_GEORGIAN:
                 d, s2, r2 = await check_engines(client, domain)
                 results[i] = (d, f"{status} | {s2}", r2)
-    bad = [r for r in results if r[2] < MIN_GEORGIAN]
     for domain, status, ratio in sorted(results, key=lambda r: r[2]):
-        mark = "OK " if ratio >= MIN_GEORGIAN else "BAD"
+        mark = "OK " if ratio >= MIN_GEORGIAN else "MIX" if ratio > 0 else "BAD"
         print(f"{mark} {ratio:4.0%}  {domain:<28} {status}")
-    print(f"\n{len(results) - len(bad)}/{len(results)} sources OK")
+    ok = sum(r[2] >= MIN_GEORGIAN for r in results)
+    mix = sum(0 < r[2] < MIN_GEORGIAN for r in results)
+    print(f"\n{ok} OK, {mix} MIX (multilingual), {len(results) - ok - mix} BAD of {len(results)}")
 
 
 asyncio.run(main())

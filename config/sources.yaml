@@ -1,128 +1,135 @@
-# Trusted Georgian sources, grouped by category.  domain: tier
-# tier 1 = official, public, academic, reference; 2 = established media and companies; 3 = tabloid/aggregator.
-# A domain also covers its subdomains (nplg.gov.ge covers iverieli.nplg.gov.ge).
-# Checked by scripts/check_sources.py (online + Georgian text).
+# Trusted Georgian sources: where Georgian knowledge lives.  domain: tier
+# tier 1 = primary, official, scholarly, reference (the source of the fact)
+# tier 2 = professional journalism, analysis, cultural institutions, strong communities
+# tier 3 = useful but lower trust: user listings, weekly tabloid-style press
+# A domain also covers its subdomains (nplg.gov.ge covers dspace.nplg.gov.ge).
+# Chosen for information quality. scripts/check_sources.py only checks online + Georgian text.
 
-news:
-  interpressnews.ge: 1
-  netgazeti.ge: 1
-  civil.ge: 1  # home page is English; Georgian pages under civil.ge/ka
-  radiotavisupleba.ge: 1
-  1tv.ge: 1
-  publika.ge: 1
-  mythdetector.ge: 1
-  factcheck.ge: 1
-  tabula.ge: 2
-  on.ge: 2
-  imedinews.ge: 2
-  rustavi2.ge: 2
-  formulanews.ge: 2
-  tvpirveli.ge: 2
-  kvirispalitra.ge: 2
-  palitranews.ge: 2
-  for.ge: 2
-  ipress.ge: 2
-  bpn.ge: 2
-  reginfo.ge: 2
-  batumelebi.netgazeti.ge: 2
-  ambebi.ge: 3
-  info9.ge: 3
-  allnews.ge: 3
+reference:            # encyclopedias, dictionaries, libraries, corpora
+  ka.wikipedia.org: 1
+  ka.wikisource.org: 1        # Georgian classic texts
+  ka.wiktionary.org: 2
+  iverieli.nplg.gov.ge: 1     # National Parliamentary Library digital library (books, press archive)
+  nplg.gov.ge: 1              # National Parliamentary Library (catalogues, dictionaries, encyclopedias)
+  ena.ge: 1                   # Georgian language portal, explanatory dictionary
+  gnc.gov.ge: 1               # Georgian National Corpus
+  manuscript.ge: 1            # National Centre of Manuscripts
+  lib.ge: 2                   # Georgian electronic library (literature)
+
+science:              # research institutions and universities
+  science.org.ge: 1           # Georgian National Academy of Sciences
+  rustaveli.org.ge: 1         # Shota Rustaveli National Science Foundation
+  tsu.ge: 1
+  iliauni.edu.ge: 1
+  gtu.ge: 1
+  tsmu.edu: 1
+  freeuni.edu.ge: 1
+  sangu.edu.ge: 2
+  btu.edu.ge: 2
+  ibsu.edu.ge: 2
+
+history:              # archives, memory, heritage
+  archive.gov.ge: 1
+  sovlab.ge: 1                # Soviet Past Research Laboratory
+  memkvidreoba.gov.ge: 1      # National Agency for Cultural Heritage Preservation
+  heritagesites.ge: 1
+  museum.ge: 1                # Georgian National Museum
+
+religion:
+  patriarchate.ge: 1
+  orthodoxy.ge: 2
+  orthodox.ge: 2
+
+culture:              # literature, film, music
+  arilimag.ge: 2              # literary magazine
+  gnfc.ge: 1                  # Georgian National Film Center
+  polyphony.ge: 1             # Traditional Polyphony research centre
+  indigo.com.ge: 2            # long-form magazine
+  gemrielia.ge: 2             # recipes
+
+education:
+  mes.gov.ge: 1
+  naec.ge: 1                  # national exams
+  eqe.ge: 1
+  teachers.gov.ge: 1
+  mastsavlebeli.ge: 2         # teachers' portal: methods, subject articles
+
+law:
+  matsne.gov.ge: 1            # Legislative Herald: all laws
+  supremecourt.ge: 1
+  constcourt.ge: 1
+  court.ge: 1
+  ombudsman.ge: 1
+  gyla.ge: 1                  # Georgian Young Lawyers' Association: legal analysis
+  transparency.ge: 1          # Transparency International Georgia
+  idfi.ge: 1                  # Institute for Development of Freedom of Information
 
 government:
   gov.ge: 1
   parliament.ge: 1
-  my.gov.ge: 1
-  psh.gov.ge: 1
-  justice.gov.ge: 1
+  geostat.ge: 1               # national statistics
+  nbg.gov.ge: 1               # National Bank: exchange rates, economy
+  cec.gov.ge: 1               # elections
   mfa.gov.ge: 1
-  mof.ge: 1
   police.ge: 1
-  cec.gov.ge: 1
+  rs.ge: 1                    # Revenue Service: taxes
   tbilisi.gov.ge: 1
-  rs.ge: 1
-  ssa.gov.ge: 1
-  sakpatenti.gov.ge: 1
-  archive.gov.ge: 1
+  moh.gov.ge: 1
+  ncdc.ge: 1                  # National Center for Disease Control: health information
+  nea.gov.ge: 1               # National Environmental Agency: weather, hydrology
+  mepa.gov.ge: 1              # environment and agriculture
+  apa.gov.ge: 1               # protected areas, nature
 
-law:
-  matsne.gov.ge: 1
-  supremecourt.ge: 1
-  constcourt.ge: 1
-  ombudsman.ge: 1
+news:                 # professional newsrooms
+  interpressnews.ge: 2
+  netgazeti.ge: 2
+  civil.ge: 2                 # home page is English; Georgian pages under civil.ge/ka
+  radiotavisupleba.ge: 2
+  1tv.ge: 2                   # public broadcaster
+  publika.ge: 2
+  tabula.ge: 2
+  on.ge: 2
+  batumelebi.netgazeti.ge: 2
+  jam-news.net: 2
+  imedinews.ge: 2
+  rustavi2.ge: 2
+  formulanews.ge: 2
+  tvpirveli.ge: 2
+  palitranews.ge: 2
+  bpn.ge: 2
+  ipress.ge: 2
+  reginfo.ge: 2
+  for.ge: 2
+  kvirispalitra.ge: 3
 
-finance:
-  nbg.gov.ge: 1
-  geostat.ge: 1
+investigation:        # investigative journalism and fact-checking
+  ifact.ge: 1
+  monitori.ge: 1
+  liberali.ge: 2
+  chai-khana.org: 2
+  reportiori.ge: 2
+  mythdetector.ge: 1
+  factcheck.ge: 1
+  mediachecker.ge: 2
+
+economy:
   bm.ge: 2
   commersant.ge: 2
   forbes.ge: 2
-  bankofgeorgia.ge: 2
-  tbcbank.ge: 2
 
-education:
-  mes.gov.ge: 1
-  naec.ge: 1
-  eqe.ge: 1
-  tsu.ge: 1
-  iliauni.edu.ge: 1
-  gtu.ge: 1
-  freeuni.edu.ge: 1
-  tsmu.edu: 1
-  btu.edu.ge: 2
-  ibsu.edu.ge: 2
-  sangu.edu.ge: 2
-
-reference:
-  ka.wikipedia.org: 1
-  ka.wiktionary.org: 2
-  nplg.gov.ge: 1
-  ena.ge: 1
-  translate.ge: 2  # dictionary; interface mostly English
-  lib.ge: 2
-
-health:
-  moh.gov.ge: 1
-  ncdc.ge: 1
-  evex.ge: 2
-  aversi.ge: 2
-  psp.ge: 2
-  gpc.ge: 2
-  mkurnali.ge: 3
-
-culture:
-  patriarchate.ge: 1
-  museum.ge: 1
-  heritagesites.ge: 1
-  gnfc.ge: 1
-  arilimag.ge: 2
-  gemrielia.ge: 2
-
-transport:
-  railway.ge: 1
-  ttc.com.ge: 1
-
-weather:
-  nea.gov.ge: 1
-  amindi.ge: 2
+community:            # people answering people
+  forum.ge: 2
 
 sport:
   gff.ge: 1
   rugby.ge: 1
 
-jobs:
-  jobs.ge: 2
-  hr.ge: 2
-  myjobs.ge: 2
-
-real-estate:
-  ss.ge: 2
-  myhome.ge: 2
-
-shopping:
-  myauto.ge: 2
-  mymarket.ge: 3
-
-telecom:
-  magticom.ge: 2
-  cellfie.ge: 2
+services:             # for practical queries (transport, jobs, housing, public services)
+  my.gov.ge: 1
+  psh.gov.ge: 1
+  railway.ge: 1
+  ttc.com.ge: 1               # Tbilisi metro and buses
+  jobs.ge: 3
+  hr.ge: 3
+  ss.ge: 3
+  myhome.ge: 3
