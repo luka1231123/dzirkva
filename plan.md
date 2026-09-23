@@ -76,7 +76,7 @@ Budget rules:
 - [ ] More seeds: old directories (top.ge, Open Directory), live .ge sites' old versions
 
 ## Later (optional)
-- [ ] Own crawl of the trusted sites + local index (SQLite FTS5 + BGE-M3 vectors)
+- [x] Own crawl of the trusted sites (`scripts/crawl_sites.py` → `data/crawl.db`, FTS5): robots.txt, sitemaps newest first, 1 req/s per site, main text by trafilatura; search source `crawl`
 - [ ] Answer box through `claude -p` (personal use only)
 - [ ] Entity names from Wikidata: თბილისი = Tbilisi = Тбилиси
 - [ ] Facebook: opt-in page connect, public Telegram channels
