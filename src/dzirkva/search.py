@@ -54,6 +54,7 @@ SITES_PER_QUERY = 6
 MIN_GEORGIAN = 0.3      # share of Georgian letters in title + snippet to keep a result
 RRF_K = 60
 TIER_BONUS = {1: 0.5, 2: 0.25, 3: 0.0}
+SMALL_BONUS = 0.25     # small, non-commercial, Georgian site found by the crawl (crawl.small_site)
 FAMILY_BONUS = 0.5      # × share of query word families found in title + snippet
 FEEDBACK_DOCS = 15      # round-1 results read for feedback terms
 FEEDBACK_TERMS = 3
@@ -78,6 +79,7 @@ class Result:
     category: str | None = None
     georgian: float = 0.0
     coverage: float = 0.0
+    small: bool = False
     kind: str = "web"
     queries: set[str] = field(default_factory=set)
     engines: set[str] = field(default_factory=set)
@@ -232,6 +234,10 @@ def _family_share(text: str, query_fams: list[set[str]]) -> float:
     return sum(bool(fs & text_fams) for fs in query_fams) / len(query_fams)
 
 
+def _trust(r: Result) -> float:
+    return max(TIER_BONUS.get(r.tier, 0.0), SMALL_BONUS if r.small else 0.0)
+
+
 def merge(lists: list[tuple[str, list[dict]]], content: list[str]) -> list[Result]:
     """RRF over all lists, Georgian filter, trust tier and word-family bonuses."""
     merged: dict[str, Result] = {}
@@ -253,7 +259,8 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str]) -> list[Resul
         m.category, m.tier = lookup(m.url) or (None, None)
         m.kind = kind(m.url)
         m.coverage = coverage(m.text, content)
-        m.score *= 1 + TIER_BONUS.get(m.tier, 0.0) + FAMILY_BONUS * _family_share(m.text, query_fams)
+        m.small = crawl.small_site(m.url)
+        m.score *= 1 + _trust(m) + FAMILY_BONUS * _family_share(m.text, query_fams)
         out.append(m)
     return sorted(out, key=lambda m: m.score, reverse=True)
 
@@ -268,7 +275,7 @@ def rank_by_meaning(query: str, results: list[Result], known: dict[str, float] |
     by_meaning = {id(r): i for i, r in enumerate(sorted(results, key=lambda r: r.meaning, reverse=True))}
     for i, r in enumerate(results):  # results are in engine order here
         fused = 1 / (RRF_K + i) + MEANING_WEIGHT / (RRF_K + by_meaning[id(r)])
-        r.score = fused * (1 + TIER_BONUS.get(r.tier, 0.0)) * (COVERAGE_FLOOR + (1 - COVERAGE_FLOOR) * r.coverage)
+        r.score = fused * (1 + _trust(r)) * (COVERAGE_FLOOR + (1 - COVERAGE_FLOOR) * r.coverage)
     return sorted(results, key=lambda r: r.score, reverse=True)
 
 

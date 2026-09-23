@@ -1,15 +1,19 @@
-"""Own crawl of the trusted Georgian sites (config/sources.yaml): data/crawl.db (SQLite FTS5).
+"""Own crawl of Georgian sites: data/crawl.db (SQLite FTS5), filled by scripts/crawl_sites.py.
 
-Filled by scripts/crawl_sites.py with the main text of each page (trafilatura: no menus, no footers)
-and its date. Searched like an engine: pages with all query words (any form), best BM25 first.
-This removes the engines' limit for the trusted part of the Georgian web: a page no engine returns
-can still be found here.
+Pages: the main text of each page (trafilatura: no menus, no footers) and its date. Searched like
+an engine: pages with all query words (any form), best BM25 first. A page no engine returns can
+still be found here.
+Domains: trusted sites (config/sources.yaml) and discovered ones (cited in Georgian Wikipedia or
+linked from crawled pages), with Georgian share, commercial score, kind and inbound links.
+Search boosts small, non-commercial, Georgian domains (small_site).
 """
 
 import sqlite3
 from functools import cache
 from pathlib import Path
+from urllib.parse import urlparse
 
+from dzirkva.sources import sources
 from dzirkva.wiki import any_form
 
 DB = Path(__file__).resolve().parents[2] / "data" / "crawl.db"
@@ -18,7 +22,15 @@ PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS queue (url TEXT PRIMARY KEY, host TEXT, depth INT, status TEXT DEFAULT 'todo');
 CREATE INDEX IF NOT EXISTS queue_status ON queue(status, host);
 CREATE VIRTUAL TABLE IF NOT EXISTS pages USING fts5(url UNINDEXED, title, date UNINDEXED, text, tokenize='unicode61');
+CREATE TABLE IF NOT EXISTS domains (
+    host TEXT PRIMARY KEY, source TEXT, state TEXT,   -- source: trusted/wiki/link; state: probe/full/rejected
+    pages INT DEFAULT 0, georgian REAL DEFAULT 0,     -- pages with text, mean share of Georgian letters
+    signals TEXT DEFAULT '', commercial INT DEFAULT 0, kind TEXT DEFAULT 'other', inbound INT DEFAULT 0);
+CREATE TABLE IF NOT EXISTS links (src TEXT, dst TEXT, PRIMARY KEY (src, dst)) WITHOUT ROWID;
 """
+MIN_GEORGIAN = 0.3
+COMMERCIAL = 2       # commercial score from which a domain is commercial
+SMALL_INBOUND = 100  # small domain: at most this many citing Wikipedia pages + linking crawled sites
 
 
 def connect() -> sqlite3.Connection:
@@ -30,6 +42,28 @@ def connect() -> sqlite3.Connection:
 @cache
 def _db() -> sqlite3.Connection | None:
     return connect() if DB.exists() else None
+
+
+def domain_of(url: str) -> str:
+    """Crawl key of a URL: the trusted domain that covers it (tsu.ge for press.tsu.ge), else the host without www."""
+    try:
+        host = (urlparse(url).hostname or "").removeprefix("www.")
+    except ValueError:  # malformed URL
+        return ""
+    h = host
+    while h:
+        if h in sources():
+            return h
+        h = h.partition(".")[2]
+    return host
+
+
+def small_site(url: str) -> bool:
+    """The URL is on a small, non-commercial, Georgian domain that the crawl accepted."""
+    db = _db()
+    return db is not None and db.execute(
+        "SELECT 1 FROM domains WHERE host=? AND state='full' AND commercial<? AND georgian>=? AND inbound<=?",
+        (domain_of(url), COMMERCIAL, MIN_GEORGIAN, SMALL_INBOUND)).fetchone() is not None
 
 
 def search(words: list[str], limit: int = 20) -> list[dict]:

@@ -73,7 +73,7 @@ def _result(r, marks: dict[str, str]) -> str:
     title, t_found = _highlight(r.title, marks)
     snippet, s_found = _highlight(r.snippet, marks)
     matched = ", ".join(dict.fromkeys(escape(w) for w in t_found + s_found)) or "—"
-    tier = f"tier {r.tier} · " if r.tier else ""
+    tier = f"tier {r.tier} · " if r.tier else "small site · " if r.small else ""
     copies = ""
     if r.copies:
         copies = f"<div class=m>also on {len(r.copies)}: " + ", ".join(

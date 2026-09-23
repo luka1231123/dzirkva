@@ -25,7 +25,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 - `src/dzirkva/search.py` — simple queries → engines → feedback round → rank (engine + meaning + tier + coverage) → group copies. Demo: `uv run python -m dzirkva.search <query>`
 - `src/dzirkva/archive.py` + `scripts/archive_collect.py` — old web from the Internet Archive → `data/archive.db`. Run collector in background: `nohup uv run python scripts/archive_collect.py > data/archive.log 2>&1 &` (resumable)
 - `src/dzirkva/wiki.py` — local Georgian Wikipedia FTS5 index: article counts for spelling in context
-- `src/dzirkva/crawl.py` + `scripts/crawl_sites.py` — own crawl of trusted sites → `data/crawl.db`. Run in background: `nohup uv run python scripts/crawl_sites.py > data/crawl.log 2>&1 &` (resumable; re-run adds new sitemap pages)
+- `src/dzirkva/crawl.py` + `scripts/crawl_sites.py` — own crawl of trusted sites + discovery of rare Georgian sites (Wikipedia-cited and linked hosts, probed, rules for commercial/academic/blog) → `data/crawl.db`. Run in background: `nohup uv run python scripts/crawl_sites.py > data/crawl.log 2>&1 &` (resumable; re-run adds new sitemap pages)
 - `src/dzirkva/engines.py` answers are cached in `data/cache.db`; Google is paused 1–24 h after a CAPTCHA
 - `src/dzirkva/meaning.py` — BGE-M3 similarity (first load ~5 s; model in ~/.cache/huggingface)
 - `config/searxng.yml` — engines: google, yandex, yahoo (tested with Georgian; reasons in the file). Google blocks fast bursts with CAPTCHA.
