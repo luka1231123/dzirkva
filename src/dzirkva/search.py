@@ -7,10 +7,13 @@
 2. Feedback: read the paragraphs nearest in meaning (else the top snippets that contain every
    query word) and find the words and names that repeat there but are rare in Georgian overall
    (ბოლტი, უსწრაფესი, სპრინტერი). These are the words the answer pages use. Round 2 searches with them.
-3. Rank: combine the engine ranking (RRF over all lists + trust tier + word-family match)
+3. Rank: combine the engine ranking (RRF over all lists + trust tier + word-family match; a Wikipedia page
+   counts once, with its best rank, though engines, the local index and passages all return it)
    with the meaning ranking (BGE-M3 similarity between the question and each result),
    then × trust tier × coverage (share of query words present, rare words count more:
    a metro-map page without შრიფტი drops for "თბილისის მეტროს შრიფტი").
+   Pages that the matching Wikipedia articles cite get a trust bonus like tier 1; the crawled ones join
+   the candidates (list "cited"). Wikipedia judges the sources instead of filling the list.
 4. Group: the same text on many sites becomes one result with `copies`.
 Only results that are mostly Georgian are kept. `kind` decides the tab (sources.kind), `tags` the filters.
 """
@@ -58,6 +61,9 @@ MIN_GEORGIAN = 0.3      # share of Georgian letters in title + snippet to keep a
 RRF_K = 60
 TIER_BONUS = {1: 0.5, 2: 0.25, 3: 0.0}
 SMALL_BONUS = 0.25     # small, non-commercial, Georgian site found by the crawl (crawl.small_site)
+CITED_BONUS = 0.5      # page cited by a Wikipedia article that matches the query
+CITING_ARTICLES = 3    # articles read for citations: top word matches + top meaning matches (+ answer box)
+WIKI_HOSTS = {"ka.wikipedia.org": "wikipedia", "ka.wikisource.org": "wikisource"}
 FAMILY_BONUS = 0.5      # × share of query word families found in title + snippet
 FEEDBACK_DOCS = 15      # round-1 results read for feedback terms
 FEEDBACK_PASSAGES = 10  # or: paragraphs nearest in meaning
@@ -96,6 +102,7 @@ class Result:
     georgian: float = 0.0
     coverage: float = 0.0
     small: bool = False
+    cited: bool = False
     kind: str = "web"
     tags: set[str] = field(default_factory=set)  # filters: sources.FILTERS
     queries: set[str] = field(default_factory=set)
@@ -253,18 +260,28 @@ def _family_share(text: str, query_fams: list[set[str]]) -> float:
 
 
 def _trust(r: Result) -> float:
-    return max(TIER_BONUS.get(r.tier, 0.0), SMALL_BONUS if r.small else 0.0)
+    return max(TIER_BONUS.get(r.tier, 0.0), SMALL_BONUS if r.small else 0.0, CITED_BONUS if r.cited else 0.0)
 
 
-def merge(lists: list[tuple[str, list[dict]]], content: list[str]) -> list[Result]:
-    """RRF over all lists, Georgian filter, trust tier and word-family bonuses."""
+def _wiki_page(url: str) -> tuple[str, str] | None:
+    """(site, article title) of a Georgian Wikipedia or Wikisource URL."""
+    p = urlparse(url)
+    site = WIKI_HOSTS.get(p.hostname or "")
+    return (site, unquote(p.path[6:]).replace("_", " ")) if site and p.path.startswith("/wiki/") else None
+
+
+def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[str] = frozenset()) -> list[Result]:
+    """RRF over all lists (Wikipedia pages: best rank only), Georgian filter, trust tier and word-family bonuses.
+
+    cited: canonical URLs of the pages the matching Wikipedia articles cite."""
     merged: dict[str, Result] = {}
     for name, results in lists:
         for rank, r in enumerate(results):
             m = merged.setdefault(canonical_url(r["url"]), Result(r["url"], r["title"], r["snippet"]))
             if len(r["snippet"]) > len(m.snippet):
                 m.snippet = r["snippet"]
-            m.score += 1 / (RRF_K + rank)
+            rrf = 1 / (RRF_K + rank)
+            m.score = max(m.score, rrf) if urlparse(m.url).hostname in WIKI_HOSTS else m.score + rrf
             m.queries.add(name)
             m.engines.update(r["engine"].split("+"))
             m.hits += [(name, e, rank + 1) for e in r["engine"].split("+")]
@@ -278,6 +295,7 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str]) -> list[Resul
         m.kind = kind(m.url)
         m.coverage = coverage(m.text, content)
         m.small = crawl.small_site(m.url)
+        m.cited = canonical_url(m.url) in cited
         m.tags = tags(m.url, m.title, crawl.domain_signals(m.url), m.small)
         m.score *= 1 + _trust(m) + FAMILY_BONUS * _family_share(m.text, query_fams)
         out.append(m)
@@ -303,10 +321,8 @@ def answer_vector(near: list[dict]):
 def wiki_snippets(results: list[Result], qv, content: list[str]) -> list[Result]:
     """Wikipedia and Wikisource results show their paragraph nearest to the question, not the engine's snippet."""
     for r in results:
-        p = urlparse(r.url)
-        site = {"ka.wikipedia.org": "wikipedia", "ka.wikisource.org": "wikisource"}.get(p.hostname or "")
-        if site and p.path.startswith("/wiki/"):
-            if text := passages.best(unquote(p.path[6:]).replace("_", " "), qv, site):
+        if page := _wiki_page(r.url):
+            if text := passages.best(page[1], qv, page[0]):
                 r.snippet = text
                 r.coverage = coverage(r.text, content)
     return results
@@ -381,13 +397,22 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     lists.append(("iverieli", iverieli.search(content)))  # National Library catalog: books, journals, press
     near = passages.search(query)                    # Wikipedia paragraphs nearest in meaning
     lists.append(("passages", near))
+    answer = wiki.article(content)
+    wiki_hits = next(res for name, res in lists if name == "wikipedia")
+    articles = [answer["title"]] if answer else []
+    articles += [t for _, t in filter(None, map(_wiki_page, [h["url"] for h in wiki_hits[:CITING_ARTICLES]]))]
+    articles += [t for site, t in filter(None, map(_wiki_page, [p["url"] for p in near])) if site == "wikipedia"][
+        :CITING_ARTICLES]
+    cites = wiki.cites(articles)
+    cited = {canonical_url(u) for u in cites}
+    lists.append(("cited", crawl.search(content, 10, cites) if cites else []))  # crawled pages the articles cite
     qv = vectors([query])[0]
     # explanations (why/how): answer vector and feedback from the nearest paragraphs; names and facts: from
     # the covered snippets (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
     explain = question_type(query) in ANSWER_TYPES and bool(near)
     answer_v = answer_vector(near) if explain else None
     known: dict = {}
-    first = rank_by_meaning(query, wiki_snippets(merge(lists, content), qv, content), known, qv, answer_v)
+    first = rank_by_meaning(query, wiki_snippets(merge(lists, content, cited), qv, content), known, qv, answer_v)
     t1 = time.time()
     covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]
     terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
@@ -401,18 +426,16 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     if more:
         qs.update(more)
         lists += asyncio.run(fan_out(more))
-    results = group_copies(rank_by_meaning(query, wiki_snippets(merge(lists, content), qv, content), known, qv,
+    results = group_copies(rank_by_meaning(query, wiki_snippets(merge(lists, content, cited), qv, content), known, qv,
                                            answer_v))
-    answer = wiki.article(content)
     # why/how: no answer text (a wrong paragraph reads like a fact), only the nearest articles to read
     links = [(p["title"].removesuffix(" — ვიკიპედია"), p["url"]) for p in near[:WIKI_LINKS]] if explain else []
-    wiki_hits = next(res for name, res in lists if name == "wikipedia")
     debug = {
         "content": content, "type": question_type(query), "spelling": fixes, "feedback": terms, "answer": answer,
         "wiki_links": links,
         "related": related(content, base, terms, wiki_hits, near, answer),
         "definition": dictionary.define(qs.get("corrected", query)),  # "სახლი რას ნიშნავს"
-        "counts": {name: len(res) for name, res in lists},
+        "counts": {name: len(res) for name, res in lists}, "cites": len(cites),
         "seconds": {"round1": round(t1 - t0, 1), "round2+rank": round(time.time() - t1, 1)},
     }
     return qs, results, debug

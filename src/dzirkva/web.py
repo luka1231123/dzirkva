@@ -165,12 +165,14 @@ def _query_name(name: str) -> str:
 
 
 def _labels(r) -> str:
-    """What dzirkva knows about the source: trusted list, rare site, old web with its year."""
+    """What dzirkva knows about the source: trusted list, rare site, cited by Wikipedia, old web with its year."""
     out = []
     if r.tier in (1, 2):
         out.append(f"<span class=lbl>{cap('სანდო წყარო')}</span>")
     if r.small:
         out.append(f"<span class='lbl rare'>{cap('პატარა ვები')}</span>")
+    if r.cited:
+        out.append(f"<span class=lbl>{cap('ვიკიპედიის წყარო')}</span>")
     if y := ARCHIVE_YEAR.search(r.url):
         out.append(f"<span class='lbl old'>{cap('ძველი ვები')} · {y[1]}</span>")
     return "".join(out)

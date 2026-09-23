@@ -1,12 +1,11 @@
 """Local Georgian Wikipedia full-text index (data/wiki.db, built by scripts/build_wiki_index.py).
 
-Used for spelling in context (count) and for the answer box (article)."""
+Used for spelling in context (count), for the answer box (article), and for the pages articles cite (cites)."""
 
 import re
 import sqlite3
 from functools import cache
 from pathlib import Path
-from urllib.parse import quote
 from urllib.parse import quote
 
 from dzirkva.georgian import freq
@@ -99,3 +98,18 @@ def search(words: list[str], limit: int = 20, site: str = "wikipedia") -> list[d
             break
     return [{"url": prefix + quote(title.replace(" ", "_")), "title": f"{title} — {name}",
              "snippet": snip, "engine": site} for title, snip in rows]
+
+
+def cites(titles: list[str]) -> list[str]:
+    """URLs the articles cite: their references and external links."""
+    db = _db()
+    if db is None or not titles:
+        return []
+    marks = ",".join("?" * len(titles))
+    return [u for (u,) in db.execute(f"SELECT DISTINCT url FROM cites WHERE title IN ({marks})", titles)]
+
+
+def cited_on(host: str) -> list[str]:
+    """URLs on one site that Georgian Wikipedia cites (host as crawl.domain_of gives it)."""
+    db = _db()
+    return [u for (u,) in db.execute("SELECT DISTINCT url FROM cites WHERE host = ?", (host,))] if db else []

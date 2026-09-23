@@ -8,8 +8,9 @@ Domains (table `domains`):
 Rules, no ML (signals in the HTML of each page, collected per domain):
 - commercial score: ad/tracker scripts 1, WooCommerce 2, shop page (3+ shop words on one page: კალათა, ყიდვა, ₾ …) 2
 - kind: academic (.edu, OJS, DSpace, or two of ISSN / DOI / ანოტაცია), blog (Blogger, WordPress, blogspot, RSS)
-Full domains: home page + sitemaps (newest first) each run, same-site links up to MAX_DEPTH,
-max PER_HOST new pages per run. Polite: robots.txt, one request per second per domain.
+Full domains: pages cited in Georgian Wikipedia first (outside the budget), then home page + sitemaps
+(newest first) each run, same-site links up to MAX_DEPTH, max PER_HOST new pages per run.
+Polite: robots.txt, one request per second per domain.
 Each domain runs as its own task, one page at a time; up to MAX_TASKS in flight. New domains
 are probed best first: .ge and blogs, then most linked.
 
@@ -39,6 +40,7 @@ from dzirkva.archive import SKIP_EXT  # noqa: E402
 from dzirkva.crawl import COMMERCIAL, MIN_GEORGIAN, connect, domain_of  # noqa: E402
 from dzirkva.georgian import georgian_ratio  # noqa: E402
 from dzirkva.sources import SOCIAL_HOSTS, VIDEO_HOSTS, sources  # noqa: E402
+from dzirkva.wiki import cited_on  # noqa: E402
 
 WIKI_DUMP = Path(__file__).resolve().parent.parent / "data" / "kawiki.xml.bz2"
 AGENT = "dzirkva-crawler/0.1 (Georgian search research; 1 req/s)"
@@ -145,8 +147,12 @@ def add_site(db, sites: dict[str, Site], host: str, source: str, state: str = "p
     return s
 
 
+def clean(site: Site, urls: list[str]) -> list[str]:
+    return [u for u in dict.fromkeys(html.unescape(u).split("#")[0].rstrip(".,;)") for u in urls) if site.allowed(u)]
+
+
 def enqueue(db, site: Site, urls: list[str], depth: int) -> None:
-    urls = [u for u in dict.fromkeys(html.unescape(u).split("#")[0].rstrip(".,;)") for u in urls) if site.allowed(u)]
+    urls = clean(site, urls)
     cur = db.executemany("INSERT OR IGNORE INTO queue(url, host, depth) VALUES (?, ?, ?)",
                          [(u, site.host, depth) for u in urls[: max(0, site.budget - site.queued)]])
     site.queued += cur.rowcount
@@ -240,6 +246,9 @@ async def seed(client: httpx.AsyncClient, db, site: Site) -> None:
         site.todo += db.execute("UPDATE queue SET status='todo' WHERE url=? AND status!='todo'", (home,)).rowcount
         enqueue(db, site, [home], 0)
         enqueue(db, site, await sitemap_urls(client, site, site.robots.site_maps() or [f"{home}sitemap.xml"]), 1)
+        db.executemany("INSERT INTO queue(url, host, depth, cited) VALUES (?, ?, 1, 1) ON CONFLICT(url) DO UPDATE SET cited=1",
+                       [(u, site.host) for u in clean(site, cited_on(site.host))])
+        site.todo = db.execute("SELECT count(*) FROM queue WHERE host=? AND status='todo'", (site.host,)).fetchone()[0]
         print(f"seeded {site.host}: {site.todo} pages waiting", flush=True)
     site.seeded, site.busy = True, False
 
@@ -355,7 +364,7 @@ async def main() -> None:
             probes = sorted((s for s in due if s.state == "probe"), key=Site.priority)[:MAX_PROBES]
             for s in (full + probes)[: max(0, MAX_TASKS - len(tasks))]:
                 row = db.execute("SELECT url, depth FROM queue WHERE host=? AND status='todo' "
-                                 "ORDER BY depth, rowid LIMIT 1", (s.host,)).fetchone()
+                                 "ORDER BY cited DESC, depth, rowid LIMIT 1", (s.host,)).fetchone()
                 if row is None:
                     s.todo = 0
                 else:
