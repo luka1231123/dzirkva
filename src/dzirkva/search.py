@@ -28,7 +28,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
-from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlunparse
 
 import httpx
 import numpy as np
@@ -78,6 +78,8 @@ LOCAL_FLOOR = 0.3       # a Wikipedia/Wikisource page only our local indexes fou
 TITLE_FIT = (0.5, 0.65)   # title-query similarity: filler 0.23-0.55, the right article 0.60-1.00 → fit 0..1
 LOCAL_LISTS = {"wikipedia", "wikisource", "passages"}
 FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every query word
+SITE_FREE = 2           # results per site before the site penalty (თბილისი: half the page was Wikipedia)
+SITE_PENALTY = 0.5      # × for each further result from the same site
 COPY_SIMILARITY = 0.6   # word overlap (Jaccard) of two snippets that makes them copies
 # Question word → the shape of a text that answers it. A result with that shape gets SHAPE_BONUS.
 SHAPES = {
@@ -318,11 +320,11 @@ async def fan_out(qs: dict[str, str], brave: tuple[str, ...] = ()) -> list[tuple
 
 
 def canonical_url(url: str) -> str:
-    """Same page, one key: https, no www, no tracking parameters, no fragment, no trailing slash."""
+    """Same page, one key: https, no www, one percent-encoding, no tracking parameters, no fragment, no trailing slash."""
     p = urlparse(url)
     host = (p.hostname or "").removeprefix("www.")
     query = urlencode([(k, v) for k, v in parse_qsl(p.query) if not TRACKING.match(k)])
-    return urlunparse(("https", host, p.path.rstrip("/") or "/", "", query, ""))
+    return urlunparse(("https", host, quote(unquote(p.path)).rstrip("/") or "/", "", query, ""))
 
 
 def _family_share(text: str, query_fams: list[set[str]]) -> float:
@@ -463,6 +465,17 @@ def group_copies(results: list[Result]) -> list[Result]:
     return [k for k, _ in kept]
 
 
+def diversify(results: list[Result]) -> list[Result]:
+    """Many sites, not one: after SITE_FREE results from a site, each further one gets × SITE_PENALTY.
+    Wikipedia and Wikisource count as one site."""
+    seen: Counter[str] = Counter()
+    for r in results:
+        site = "wiki" if host(r.url) in WIKI_HOSTS else host(r.url)
+        r.score *= SITE_PENALTY ** max(0, seen[site] - SITE_FREE + 1)
+        seen[site] += 1
+    return sorted(results, key=lambda r: r.score, reverse=True)
+
+
 def related(content: list[str], base: str, terms: list[str], wiki_hits: list[dict], near: list[dict],
             answer: dict | None) -> list[tuple[str, str]]:
     """Related searches without an LLM: (query, source).
@@ -540,8 +553,8 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
         qs.update(more)
         lists += asyncio.run(fan_out(more))
     merged = merge(lists, content, cited, clicked, named_hosts, wanted)
-    results = group_copies(rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv,
-                                           answer_v, encyclopedia))
+    results = diversify(group_copies(rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv,
+                                                     answer_v, encyclopedia)))
     for i, r in enumerate(results, 1):
         r.rank = i
     # why/how: no answer text (a wrong paragraph reads like a fact), only the nearest articles to read
