@@ -75,9 +75,10 @@ FEEDBACK_MIN_IDF = 4.0  # ignore common words (idf of მსოფლიოშ�
 MEANING_WEIGHT = 1.5    # meaning rank vs engine rank in the final fusion
 MEANING_TOP = 40        # results (engine order) compared by meaning; the rest keep their engine rank
 COVERAGE_FLOOR = 0.2    # score × (floor + (1 - floor) × coverage)
-LOCAL_FLOOR = 0.3       # a Wikipedia/Wikisource page only our local indexes found: × (floor + (1 - floor) × title fit)
+LOCAL_FLOOR = 0.3       # a page only our local indexes found: × (floor + (1 - floor) × title fit)
 TITLE_FIT = (0.5, 0.65)   # title-query similarity: filler 0.23-0.55, the right article 0.60-1.00 → fit 0..1
-LOCAL_LISTS = {"wikipedia", "wikisource", "passages"}
+LOCAL_LISTS = {"wikipedia", "wikisource", "passages", "papers", "iverieli"}  # papers and catalog records match
+# on the abstract and the authors' university: ახალი ამბები found a thesis on translating news
 FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every query word
 ROUND1_GOOD = 5         # round 1 is good when this many of its top 10 contain every query word: no round 2
 SITE_FREE = 2           # results per site before the site penalty (თბილისი: half the page was Wikipedia)
@@ -450,7 +451,7 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
         if shape and shape.search(r.snippet):
             r.score *= 1 + SHAPE_BONUS
         r.score *= 1 + CLICK_BONUS * min(r.clicks, CLICK_MAX)
-        if r.queries <= LOCAL_LISTS:  # no web engine found it: a long article mentions every word somewhere
+        if r.queries <= LOCAL_LISTS:  # no web engine found it: a long text mentions every word somewhere
             r.score *= LOCAL_FLOOR + (1 - LOCAL_FLOOR) * (_title_fit(r, content, qv) if encyclopedia else 0.0)
     return sorted(results, key=lambda r: r.score, reverse=True)
 
