@@ -15,13 +15,15 @@ Budget rules:
 - [x] Secrets in `.env` (gitignored)
 - [x] Evaluation queries in `eval/queries.tsv`: 30 common + 221 from Safari history (gitignored)
 
-## Session 2: Georgian language layer (`src/dzirkva/georgian.py`)
-- [ ] Normalizer: Unicode NFC, Mtavruli → Mkhedruli, AcadNusx/LitNusx → Unicode
-- [ ] Latin → Georgian: keyboard-layout table (`T` = თ, `W` = ჭ)
-- [ ] Latin → Georgian: phonetic spellings (ts, ch, kh, q) → candidates, keep real words
-- [ ] Suffix stripper: case endings, plural, postpositions (-ის, -ით, -ად, -მა, -ში, -ზე, -დან, -თვის, -ებ-)
-- [ ] Spelling fix for unknown words, with Georgian confusion pairs (თ/ტ, ქ/კ/ყ, ც/წ, ჩ/ჭ, ფ/პ)
-- [ ] Word list for spelling and candidates: frequency list from ka.wikipedia
+## Session 2: Georgian language layer
+- [x] Word list: 493k word forms with counts from ka.wikipedia (`scripts/build_words.py`)
+- [x] Lexicon: Wiktionary (kaikki.org) 488k forms → lemma + word family, suppletive verbs (`scripts/build_lexicon.py`)
+- [x] Normalizer: Unicode NFC, Mtavruli → Mkhedruli, AcadNusx/keyboard Latin → Georgian (`georgian.py`)
+- [x] Latin → Georgian: phonetic spellings (ts, ch, kh, q) → candidates, keep real words
+- [x] Spelling fix for unknown words, with Georgian confusion pairs (თ/ტ, ქ/კ/ყ, ც/წ, ჩ/ჭ, ფ/პ)
+- [x] Noun rules: 7 cases (full and short), fused postpositions, -ებ- and archaic plural, truncation, syncope, superlative, particles (`morph.py`)
+- [x] Verb rules: preverb, person, version, thematic, passive, screeve endings, perfect + auxiliary, participles, verbal nouns
+- [x] Accuracy check vs UniMorph (`scripts/check_morph.py`): nouns 100%, adjectives 96%, verbs 88%, 23/23 hand pairs
 
 ## Session 3: Trusted source list (`config/sources.yaml`)
 - [ ] ~100 Georgian sites in categories: news, government, law, education, health, encyclopedia, culture, business

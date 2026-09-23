@@ -12,9 +12,15 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 ## Commands
 - Start SearXNG: `./scripts/searxng.sh` (http://127.0.0.1:8888, log in `data/searxng.log`)
 - Engine demo: `uv run python -m dzirkva.engines <query>`
+- Grammar demo: `uv run python -m dzirkva.morph <words>`; accuracy: `uv run python scripts/check_morph.py`
+- Rebuild data (in `data/`, gitignored): download `kawiki-latest-pages-articles.xml.bz2` → `kawiki.xml.bz2`,
+  kaikki.org Georgian JSONL → `kaikki-ka.jsonl`, unimorph/kat → `unimorph-kat.tsv`; then
+  `scripts/build_words.py`, then `scripts/build_lexicon.py`
 
 ## Layout
 - `src/dzirkva/engines.py` — SearXNG and Brave clients
+- `src/dzirkva/georgian.py` — normalize, Latin→Georgian, spelling, Georgian ratio
+- `src/dzirkva/morph.py` — word form → lemma + word family (lexicon first, then grammar rules)
 - `config/searxng.yml` — engines: google, bing, brave (duckduckgo gives CAPTCHA). SearXNG has no `ka` language.
 - `vendor/searxng` — SearXNG source, own venv (gitignored)
 - `.env` — `BRAVE_API_KEY`, `SEARXNG_SECRET` (gitignored)
