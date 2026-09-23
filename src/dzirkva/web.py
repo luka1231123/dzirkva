@@ -16,10 +16,12 @@ from dzirkva.meaning import similarity
 from dzirkva.morph import families
 from dzirkva.search import search
 
-TABS = {"all": "ყველა", "knowledge": "ცოდნა", "news": "სიახლეები", "video": "ვიდეო", "film": "ფილმები", "social": "სოციალური"}
-TAB_KINDS = {"knowledge": {"knowledge"}, "news": {"news"}, "video": {"video"}, "film": {"film"}, "social": {"social", "forum"}}
+TABS = {"all": "ყველა", "knowledge": "ცოდნა", "news": "სიახლეები", "archive": "არქივი", "video": "ვიდეო",
+        "film": "ფილმები", "social": "სოციალური"}
+TAB_KINDS = {"knowledge": {"knowledge"}, "news": {"news"}, "archive": {"archive"}, "video": {"video"},
+             "film": {"film"}, "social": {"social", "forum"}}
 MAIN_KINDS = {"knowledge", "news", "web", "forum"}
-BLOCKS = {3: "video", 6: "film", 9: "social"}  # All tab: block of that tab after the n-th main result
+BLOCKS = {3: "video", 5: "archive", 7: "film", 10: "social"}  # All tab: block after the n-th main result
 PER_SITE = 2
 _cache: dict[str, tuple[dict, list, dict]] = {}
 

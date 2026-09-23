@@ -16,7 +16,7 @@ def _db() -> sqlite3.Connection | None:
     return sqlite3.connect(DB, check_same_thread=False) if DB.exists() else None
 
 
-def _any_form(word: str) -> str:
+def any_form(word: str) -> str:
     """FTS5 expression matching any known form of the word's lemma."""
     lemma = analyze(word)[0].lemma
     forms = sorted(set(forms_of(lemma)) | {word, lemma}, key=freq, reverse=True)[:MAX_FORMS]
@@ -29,5 +29,5 @@ def count(*words: str) -> int:
     db = _db()
     if db is None or not words:
         return 0
-    expr = " AND ".join(_any_form(w) for w in words)
+    expr = " AND ".join(any_form(w) for w in words)
     return db.execute("SELECT count(*) FROM wiki WHERE wiki MATCH ?", (expr,)).fetchone()[0]

@@ -27,7 +27,7 @@ from dzirkva import engines
 from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, words
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families, family_members
-from dzirkva import wiki
+from dzirkva import archive, wiki
 from dzirkva.sources import by_category, kind, lookup
 
 # Question words and function words: dropped from keyword queries and feedback terms.
@@ -291,6 +291,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     t0 = time.time()
     qs, content, fixes = round1_queries(query)
     lists = asyncio.run(fan_out(qs, BRAVE_QUERIES if "corrected" in qs else ("original", "lemmas")))
+    lists.append(("archive", archive.search(content)))  # old Georgian web, local index
     known: dict[str, float] = {}
     first = rank_by_meaning(query, merge(lists, content), known)
     t1 = time.time()

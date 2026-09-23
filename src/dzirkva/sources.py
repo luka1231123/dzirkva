@@ -38,13 +38,15 @@ SOCIAL_HOSTS = {"facebook.com", "ok.ru", "instagram.com", "x.com", "twitter.com"
                 "linkedin.com", "reddit.com", "pinterest.com"}
 FILM_HOST = re.compile(r"film|movie|kino|kadri|imovie|adjaranet|saitebi|serial|anime|cinema")
 KNOWLEDGE = {"reference", "science", "history", "religion", "culture", "education", "law", "government"}
-KINDS = ("knowledge", "news", "web", "forum", "video", "film", "social")
+KINDS = ("knowledge", "news", "web", "forum", "archive", "video", "film", "social")
 
 
 def kind(url: str) -> str:
     host = (urlparse(url).hostname or "").removeprefix("www.").removeprefix("m.")
     base = ".".join(host.split(".")[-2:])
     category, _ = lookup(url) or (None, None)
+    if host == "web.archive.org":
+        return "archive"
     if host in VIDEO_HOSTS or base in VIDEO_HOSTS:
         return "video"
     if host in SOCIAL_HOSTS or base in SOCIAL_HOSTS:

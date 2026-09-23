@@ -66,6 +66,14 @@ Budget rules:
 - [ ] Eval script: share of queries with a good result in the top 10; plain Google as baseline
 - [ ] One tuning pass: fix the worst queries, keep only changes that raise the score
 
+## Session 5b: Old Georgian web (Internet Archive)
+- [x] Seeds: 36,380 .ge links cited in Georgian Wikipedia; 668 sites are dead → 1,604 pages + home pages
+- [x] Collector `scripts/archive_collect.py`: Wayback raw copies, 1 req/s, resumable, same-site links (depth 2, 60 pages/site)
+- [x] Old fonts: AcadNusx/LitNusx text (font tags, inline styles, CSS classes) → Unicode Georgian
+- [x] Local index `data/archive.db` (FTS5), search source `archive`, tab არქივი + block in ყველა
+- [ ] 8-bit encodings Georgian-PS / Georgian-Academy (need verified tables)
+- [ ] More seeds: old directories (top.ge, Open Directory), live .ge sites' old versions
+
 ## Later (optional)
 - [ ] Own crawl of the trusted sites + local index (SQLite FTS5 + BGE-M3 vectors)
 - [ ] Answer box through `claude -p` (personal use only)
