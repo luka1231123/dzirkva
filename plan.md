@@ -55,8 +55,8 @@ Budget rules:
 - [x] Web page: highlighted matched words (yellow = query, blue = feedback), why-line and 'found by' per result, debug panel, 'showing results for'
 - [x] Manual review of 14 queries (Claude read and rated results): 9 good, 3 mixed, 2 fail
 - [ ] Answer boxes with live data: currency (NBG API), weather — like Google's widgets
-- [ ] SQLite cache (now: in-memory cache in the web page only)
-- [ ] Engine limits: wait longer after a Google CAPTCHA
+- [x] SQLite cache of engine answers (`data/cache.db`): SearXNG 24 h, Brave 7 days; empty answers are not cached
+- [x] Google back-off: after a CAPTCHA, Google is left out for 1, 2, 4, 8, 24 h (block in a row); Yandex + Yahoo continue
 - Known limit: questions that need world knowledge (ვინაა ყველაზე ჩქარი მორბენალი → უსეინ ბოლტი) fail
 
 ## Session 6: Web page and quality check

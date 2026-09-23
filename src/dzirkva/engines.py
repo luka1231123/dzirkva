@@ -1,9 +1,19 @@
-"""Clients for the outside search engines: local SearXNG and the Brave Search API."""
+"""Clients for the outside search engines: local SearXNG and the Brave Search API.
+
+Every answer is cached in data/cache.db (repeat searches and eval runs cost no engine calls).
+Google back-off: when SearXNG reports a Google CAPTCHA, Google is left out for 1 h, then 2, 4, 8, 24 h
+if it blocks again. SearXNG's own pause is a fixed 1 h, and hitting Google again right away extends the block.
+"""
 
 import asyncio
 import html
+import json
 import os
 import re
+import sqlite3
+import time
+from functools import cache
+from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
@@ -11,7 +21,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SEARXNG_URL = "http://127.0.0.1:8888/search"
+SEARXNG_ENGINES = ("google", "yandex", "yahoo")  # same as config/searxng.yml
 BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
+CACHE_DB = Path(__file__).resolve().parents[2] / "data" / "cache.db"
+CACHE_HOURS = {"searxng": 24, "brave": 24 * 7}  # Brave: monthly quota, keep longer
+BLOCK_HOURS = (1, 2, 4, 8, 24)                   # Google pause after the 1st, 2nd, ... block in a row
+BLOCKING = re.compile(r"CAPTCHA|too many|denied", re.I)
 
 
 def clean(text: str) -> str:
@@ -19,19 +34,74 @@ def clean(text: str) -> str:
     return " ".join(html.unescape(re.sub(r"<[^>]+>", "", text or "")).split())
 
 
+# ---- cache and blocks ---------------------------------------------------
+
+@cache
+def _db() -> sqlite3.Connection:
+    db = sqlite3.connect(CACHE_DB, check_same_thread=False)
+    db.executescript("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, time REAL, results TEXT);"
+                     "CREATE TABLE IF NOT EXISTS blocks (engine TEXT PRIMARY KEY, until REAL, strikes INT);")
+    return db
+
+
+def _cached(engine: str, key: str) -> list[dict] | None:
+    row = _db().execute("SELECT time, results FROM cache WHERE key=?", (key,)).fetchone()
+    if row and time.time() - row[0] < CACHE_HOURS[engine] * 3600:
+        return json.loads(row[1])
+    return None
+
+
+def _store(key: str, results: list[dict]) -> None:
+    if results:  # empty = engine trouble: ask again next time
+        _db().execute("INSERT OR REPLACE INTO cache VALUES (?, ?, ?)", (key, time.time(), json.dumps(results)))
+        _db().commit()
+
+
+def blocked(engine: str) -> bool:
+    row = _db().execute("SELECT until FROM blocks WHERE engine=?", (engine,)).fetchone()
+    return bool(row) and row[0] > time.time()
+
+
+def _block(engine: str) -> None:
+    """Pause the engine; each block within a day of the last pause doubles the pause."""
+    row = _db().execute("SELECT until, strikes FROM blocks WHERE engine=?", (engine,)).fetchone()
+    strikes = row[1] + 1 if row and time.time() - row[0] < 24 * 3600 else 1
+    hours = BLOCK_HOURS[min(strikes, len(BLOCK_HOURS)) - 1]
+    _db().execute("INSERT OR REPLACE INTO blocks VALUES (?, ?, ?)", (engine, time.time() + hours * 3600, strikes))
+    _db().commit()
+    print(f"  ! {engine} blocked us (block {strikes} in a row): left out for {hours} h", flush=True)
+
+
+# ---- engines ------------------------------------------------------------
+
 async def searxng(client: httpx.AsyncClient, query: str) -> list[dict]:
-    """Google + Bing + Brave (web pages) through the local SearXNG."""
-    r = await client.get(SEARXNG_URL, params={"q": query, "format": "json"}, timeout=15)
+    """Google + Yandex + Yahoo through the local SearXNG (without Google while it is paused)."""
+    use = [e for e in SEARXNG_ENGINES if not blocked(e)]
+    key = f"searxng|{','.join(use)}|{query}"
+    if (hit := _cached("searxng", key)) is not None:
+        return hit
+    r = await client.get(SEARXNG_URL, params={"q": query, "format": "json", "engines": ",".join(use)}, timeout=15)
     r.raise_for_status()
-    return [
+    data = r.json()
+    failed = {e for e, error in data.get("unresponsive_engines", []) if BLOCKING.search(error)}
+    for e in failed & set(use):
+        if not blocked(e):  # parallel requests report the same block
+            _block(e)
+    results = [
         {"url": x["url"], "title": clean(x.get("title")), "snippet": clean(x.get("content")),
          "engine": "+".join(x.get("engines", []))}
-        for x in r.json()["results"]
+        for x in data["results"]
     ]
+    if not failed:
+        _store(key, results)
+    return results
 
 
 async def brave(client: httpx.AsyncClient, query: str) -> list[dict]:
     """Official Brave Search API. Uses the monthly quota, so call it sparingly."""
+    key = f"brave|{query}"
+    if (hit := _cached("brave", key)) is not None:
+        return hit
     r = await client.get(
         BRAVE_URL,
         params={"q": query, "count": 20},
@@ -39,11 +109,13 @@ async def brave(client: httpx.AsyncClient, query: str) -> list[dict]:
         timeout=15,
     )
     r.raise_for_status()
-    return [
+    results = [
         {"url": x["url"], "title": clean(x.get("title")), "snippet": clean(x.get("description")),
          "engine": "brave-api"}
         for x in r.json().get("web", {}).get("results", [])
     ]
+    _store(key, results)
+    return results
 
 
 async def _demo(query: str) -> None:
