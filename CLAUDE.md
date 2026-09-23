@@ -17,6 +17,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
   kaikki.org Georgian JSONL → `kaikki-ka.jsonl`, unimorph/kat → `unimorph-kat.tsv`; then
   `scripts/build_words.py`, then `scripts/build_lexicon.py`, then `scripts/build_wiki_index.py` (→ `data/wiki.db`, ~1 min); Wikisource: `kawikisource-latest-pages-articles.xml.bz2` → `kawikisource.xml.bz2`, then `scripts/build_wiki_index.py wikisource` (→ `data/wikisource.db`)
   ka.wiktionary dump → `kawiktionary.xml.bz2`, then `scripts/build_dictionary.py` (→ `data/dictionary.db`, ~10 s)
+  Title vectors (filler check): `scripts/build_titles.py` (→ `data/titles.npy` + `titles.tsv`, ~4 min GPU; after build_wiki_index)
   Spelling word list: `data/wordlists/` (Leipzig `kat-ge_web_2019_1M` + `kat_newscrawl_2016_1M` `*-words.txt`, gamag/ka_GE.spell `bumbeishvili.txt` + `crubadan.txt`), then `scripts/build_vocab.py` (→ `data/vocab.tsv`, ~30 s; run again after crawling)
 
 ## Layout

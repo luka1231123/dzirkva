@@ -8,10 +8,14 @@ from functools import cache
 from pathlib import Path
 from urllib.parse import quote
 
+import numpy as np
+
 from dzirkva.georgian import freq
 from dzirkva.morph import analyze, families, forms_of
 
 DB = Path(__file__).resolve().parents[2] / "data" / "wiki.db"
+TITLES = DB.with_name("titles.tsv")         # site<TAB>title, one line per row of TITLE_VECTORS
+TITLE_VECTORS = DB.with_name("titles.npy")  # BGE-M3 title vectors, fp16 (scripts/build_titles.py)
 # Local indexes built by scripts/build_wiki_index.py: file, URL prefix, name shown in titles.
 SITES = {"wikipedia": (DB, "https://ka.wikipedia.org/wiki/", "ვიკიპედია"),
          "wikisource": (DB.with_name("wikisource.db"), "https://ka.wikisource.org/wiki/", "ვიკიწყარო")}
@@ -113,3 +117,19 @@ def cited_on(host: str) -> list[str]:
     """URLs on one site that Georgian Wikipedia cites (host as crawl.domain_of gives it)."""
     db = _db()
     return [u for (u,) in db.execute("SELECT DISTINCT url FROM cites WHERE host = ?", (host,))] if db else []
+
+
+@cache
+def _titles() -> tuple[dict[tuple[str, str], int], np.ndarray] | None:
+    if not TITLE_VECTORS.exists():
+        return None
+    rows = TITLES.read_text(encoding="utf-8").splitlines()
+    return {tuple(r.split("\t", 1)): i for i, r in enumerate(rows)}, np.load(TITLE_VECTORS, mmap_mode="r")
+
+
+def title_similarity(site: str, title: str, qv) -> float | None:
+    """Cosine similarity of an article title and the query vector; None if the title has no vector."""
+    index = _titles()
+    if index is None or (row := index[0].get((site, title))) is None:
+        return None
+    return float(index[1][row].astype(np.float32) @ qv)

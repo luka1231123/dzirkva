@@ -74,7 +74,8 @@ FEEDBACK_MIN_IDF = 4.0  # ignore common words (idf of მსოფლიოშ�
 MEANING_WEIGHT = 1.5    # meaning rank vs engine rank in the final fusion
 MEANING_TOP = 40        # results (engine order) compared by meaning; the rest keep their engine rank
 COVERAGE_FLOOR = 0.2    # score × (floor + (1 - floor) × coverage)
-LOCAL_FLOOR = 0.3       # a Wikipedia/Wikisource page only our local indexes found: × (floor + (1 - floor) × title coverage)
+LOCAL_FLOOR = 0.3       # a Wikipedia/Wikisource page only our local indexes found: × (floor + (1 - floor) × title fit)
+TITLE_FIT = (0.45, 0.65)  # title-query similarity: filler 0.23-0.55, the right article 0.60-1.00 → fit 0..1
 LOCAL_LISTS = {"wikipedia", "wikisource", "passages"}
 FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every query word
 COPY_SIMILARITY = 0.6   # word overlap (Jaccard) of two snippets that makes them copies
@@ -404,14 +405,26 @@ def wiki_snippets(results: list[Result], qv, content: list[str]) -> list[Result]
     return results
 
 
+def _title_fit(r: Result, content: list[str], qv) -> float:
+    """0-1: is the article about the query? Its title vector against the query vector (wiki.title_similarity);
+    word coverage of the title if the title has no vector. ქართულათ ფილმები fits ქართული ფილმი (0.75),
+    not ჯეიმზ ბონდის ფილმების სია (0.37)."""
+    page = _wiki_page(r.url)
+    sim = wiki.title_similarity(*page, qv) if page else None
+    if sim is None:
+        return coverage(r.title, content, verbs=True)
+    low, high = TITLE_FIT
+    return min(max((sim - low) / (high - low), 0.0), 1.0)
+
+
 def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, answer=None) -> list[Result]:
     """Final order: fusion of the engine rank and the meaning rank.
 
     Meaning = similarity to the question; with an answer vector, the mean of both. Only the top
     MEANING_TOP results in engine order get a vector (cached, meaning.cached_vectors); results below
     rank 40 seldom reach the top 10, so they keep their engine rank as their meaning rank.
-    A Wikipedia or Wikisource page that only our local indexes found needs its title to be about the query:
-    the body of a long article mentions every word somewhere (აფთიაქი ღამის → აღდგომის კუნძული).
+    A Wikipedia or Wikisource page that only our local indexes found needs its title to be about the query
+    (_title_fit): the body of a long article mentions every word somewhere (აფთიაქი ღამის → აღდგომის კუნძული).
     """
     qtype = question_type(query)
     shape = re.compile(SHAPES[qtype][1]) if qtype else None
@@ -428,7 +441,7 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
             r.score *= 1 + SHAPE_BONUS
         r.score *= 1 + CLICK_BONUS * min(r.clicks, CLICK_MAX)
         if r.queries <= LOCAL_LISTS:  # no web engine found it: a long article mentions every word somewhere
-            r.score *= LOCAL_FLOOR + (1 - LOCAL_FLOOR) * coverage(r.title, content, verbs=True)
+            r.score *= LOCAL_FLOOR + (1 - LOCAL_FLOOR) * _title_fit(r, content, qv)
     return sorted(results, key=lambda r: r.score, reverse=True)
 
 
