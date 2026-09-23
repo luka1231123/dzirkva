@@ -5,11 +5,13 @@ sites), small-web voice scores, the old web (archive.db), Wikipedia citations an
 Similar sites: sites linked from the same sites (co-citation) and sites that link to the same sites (coupling);
 each shared neighbor counts, divided by √ links of the candidate, so hubs (netgazeti.ge) do not win everywhere.
 People: personal sites (crawl.small_site) and one-person blogs (blogspot, wordpress.com) that write Georgian.
+Newest posts: from their feeds (scripts/feeds.py), else from crawled pages with a trusted date (is_post).
 """
 
 import math
 import random
 import re
+import sqlite3
 import time
 from collections import Counter, defaultdict
 from functools import cache
@@ -19,6 +21,7 @@ from dzirkva import archive, crawl, papers, wiki
 from dzirkva.georgian import georgian_ratio
 from dzirkva.sources import by_category, host as host_of, lookup, site_names, sources
 
+FEEDS_DB = crawl.DB.with_name("feeds.db")  # posts from RSS and Atom feeds (scripts/feeds.py)
 NEWEST = 10          # newest pages on a site profile
 LINKS = 15           # linked sites shown per direction
 SIMILAR = 10
@@ -139,21 +142,25 @@ def newest_posts(limit: int = POSTS) -> list[tuple[str, str, str]]:
 
 @cache
 def _newest_posts(limit: int, hour: str) -> list[tuple[str, str, str]]:
-    db = crawl._db()
-    if db is None:
-        return []
-    mine = set(people())
     today = time.strftime("%Y-%m-%d")
-    out, seen = [], set()
+    posts: dict[str, tuple[str, str, str]] = {}
+    if FEEDS_DB.exists():  # feed dates are real publication dates
+        with sqlite3.connect(FEEDS_DB) as db:
+            for url, title, date, host in db.execute("SELECT url, title, date, host FROM posts WHERE date <= ? "
+                                                     "ORDER BY date DESC", (today,)):
+                if title:
+                    posts.setdefault(host, (url, title, date))
+    db = crawl._db()
+    mine, found = set(people()), 0
     for url, title, date in db.execute("SELECT c0, c1, c2 FROM pages_content WHERE c2 BETWEEN ? AND ? "
-                                       "ORDER BY c2 DESC", (DATE_FLOOR, today)):  # read until enough
+                                       "ORDER BY c2 DESC", (DATE_FLOOR, today)) if db else []:  # read until enough
         h = crawl.domain_of(url)
-        if h in mine and h not in seen and title and is_post(url, date):
-            seen.add(h)
-            out.append((url, title, date))
-            if len(out) == limit:
+        if h in mine and h not in posts and title and is_post(url, date):
+            posts[h] = (url, title, date)
+            found += 1
+            if found == limit:
                 break
-    return out
+    return sorted(posts.values(), key=lambda p: p[2], reverse=True)[:limit]
 
 
 def old_find(rng: random.Random) -> tuple[str, str, str] | None:
