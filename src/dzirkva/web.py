@@ -34,7 +34,8 @@ BLOCKS = {3: "video", 5: "people", 10: "old"}  # All tab: block after the n-th m
 PER_SITE = 2
 MAX_SOCIAL = 3  # social posts in the main list (all social sites together)
 ENGINE_NAMES = {"google": "გუგლი", "yandex": "იანდექსი", "yahoo": "იაჰუ", "brave-api": "ბრეივი",
-                "wikipedia": "ვიკიპედია", "passages": "ვიკიპედია (აზრით)", "archive": "ძველი ვები", "crawl": "ჩვენი ინდექსი", "iverieli": "ივერიელი", "wikisource": "ვიკიწყარო"}
+                "wikipedia": "ვიკიპედია", "passages": "ვიკიპედია (აზრით)", "archive": "ძველი ვები", "crawl": "ჩვენი ინდექსი", "iverieli": "ივერიელი", "wikisource": "ვიკიწყარო",
+                "cited": "ვიკიპედიის წყაროები"}
 KIND_NAMES = {"knowledge": "ცოდნა", "news": "სიახლე", "web": "ვები", "forum": "ფორუმი", "social": "სოციალური ქსელი",
               "video": "ვიდეო", "film": "ფილმი"}
 CATEGORY_NAMES = {"reference": "ცნობარი", "law": "სამართალი", "history": "ისტორია", "religion": "რელიგია",
