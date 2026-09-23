@@ -32,6 +32,7 @@ FILTERS = {"knowledge": "ცოდნა", "texts": "ტექსტები", 
 MAIN_KINDS = {"knowledge", "news", "web", "forum", "social"}
 BLOCKS = {3: "video", 5: "people", 10: "old"}  # All tab: block after the n-th main result
 PER_SITE = 2
+SITE_LIMIT = {"ka.wikipedia.org": 2, "ka.wikisource.org": 1}  # local indexes must not fill the list
 MAX_SOCIAL = 3  # social posts in the main list (all social sites together)
 ENGINE_NAMES = {"google": "გუგლი", "yandex": "იანდექსი", "yahoo": "იაჰუ", "brave-api": "ბრეივი",
                 "wikipedia": "ვიკიპედია", "passages": "ვიკიპედია (აზრით)", "archive": "ძველი ვები", "crawl": "ჩვენი ინდექსი", "iverieli": "ივერიელი", "wikisource": "ვიკიწყარო",
@@ -289,14 +290,20 @@ def _in_tab(r, tab: str) -> bool:
     return tab == "all" or r.kind in TAB_KINDS[tab]
 
 
-def _all_tab(q: str, results: list, marks: dict[str, str], key: str) -> str:
+def main_list(results: list, size: int = 30) -> list:
+    """All tab: the main results, max PER_SITE per site (SITE_LIMIT for some), MAX_SOCIAL social posts."""
     main, per_site = [], {}
     for r in results:
-        site, limit = ("social", MAX_SOCIAL) if r.kind == "social" else (_host(r.url), PER_SITE)
+        host = _host(r.url)
+        site, limit = ("social", MAX_SOCIAL) if r.kind == "social" else (host, SITE_LIMIT.get(host, PER_SITE))
         if r.kind in MAIN_KINDS and per_site.get(site, 0) < limit:
             per_site[site] = per_site.get(site, 0) + 1
             main.append(r)
-    main = main[:30]
+    return main[:size]
+
+
+def _all_tab(q: str, results: list, marks: dict[str, str], key: str) -> str:
+    main = main_list(results)
     shown = {id(r) for r in main}
     body = ""
     for i, r in enumerate(main, 1):
