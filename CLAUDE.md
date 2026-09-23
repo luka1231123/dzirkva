@@ -30,6 +30,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 - `src/dzirkva/crawl.py` + `scripts/crawl_sites.py` — own crawl of trusted sites + discovery of rare Georgian sites (Wikipedia-cited and linked hosts, probed, rules for commercial/academic/blog) → `data/crawl.db`. Run in background: `nohup uv run python scripts/crawl_sites.py > data/crawl.log 2>&1 &` (resumable; re-run adds new sitemap pages)
 - `src/dzirkva/engines.py` answers are cached in `data/cache.db`; Google is paused 1–24 h after a CAPTCHA
 - `src/dzirkva/iverieli.py` + `scripts/iverieli_collect.py` — National Library digital library catalog (601k records, OAI-PMH metadata only, most items are scans) → `data/iverieli.db`. Run in background: `nohup uv run python scripts/iverieli_collect.py > data/iverieli.log 2>&1 &` (resumable, ~4 h)
+- Small web (`crawl.small_site`, filter chip პატარა ვები): personal sites by first-person voice; scores in `data/voice.db` from `uv run python scripts/score_small_web.py` (~1 min, run again after crawling)
 - `src/dzirkva/meaning.py` — BGE-M3 similarity (first load ~5 s; model in ~/.cache/huggingface)
 - `config/searxng.yml` — engines: google, yandex, yahoo (tested with Georgian; reasons in the file). Google blocks fast bursts with CAPTCHA.
 - `config/easter_eggs.yaml` — query → one Mtavruli line above the results (აფხაზეთი → აფხაზეთი საქართველოა)

@@ -278,7 +278,7 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str]) -> list[Resul
         m.kind = kind(m.url)
         m.coverage = coverage(m.text, content)
         m.small = crawl.small_site(m.url)
-        m.tags = tags(m.url, m.title, crawl.domain_signals(m.url))
+        m.tags = tags(m.url, m.title, crawl.domain_signals(m.url), m.small)
         m.score *= 1 + _trust(m) + FAMILY_BONUS * _family_share(m.text, query_fams)
         out.append(m)
     return sorted(out, key=lambda m: m.score, reverse=True)

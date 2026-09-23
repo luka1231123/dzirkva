@@ -65,7 +65,7 @@ def kind(url: str) -> str:
 # ---- filters (source type) ----------------------------------------------
 # A tab changes the layout (kind above); a filter keeps the list and narrows the sources.
 # One result can have several filter tags; the page shows one filter at a time.
-FILTERS = ("knowledge", "texts", "people", "academic", "old")
+FILTERS = ("knowledge", "texts", "people", "small", "academic", "old")
 BLOG_HOSTS = {"blogspot.com", "wordpress.com", "medium.com", "livejournal.com", "tumblr.com", "substack.com"}
 TEXT_HOSTS = {"ka.wikisource.org", "lib.ge", "poetry.ge", "geolit.ge"}
 TEXT_TITLE = re.compile(r"ლექს(?!იკ)|ტექსტ|სიმღერ|ნოტებ|ლოცვ|პოემ|მოთხრობ|წიგნ|lyrics|\.pdf\b", re.I)
@@ -73,9 +73,11 @@ ACADEMIC_URL = re.compile(r"(?i)\.edu(\.ge)?$|\.ac\.ge$|^dspace\.|^journals?\.|/
 WAYBACK = re.compile(r"^https?://web\.archive\.org/web/[^/]+/")
 
 
-def tags(url: str, title: str, signals: set[str]) -> set[str]:
-    """Filter tags of one result. `signals` come from the crawl (crawl.domain_signals)."""
+def tags(url: str, title: str, signals: set[str], small: bool = False) -> set[str]:
+    """Filter tags of one result. `signals` come from the crawl (crawl.domain_signals), `small` from crawl.small_site."""
     out = {"old"} if WAYBACK.match(url) else set()
+    if small:
+        out.add("small")
     url = WAYBACK.sub("", url)
     host = (urlparse(url).hostname or "").removeprefix("www.")
     base = ".".join(host.split(".")[-2:])

@@ -26,7 +26,7 @@ TABS = {"all": "ყველა", "video": "ვიდეო", "news": "სია
 TAB_KINDS = {"video": {"video", "film"}, "news": {"news"}}
 TAB_WORDS = {"video": "ფილმი სერიალი კინო მულტფილმი ვიდეო კლიპი ტრეილერი სიმღერა მუსიკა ონლაინ",
              "news": "სიახლე ამბავი დღეს გუშინ არჩევნები"}  # query word families that move the tab forward
-FILTERS = {"knowledge": "ცოდნა", "texts": "ტექსტები", "people": "ხალხი", "academic": "სამეცნიერო",
+FILTERS = {"knowledge": "ცოდნა", "texts": "ტექსტები", "people": "ხალხი", "small": "პატარა ვები", "academic": "სამეცნიერო",
            "old": "ძველი ვები"}
 MAIN_KINDS = {"knowledge", "news", "web", "forum", "social"}
 BLOCKS = {3: "video", 5: "people", 10: "old"}  # All tab: block after the n-th main result
@@ -169,7 +169,7 @@ def _labels(r) -> str:
     if r.tier in (1, 2):
         out.append(f"<span class=lbl>{cap('სანდო წყარო')}</span>")
     if r.small:
-        out.append(f"<span class='lbl rare'>{cap('იშვიათი საიტი')}</span>")
+        out.append(f"<span class='lbl rare'>{cap('პატარა ვები')}</span>")
     if y := ARCHIVE_YEAR.search(r.url):
         out.append(f"<span class='lbl old'>{cap('ძველი ვები')} · {y[1]}</span>")
     return "".join(out)
@@ -249,7 +249,7 @@ def _result(r, marks: dict[str, str]) -> str:
     if date:
         snippet = f"<span class=date>{date[1]} — </span>{snippet}"
     matched = ", ".join(dict.fromkeys(escape(w) for w in t_found + s_found)) or "—"
-    tier = f"სანდოობა {r.tier} · " if r.tier else "იშვიათი საიტი · " if r.small else ""
+    tier = f"სანდოობა {r.tier} · " if r.tier else "პატარა ვები · " if r.small else ""
     kinds = " ".join(dict.fromkeys([KIND_NAMES.get(r.kind, r.kind)] + [FILTERS.get(t, t) for t in sorted(r.tags)]))
     copies = ""
     if r.copies:

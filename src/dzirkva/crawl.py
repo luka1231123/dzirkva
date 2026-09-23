@@ -32,14 +32,30 @@ CREATE TABLE IF NOT EXISTS links (src TEXT, dst TEXT, PRIMARY KEY (src, dst)) WI
 MIN_GEORGIAN = 0.3
 COMMERCIAL = 2       # commercial score from which a domain is commercial
 SMALL_INBOUND = 30   # rare domain: at most this many citing Wikipedia pages + linking crawled sites
-# known kinds of sites that are never rare: government, news, TV, radio, sport
-NOT_RARE = re.compile(r"\.gov\.ge$|news|ambebi|tv|radio|media|press|post|sport|goal")
+# known kinds of sites that are never small web: government, news, TV, radio, sport, schools, courts
+NOT_RARE = re.compile(r"\.gov\.ge$|news|ambebi|tv|radio|media|press|post|sport|goal|\.edu|school|court|library")
+# Small web = a person writing, not an office. Per 1,000 words of a domain's pages (scripts/score_small_web.py):
+# personal blogs 25–50 first-person words ("მე", "ჩემი", "მიყვარს"), companies and media under 5.
+I_WORDS = set("მე ჩემი ჩემს ჩემო ჩემმა ჩემთვის ჩემზე ჩემთან ვარ ვიყავი ვფიქრობ მგონია მიყვარს მინდა ვწერ "
+              "დავწერე ვნახე წავედი ვიცი მახსოვს".split())
+CORPORATE_WORDS = set("შპს კომპანია კომპანიის მომსახურება მომსახურების სერვისი კლიენტი კლიენტებს შეკვეთა ფასი "
+                      "ფასად ლარი ₾ მიწოდება პროდუქცია ტელ".split())
+REPORTING_WORDS = set("განაცხადა აცხადებს ინფორმაციით სააგენტო რედაქცია ბრიფინგზე ცნობით".split())
+VOICE_DB = DB.with_name("voice.db")  # separate file: the running crawler keeps crawl.db locked
+MIN_VOICE = 10       # first-person words per 1,000
+MAX_CORPORATE = 5
+MAX_REPORTING = 1
 
 
 def connect() -> sqlite3.Connection:
-    db = sqlite3.connect(DB, check_same_thread=False)
+    db = sqlite3.connect(DB, check_same_thread=False, timeout=60)  # the crawler writes all the time
     db.executescript(SCHEMA)
     return db
+
+
+@cache
+def _voice() -> sqlite3.Connection | None:
+    return sqlite3.connect(VOICE_DB, check_same_thread=False) if VOICE_DB.exists() else None
 
 
 @cache
@@ -62,13 +78,18 @@ def domain_of(url: str) -> str:
 
 
 def small_site(url: str) -> bool:
-    """Rare site: found by the crawl (not on the trusted list), Georgian, non-commercial, not news or
-    government, and few inbound links. One-person blogs (blogspot, wordpress.com) are rare at any count."""
+    """Small web: a person's own site. Found by the crawl (not trusted), Georgian, non-commercial, not news,
+    government or school; written in the first person (voice), not like a company or a newsroom; few inbound
+    links, except one-person blogs (blogspot, wordpress.com) at any count."""
     db = _db()
     host = domain_of(url)
-    row = db and db.execute("SELECT source, signals, inbound FROM domains WHERE host=? AND state='full' "
-                            "AND commercial<? AND georgian>=?", (host, COMMERCIAL, MIN_GEORGIAN)).fetchone()
-    if not row or row[0] == "trusted" or NOT_RARE.search(host):
+    voice = _voice()
+    personal = voice and voice.execute("SELECT 1 FROM voice WHERE host=? AND voice>=? AND corporate<? AND reporting<?",
+                                       (host, MIN_VOICE, MAX_CORPORATE, MAX_REPORTING)).fetchone()
+    row = personal and db and db.execute("SELECT source, signals, inbound FROM domains WHERE host=? AND state='full' "
+                                         "AND commercial<? AND georgian>=?", (host, COMMERCIAL, MIN_GEORGIAN)).fetchone()
+    name = re.sub(r"\.(wordpress|blogspot)\.com$", "", host)  # "post" must not match wordpress
+    if not row or row[0] == "trusted" or NOT_RARE.search(name):
         return False
     signals = set(row[1].split(","))
     return "news" not in signals and (row[2] <= SMALL_INBOUND or "blog-host" in signals)
