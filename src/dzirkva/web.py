@@ -158,7 +158,8 @@ def _found_by(r) -> str:
 def _query_name(name: str) -> str:
     """Query names from search.py (original, lemmas, site:law, feedback:…) in Georgian."""
     kind, _, arg = name.partition(":")
-    fixed = {"original": "როგორც დაიწერა", "corrected": "გასწორებული", "lemmas": "ლექსიკონის ფორმები"}
+    fixed = {"original": "როგორც დაიწერა", "corrected": "გასწორებული", "lemmas": "ლექსიკონის ფორმები",
+             "lemmas:corrected": "გასწორებულის ლექსიკონის ფორმები"}
     if kind == "site":
         return f"სანდო საიტები: {CATEGORY_NAMES.get(arg, arg)}"
     if kind == "feedback":
@@ -192,11 +193,11 @@ def _site(url: str) -> str:
 def _understood(q: str, qs: dict[str, str], debug: dict) -> str:
     """One line: how the query was read (spelling, Latin → Georgian, dictionary forms, question, extra words)."""
     parts = []
-    if "corrected" in qs and not debug["spelling"]:  # spelling fixes have their own line
-        parts.append(f"<b>{escape(qs['corrected'])}</b> <span class=m>(დაწერილი: {escape(q)})</span>")
+    if debug["read_as"] != normalize(q) and not debug["spelling"]:  # Latin → Georgian; spelling has its own line
+        parts.append(f"<b>{escape(debug['read_as'])}</b> <span class=m>(დაწერილი: {escape(q)})</span>")
     if "lemmas" in qs and qs["lemmas"] != " ".join(debug["content"]):
         parts.append(f"ლექსიკონის ფორმა: <b>{escape(qs['lemmas'])}</b>")
-    dropped = [w for w in qs.get("corrected", q).split() if w not in debug["content"]]
+    dropped = [w for w in debug["read_as"].split() if w not in debug["content"]]
     if dropped:
         parts.append(f"გამოტოვებული: {escape(' '.join(dropped))}")
     if debug["type"]:
@@ -337,6 +338,9 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
     if debug["spelling"]:
         fixed = " ".join(debug["spelling"].get(normalize(w), w) for w in q.split())
         body += f"<p class=fix>ნაჩვენებია შედეგები: <b>{escape(fixed)}</b> <span class=m>(დაწერილი: {escape(q)})</span></p>"
+    if debug.get("did_you_mean"):
+        maybe = " ".join(debug["did_you_mean"].get(normalize(w), w) for w in q.split())
+        body += f"<p class=fix>ხომ არ გულისხმობდით: <a href='{_link(maybe, 'all', set())}'><b>{escape(maybe)}</b></a></p>"
     body += _egg(q, qs) + _understood(q, qs, debug) + _sources(results)
     d = debug.get("definition")
     if d and tab == "all" and not chosen and (d["asked"] or not debug.get("answer")):

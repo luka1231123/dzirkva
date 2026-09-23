@@ -1,6 +1,7 @@
 """Question -> simple queries -> wide retrieval -> feedback round -> rank by meaning.
 
-1. Round 1: a few simple queries (original, corrected, dictionary forms, trusted sites).
+1. Round 1: a few simple queries (as typed, corrected, dictionary forms, trusted sites). A spelling fix is used
+   only when few round-1 pages use the typed word; else the page asks "did you mean" (confirm_fixes).
    Their job is recall (collect candidate pages), not precision.
    Search by meaning (passages.py) adds the Wikipedia paragraphs nearest to the question:
    they find answers that use other words than the question.
@@ -90,6 +91,7 @@ WIKI_LINKS = 3          # why/how: links to the Wikipedia articles nearest in me
 ANSWER_VECTOR = 3       # why/how: results are also compared with the mean of the 3 nearest paragraphs
 RELATED = 8             # related searches under the results
 BRAVE_QUERIES = ("corrected", "lemmas")      # Brave API: monthly quota
+TYPED_USES = 3          # round-1 pages that use a typed word: a real word, so a fix is only "did you mean"
 SEARXNG_SPACING = 0.3   # seconds between SearXNG requests: Google blocks fast bursts
 TRACKING = re.compile(r"^(utm_|fbclid|gclid|yclid|mc_|ref$|ref_)")
 
@@ -172,20 +174,40 @@ def _category(content: list[str]) -> str:
 
 
 def round1_queries(query: str) -> tuple[dict[str, str], list[str], dict[str, str]]:
-    """Simple recall queries, the content words of the question, and spelling fixes."""
-    corrected = [_fix_word(w) for w in query.split()]
-    fixes = spelling_fixes([w for w in corrected if not is_stop(w)])
-    corrected = [fixes.get(w, w) for w in corrected]
-    content = [w for w in corrected if not is_stop(w)] or corrected
-    lemmas = " ".join(_lemma(w) for w in content)
-    cat = _category(content)
+    """Simple recall queries, the content words as typed, and the spelling fixes to check.
+
+    The query is always searched as typed (Latin letters turned into Georgian) and with its dictionary forms.
+    Words that look like typos are also searched corrected; confirm_fixes decides after round 1."""
+    typed = [_fix_word(w) for w in query.split()]
+    content = [w for w in typed if not is_stop(w)] or typed
+    fixes = spelling_fixes(content)
+    fixed = [fixes.get(w, w) for w in content]
+    lemmas, fixed_lemmas = (" ".join(_lemma(w) for w in ws) for ws in (content, fixed))
+    cat = _category(fixed)
     sites = " OR ".join(f"site:{d}" for d in by_category(cat)[:SITES_PER_QUERY])
-    qs = {"original": query, "corrected": " ".join(corrected), "lemmas": lemmas, f"site:{cat}": f"{lemmas} ({sites})"}
+    qs = {"original": query, "corrected": " ".join(fixes.get(w, w) for w in typed), "lemmas": lemmas,
+          "lemmas:corrected": fixed_lemmas, f"site:{cat}": f"{fixed_lemmas} ({sites})"}
     unique: dict[str, str] = {}
     for name, q in qs.items():
         if q not in unique.values():
             unique[name] = q
     return unique, content, fixes
+
+
+def _uses(word: str, texts: list[str]) -> int:
+    """Texts that contain the word in some form (the stem without its last letter starts a token)."""
+    stem = word[:-1] if len(word) > 4 else word
+    return sum(any(t.startswith(stem) for t in re.findall(r"[ა-ჰ]+", text)) for text in texts)
+
+
+def confirm_fixes(fixes: dict[str, str], lists: list[tuple[str, list[dict]]]) -> tuple[dict[str, str], dict[str, str]]:
+    """Spelling fixes → (used, only suggested). A typed word that TYPED_USES round-1 pages of the typed query
+    use is a real word: the ranking keeps it and the page only asks "did you mean". Engines that correct
+    silently return pages without the typed word, so a real typo finds few uses."""
+    texts = list({canonical_url(r["url"]): normalize(f"{r['title']} {r['snippet']}")
+                  for name, res in lists if name in ("original", "lemmas") for r in res}.values())
+    used = {w: f for w, f in fixes.items() if _uses(w, texts) < TYPED_USES}
+    return used, {w: f for w, f in fixes.items() if w not in used}
 
 
 # ---- feedback -----------------------------------------------------------
@@ -402,8 +424,10 @@ def click_key(content: list[str]) -> str:
 def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     """Returns the queries sent, the ranked results, and debug information (with the answer box)."""
     t0 = time.time()
-    qs, content, fixes = round1_queries(query)
+    qs, typed, fixes = round1_queries(query)
     lists = asyncio.run(fan_out(qs, BRAVE_QUERIES if "corrected" in qs else ("original", "lemmas")))
+    fixes, suggested = confirm_fixes(fixes, lists)
+    content = [fixes.get(w, w) for w in typed]
     lists.append(("wikipedia", wiki.search(content)))   # local Georgian Wikipedia, every search
     lists.append(("wikisource", wiki.search(content, 10, "wikisource")))  # classic texts: poems, prose, laws
     lists.append(("archive", archive.search(content)))  # old Georgian web, local index
@@ -448,7 +472,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     # why/how: no answer text (a wrong paragraph reads like a fact), only the nearest articles to read
     links = [(p["title"].removesuffix(" — ვიკიპედია"), p["url"]) for p in near[:WIKI_LINKS]] if explain else []
     debug = {
-        "content": content, "key": key, "type": question_type(query), "spelling": fixes, "feedback": terms, "answer": answer,
+        "content": content, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "read_as": " ".join(fixes.get(w, w) for w in map(_fix_word, query.split())), "feedback": terms, "answer": answer,
         "wiki_links": links,
         "related": related(content, base, terms, wiki_hits, near, answer),
         "definition": dictionary.define(qs.get("corrected", query)),  # "სახლი რას ნიშნავს"
