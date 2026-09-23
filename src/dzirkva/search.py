@@ -91,7 +91,6 @@ SHAPES = {
 }
 SHAPE_BONUS = 0.3
 ANSWER_TYPES = ("why", "how")  # explanation questions
-WIKI_LINKS = 3          # why/how: links to the Wikipedia articles nearest in meaning
 ANSWER_VECTOR = 3       # why/how: results are also compared with the mean of the 3 nearest paragraphs
 RELATED = 8             # related searches under the results
 BRAVE_QUERIES = ("corrected", "lemmas")      # Brave API: monthly quota
@@ -561,11 +560,8 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
                                                      answer_v, encyclopedia)))
     for i, r in enumerate(results, 1):
         r.rank = i
-    # why/how: no answer text (a wrong paragraph reads like a fact), only the nearest articles to read
-    links = [(p["title"].removesuffix(" — ვიკიპედია"), p["url"]) for p in near[:WIKI_LINKS]] if explain else []
     debug = {
         "content": content, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "named": [h for h, _, _ in named], "intent": want, "read_as": " ".join(fixes.get(w, w) for w in map(_fix_word, query.split())), "feedback": terms, "answer": answer,
-        "wiki_links": links,
         "related": related(content, base, terms, wiki_hits, near, answer),
         "definition": dictionary.define(qs.get("corrected", query)),  # "სახლი რას ნიშნავს"
         "counts": {name: len(res) for name, res in lists}, "cites": len(cites),

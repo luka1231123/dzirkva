@@ -350,9 +350,6 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
     elif (a := debug.get("answer")) and tab == "all" and not chosen:
         body += (f"<div class=ans><a class=t href='{escape(a['url'])}'>{escape(a['title'])}</a>"
                  f"<p>{escape(a['text'])}</p><div class=cap>{cap('ვიკიპედია')}</div></div>")
-    elif (links := debug.get("wiki_links")) and tab == "all" and not chosen:
-        body += ("<div class=ans>" + "<br>".join(f"<a class=t href='{escape(u)}'>{escape(t)}</a>" for t, u in links)
-                 + f"<div class=cap>{cap('წაიკითხეთ ვიკიპედიაში')}</div></div>")
     body += (f"<details class=dbg open><summary>{cap(f"როგორ ვიპოვეთ · {len(results)} შედეგი · {debug['seconds']['total']} წმ")}</summary>"
              f"<div>საძიებო სიტყვები: {escape(' · '.join(debug['content']))}</div>"
              f"<div>კითხვა: {QUESTION.get(debug['type'], '—')}</div>"
