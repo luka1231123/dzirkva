@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
-from dzirkva.georgian import freq
+from dzirkva.georgian import freq, vocab
 
 LEXICON_FILE = Path(__file__).resolve().parents[2] / "data" / "lexicon.tsv"
 SYNONYMS_FILE = LEXICON_FILE.with_name("synonyms.tsv")
@@ -65,6 +65,9 @@ PRESENT = ("ს", "ებს", "ობს", "ავს", "ამს", "ის", 
 MIN_ROOT = 2
 MIN_VERB_FREQ = 5  # verb forms not in Wiktionary are accepted from the word list above this count
 PARTICIPLE_SHAPE = (("მ", "მა", "მე", "მო", "ნა", "სა"), ("ელი", "ალი", "არი", "ული", "ილი", "ე"))
+OTHER_FORMS = 3  # other_forms: at most this many forms of a verb
+# Verbs with a preverb and an -ება verbal noun (the productive kind): the forms people write most. {} = root.
+EBA_FORMS = ("ა{}ა", "ა{}ეს", "მა{}ეს", "ვა{}ე", "ა{}ებს", "ა{}ებენ", "{}ებული", "ი{}ა", "ი{}ება")
 
 
 @dataclass(frozen=True)
@@ -264,6 +267,63 @@ def _synonyms() -> dict[str, list[str]]:
 def synonyms(lemma: str) -> list[str]:
     """Wiktionary synonyms of a lemma, most frequent first."""
     return sorted(_synonyms().get(lemma, []), key=freq, reverse=True)
+
+
+def _preverb(word: str) -> str:
+    """The preverb a verb form starts with (not ა: it is also the version vowel of ააშენა)."""
+    return next((p for p in PREVERBS if p not in ("", "ა") and word.startswith(p) and len(word) - len(p) > MIN_ROOT), "")
+
+
+@cache
+def other_forms(word: str) -> tuple[str, list[str]]:
+    """Other forms of a verb that people write (vocab), most common first, and their kind ("noun" or "verb").
+
+    A verb form → its verbal nouns (გავაკეთოთ → გაკეთება, კეთება): the text that answers "how" names the action.
+    A verbal noun with a preverb → its verb forms (დაბადება → დაიბადა, დაიბადნენ): people tell what happened.
+    The lexicon family gives the forms, with the same preverb (გავიგო → გაგება, not მოგება). A word the lexicon
+    does not know: EBA_FORMS (ჩამოლაბორანტება ↔ ჩამომალაბორანტეს, ჩამოლაბორანტებული, ჩამოალაბორანტა).
+    """
+    found = analyze(word)
+    if found[0].pos != "verb":
+        return "", []
+    lex = _lexicon()[0]
+    pv = _preverb(word)
+    nouns = {m for a in found for m in family_members(a.family) if (m, "noun") in lex.get(m, [])
+             and m.endswith(MASDAR) and not m.endswith("ილი")}  # -ილი: a participle (დაწერილი)
+    # კეთება (the end of გაკეთება, not აღწერა: აღ- is a preverb too); with the preverb: შე + ტანა → შეტანა
+    bare = {m for m in nouns if not _preverb(m) and any(n != m and n.endswith(m) for n in nouns)}
+    nouns = {m for m in nouns if _preverb(m) == pv and m.startswith(pv)} | ({pv + m for m in bare} | bare if pv else set())
+    if nouns:
+        if word not in nouns:
+            kind, forms = "noun", nouns
+        elif pv:  # bare verbal nouns are mostly plain nouns (ცხოვრება, მთავრობა)
+            kind, forms = "verb", {f for a in found if a.pos == "verb" for f in forms_of(a.lemma)
+                                   if _preverb(f) == pv and f.startswith(pv)} - nouns
+        else:
+            return "", []
+    elif pv:
+        rest = word[len(pv):]
+        if rest.endswith("ება"):
+            kind, forms = "verb", {pv + t.format(rest[:-3]) for t in EBA_FORMS}
+        else:
+            shapes = [t.split("{}") for t in EBA_FORMS]
+            kind, forms = "noun", {pv + rest[len(a): len(rest) - len(b)] + "ება" for a, b in shapes
+                                   if rest.startswith(a) and rest.endswith(b) and len(rest) - len(a + b) >= MIN_ROOT}
+        forms = {f for f in forms if f not in lex}  # a known word is no form of an unknown verb
+    else:
+        return "", []
+    count = lambda w: vocab().get(w, 0)
+    return kind, sorted((f for f in forms - {word} if count(f)), key=count, reverse=True)[:OTHER_FORMS]
+
+
+def genitive(lemma: str) -> str:
+    """Genitive of a noun, the shape people write most (ღვინო → ღვინის, წყალი → წყლის, რადიო → რადიოს).
+    ო/უ/ე stems keep the vowel in loanwords; the dative has that shape too, but it is less common."""
+    stem = lemma[:-1] if lemma[-1] in VOWELS else lemma
+    syncope = [stem[:-2] + stem[-1]] if len(stem) > 3 and stem[-1] in SYNCOPE_BEFORE and stem[-2] in "აეო" else []
+    cands = [s + "ის" for s in [stem, *syncope]] + ([lemma + "ს"] if lemma[-1] in "ოუე" else [])  # რეზიუმეს
+    best = max(cands, key=lambda c: vocab().get(c, 0))
+    return best if vocab().get(best) else lemma
 
 
 def lemmas(word: str) -> list[str]:

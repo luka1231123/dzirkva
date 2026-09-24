@@ -1,7 +1,8 @@
 """Question -> simple queries -> wide retrieval -> feedback round -> rank by meaning.
 
-1. Round 1: a few simple queries (as typed, corrected, dictionary forms, trusted sites). A spelling fix is used
-   only when few round-1 pages use the typed word; else the page asks "did you mean" (confirm_fixes).
+1. Round 1: a few simple queries (as typed, corrected, dictionary forms or verb forms with OR, trusted sites).
+   A spelling fix is used only when few round-1 pages use the typed word; else the page asks "did you mean"
+   (confirm_fixes).
    Their job is recall (collect candidate pages), not precision.
    Search by meaning (passages.py) adds the Wikipedia paragraphs nearest to the question:
    they find answers that use other words than the question.
@@ -38,7 +39,7 @@ import yaml
 from dzirkva import engines
 from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, typo_weight, words
 from dzirkva.meaning import cached_vectors, vectors
-from dzirkva.morph import analyze, families, family_members
+from dzirkva.morph import analyze, families, family_members, genitive, other_forms
 from dzirkva import archive, clicks, crawl, dictionary, iverieli, papers, passages, wiki
 from dzirkva.sources import by_category, georgian_hosts, host, kind, lookup, named_sites, tags
 
@@ -217,6 +218,26 @@ def intent(content: list[str], text: str) -> str | None:
     return best if score[best] else None
 
 
+def forms_query(content: list[str], how: bool) -> str | None:
+    """The question as a text says it (morph.other_forms); None when nothing changes.
+
+    A verbal noun joins its verb forms with OR, stories tell the action: ჩამოლაბორანტება →
+    (ჩამოლაბორანტება OR ჩამომალაბორანტეს OR ჩამოლაბორანტებული OR ჩამოალაბორანტა).
+    A "how" question names the action: its verb becomes the verbal noun after the rest, and the last word in the
+    nominative goes to the genitive. როგორ გავაკეთოთ ღვინო → ღვინის გაკეთება.
+    Only these two: an engine (Yandex) mixes OR groups of every word into noise, and a verb outside a "how"
+    question is often a quote (კაცი გზაზე მიდიოდა)."""
+    forms = {w: other_forms(w) for w in content}
+    verbs = [w for w in content if forms[w][0] == "noun" and forms[w][1]]
+    if how and len(verbs) == 1 and (rest := [w for w in content if w != verbs[0]]):
+        nominative = [i for i, w in enumerate(rest) if w == _lemma(w) and not _is_verb(w)]
+        if nominative:  # წითელი ღვინო სახლში → წითელი ღვინის სახლში
+            rest[nominative[-1]] = genitive(rest[nominative[-1]])
+        return " ".join(rest + forms[verbs[0]][1][:1])
+    groups = [f"({' OR '.join([w, *fs])})" if kind == "verb" and fs else w for w, (kind, fs) in forms.items()]
+    return " ".join(groups) if any(kind == "verb" and fs for kind, fs in forms.values()) else None
+
+
 def _on(url: str, hosts: set[str]) -> bool:
     h = host(url)
     return h in hosts or any(h.endswith("." + x) for x in hosts)
@@ -235,8 +256,9 @@ def round1_queries(query: str) -> tuple[dict[str, str], list[str], dict[str, str
     want = intent(fixed, " ".join(fixes.get(w, w) for w in typed))
     sites = " OR ".join(f"site:{d}" for d in (intents()[want]["sites"] if want else by_category(DEFAULT_CATEGORY))
                         [:SITES_PER_QUERY])
-    qs = {"original": query, "corrected": " ".join(fixes.get(w, w) for w in typed), "lemmas": lemmas,
-          "lemmas:corrected": fixed_lemmas, f"site:{want or DEFAULT_CATEGORY}": f"{fixed_lemmas} ({sites})"}
+    forms = forms_query(fixed, question_type(query) == "how")  # replaces the dictionary forms: აკეთებს ღვინო is no text people write
+    qs = {"original": query, "corrected": " ".join(fixes.get(w, w) for w in typed),
+          **({"forms": forms} if forms else {"lemmas": lemmas, "lemmas:corrected": fixed_lemmas}), f"site:{want or DEFAULT_CATEGORY}": f"{fixed_lemmas} ({sites})"}
     named = named_sites(query.split(), fixed, fixed_lemmas.split())
     for h, share, name in named[:1]:
         if share >= NAVIGATIONAL:  # ფეისბუქი შესვლა → შესვლა site:facebook.com

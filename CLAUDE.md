@@ -23,7 +23,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 ## Layout
 - `src/dzirkva/engines.py` — SearXNG and Brave clients
 - `src/dzirkva/georgian.py` — normalize, Latin→Georgian, spelling (a rare word is fixed only when a sound-alike or keyboard-slip word is 20× more frequent in `vocab.tsv`), Georgian ratio
-- `src/dzirkva/morph.py` — word form → lemma + word family (lexicon first, then grammar rules), synonyms
+- `src/dzirkva/morph.py` — word form → lemma + word family (lexicon first, then grammar rules), synonyms; verb ↔ verbal noun forms (`other_forms`) for the `forms` query: a verbal noun ORs its verb forms (ჩამოლაბორანტება OR ჩამომალაბორანტეს …), a როგორ question becomes a noun phrase (როგორ გავაკეთოთ ღვინო → ღვინის გაკეთება); it replaces the `lemmas` query
 - `src/dzirkva/web.py` — test page: `uv run python -m dzirkva.web` → http://127.0.0.1:8000 (`PORT` in `.env`). A thread per request; every new search runs on one worker, the main thread, because the GPU model hangs in other threads. At most `MAX_SEARCHES` (`.env`, default 3) new searches run or wait; the next visitor gets a busy page that reloads itself.
   Pages without a query: `/site?h=host` (site profile), `/discover`, `/random` (a small site), `/about`; the home page shows how dzirkva finds text people wrote (`SIGNS`: the result labels, meaning on hover), when dzirkva helps and how to use it (no statistics against other engines), examples, index sizes and 3 finds of the day; `/about` gives the exact rules and how dzirkva can grow. Site text: plain Georgian, no em dashes
   Links to other sites go through `/go` with an HMAC signature (no open redirect); access logs are off (they hold IP addresses)

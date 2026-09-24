@@ -227,7 +227,7 @@ def _query_name(name: str) -> str:
     """Query names from search.py (original, lemmas, site:law, feedback:…) in Georgian."""
     kind, _, arg = name.partition(":")
     fixed = {"original": "როგორც დაიწერა", "corrected": "გასწორებული", "lemmas": "ლექსიკონის ფორმები",
-             "lemmas:corrected": "გასწორებულის ლექსიკონის ფორმები"}
+             "lemmas:corrected": "გასწორებულის ლექსიკონის ფორმები", "forms": "სიტყვის ფორმები"}
     if kind == "site":
         return f"საიტები: {intents()[arg]['ka'] if arg in intents() else CATEGORY_NAMES.get(arg, arg)}"
     if kind == "named":
@@ -293,6 +293,8 @@ def _understood(q: str, qs: dict[str, str], debug: dict) -> str:
         parts.append(f"<b>{escape(debug['read_as'])}</b> <span class=m>(დაწერილი: {escape(q)})</span>")
     if "lemmas" in qs and qs["lemmas"] != " ".join(debug["content"]):
         parts.append(f"ლექსიკონის ფორმა: <b>{escape(qs['lemmas'])}</b>")
+    if "forms" in qs:  # (გავაკეთოთ OR გაკეთება) ღვინო → გავაკეთოთ / გაკეთება ღვინო
+        parts.append(f"ფორმები: <b>{escape(qs['forms'].replace(' OR ', ' / ').replace('(', '').replace(')', ''))}</b>")
     dropped = [w for w in debug["read_as"].split() if w not in debug["content"]]
     if dropped:
         parts.append(f"გამოტოვებული: {escape(' '.join(dropped))}")
