@@ -192,7 +192,8 @@ def seed_wiki(db, sites: dict[str, Site]) -> None:
 async def get(client: httpx.AsyncClient, url: str) -> httpx.Response | None:
     try:
         return await client.get(url)
-    except (httpx.HTTPError, ValueError):  # ValueError: a relative or broken URL (Sitemap: /sitemap.xml)
+    except (httpx.HTTPError, ValueError) as e:  # ValueError: a relative or broken URL (Sitemap: /sitemap.xml)
+        print(f"fail     {e!r:.60} {url[:100]}", flush=True)
         return None
 
 
@@ -241,17 +242,19 @@ async def sitemap_urls(client: httpx.AsyncClient, site: Site, maps: list[str]) -
 
 async def seed(client: httpx.AsyncClient, db, site: Site) -> None:
     """Full domain, once per run: home page again (new links) + sitemap pages."""
-    if site.robots is not None or await load_robots(client, site):
-        home = f"{site.base}/"
-        site.todo += db.execute("UPDATE queue SET status='todo' WHERE url=? AND status!='todo'", (home,)).rowcount
-        enqueue(db, site, [home], 0)
-        maps = [urljoin(home, u) for u in site.robots.site_maps() or ["sitemap.xml"]]
-        enqueue(db, site, await sitemap_urls(client, site, maps), 1)
-        db.executemany("INSERT INTO queue(url, host, depth, cited) VALUES (?, ?, 1, 1) ON CONFLICT(url) DO UPDATE SET cited=1",
-                       [(u, site.host) for u in clean(site, cited_on(site.host))])
-        site.todo = db.execute("SELECT count(*) FROM queue WHERE host=? AND status='todo'", (site.host,)).fetchone()[0]
-        print(f"seeded {site.host}: {site.todo} pages waiting", flush=True)
-    site.seeded, site.busy = True, False
+    try:
+        if site.robots is not None or await load_robots(client, site):
+            home = f"{site.base}/"
+            site.todo += db.execute("UPDATE queue SET status='todo' WHERE url=? AND status!='todo'", (home,)).rowcount
+            enqueue(db, site, [home], 0)
+            maps = [urljoin(home, u) for u in site.robots.site_maps() or ["sitemap.xml"]]
+            enqueue(db, site, await sitemap_urls(client, site, maps), 1)
+            db.executemany("INSERT INTO queue(url, host, depth, cited) VALUES (?, ?, 1, 1) ON CONFLICT(url) DO UPDATE SET cited=1",
+                           [(u, site.host) for u in clean(site, cited_on(site.host))])
+            site.todo = db.execute("SELECT count(*) FROM queue WHERE host=? AND status='todo'", (site.host,)).fetchone()[0]
+            print(f"seeded {site.host}: {site.todo} pages waiting", flush=True)
+    finally:  # an error must not leave the site busy: a busy site is never visited again
+        site.seeded, site.busy = True, False
 
 
 def decide(site: Site) -> None:
@@ -345,7 +348,7 @@ async def main() -> None:
             save(db, s)
     db.commit()
     limits = httpx.Limits(max_connections=200, max_keepalive_connections=100)
-    timeout = httpx.Timeout(20, connect=8)
+    timeout = httpx.Timeout(20, connect=8, pool=None)  # a page waits for a free connection; a pool timeout marked good pages "error"
     async with httpx.AsyncClient(follow_redirects=True, timeout=timeout, headers={"User-Agent": AGENT}, limits=limits) as client:
         tasks: set[asyncio.Task] = set()
 
@@ -355,7 +358,11 @@ async def main() -> None:
             task.add_done_callback(tasks.discard)
 
         async def step(s: Site, url: str, depth: int) -> None:
-            await visit(client, db, sites, s, url, depth)
+            try:
+                await visit(client, db, sites, s, url, depth)
+            except Exception as e:  # a broken link on the page (bad IPv6 URL, newline): the page fails, the site goes on
+                db.execute("UPDATE queue SET status='error' WHERE url=?", (url,))
+                print(f"error    {e!r:.60} {url[:100]}", flush=True)
             s.busy, s.next = False, time.monotonic() + s.delay
 
         while True:
