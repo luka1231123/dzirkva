@@ -9,7 +9,7 @@
 2. Feedback (only when round 1 is bad: fewer than ROUND1_GOOD of its top 10 contain every query word):
    read the paragraphs nearest in meaning (else the top snippets that contain every
    query word) and find the words and names that repeat there but are rare in Georgian overall
-   (ბოლტი, უსწრაფესი, სპრინტერი). These are the words the answer pages use. Round 2 searches with them.
+   (ბოლტი). This is the word the answer pages use. Round 2 searches the query with it, one query.
 3. Rank: combine the engine ranking (RRF over all lists + trust tier + word-family match; a Wikipedia page
    counts once, with its best rank, though engines, the local index and passages all return it)
    with the meaning ranking (BGE-M3 similarity between the question and each result),
@@ -72,7 +72,8 @@ WIKI_HOSTS = {"ka.wikipedia.org": "wikipedia", "ka.wikisource.org": "wikisource"
 FAMILY_BONUS = 0.5      # × share of query word families found in title + snippet
 FEEDBACK_DOCS = 15      # round-1 results read for feedback terms
 FEEDBACK_PASSAGES = 10  # or: paragraphs nearest in meaning
-FEEDBACK_TERMS = 3
+FEEDBACK_TERMS = 1      # more terms searched nonsense (ღვინო დუღილის, ყურძნის დუღილის)
+FEEDBACK_MIN_DOCS = 3   # a feedback term repeats in at least this many texts
 FEEDBACK_MIN_IDF = 4.0  # ignore common words (idf of მსოფლიოში ≈ 3.9, სწრაფი ≈ 5.3, rare names ≈ 9)
 MEANING_WEIGHT = 1.5    # meaning rank vs engine rank in the final fusion
 MEANING_TOP = 40        # results (engine order) compared by meaning; the rest keep their engine rank
@@ -82,7 +83,7 @@ TITLE_FIT = (0.5, 0.65)   # title-query similarity: filler 0.23-0.55, the right 
 LOCAL_LISTS = {"wikipedia", "wikisource", "passages", "papers", "iverieli"}  # papers and catalog records match
 # on the abstract and the authors' university: ახალი ამბები found a thesis on translating news
 FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every query word
-ROUND1_GOOD = 5         # round 1 is good when this many of its top 10 contain every query word: no round 2
+ROUND1_GOOD = 3         # round 1 is good when this many of its top 10 contain every query word: no round 2
 SITE_FREE = 2           # results per site before the site penalty (თბილისი: half the page was Wikipedia)
 SITE_PENALTY = 0.5      # × for each further result from the same site
 SITE_MAX = 5            # results per site at most, unless the query names the site (ჩამოლაბორანტება: 25 Wikipedia pages)
@@ -102,8 +103,8 @@ RELATED = 8             # related searches under the results
 BRAVE_QUERY = ("corrected", "original")  # Brave API is paid per call: one per search, the corrected query if any
 TYPED_USES = 3          # round-1 pages that use a typed word: a real word, so a fix is only "did you mean"
 SEARXNG_SPACING = 0.3   # seconds between SearXNG requests: Google blocks fast bursts
-DEEP = 3                # deep search (button): × pages, site queries, feedback terms and queries, word forms,
-                        # local results and results read by meaning; Brave stays one call (paid)
+DEEP = 3                # deep search (button): × pages, site queries, word forms, local results and results read
+                        # by meaning; feedback stays as in a normal search; Brave stays one call (paid)
 TRACKING = re.compile(r"^(utm_|fbclid|gclid|yclid|mc_|ref$|ref_|locale$)")  # locale: DSpace UI language, same record
 
 
@@ -342,7 +343,7 @@ def feedback_terms(content: list[str], texts: list[str], n: int = FEEDBACK_TERMS
         grams = set(new) | {f"{a} {b}" for a, b in zip(toks, toks[1:]) if a in new and b in new}
         df.update(grams)
     idf = {t: sum(_idf(w) for w in t.split()) / len(t.split()) for t in df}
-    score = {t: n * idf[t] * len(t.split()) ** 0.5 for t, n in df.items() if n >= 2 and idf[t] >= FEEDBACK_MIN_IDF}
+    score = {t: n * idf[t] * len(t.split()) ** 0.5 for t, n in df.items() if n >= FEEDBACK_MIN_DOCS and idf[t] >= FEEDBACK_MIN_IDF}
     best: list[str] = []
     for t in sorted(score, key=score.get, reverse=True):
         if not any(t in b or b in t for b in best):  # "უსეინ ბოლტი" replaces "ბოლტი"
@@ -589,7 +590,7 @@ def click_key(content: list[str]) -> str:
 
 def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result], dict]:
     """Returns the queries sent, the ranked results, and debug information (with the answer box).
-    deep: DEEP × more of everything (pages, queries, feedback, forms, local results); slower."""
+    deep: DEEP × more pages, queries, forms and local results; slower."""
     t0 = time.time()
     m = DEEP if deep else 1
     qs, typed, fixes, named = round1_queries(query, m)
@@ -635,18 +636,14 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia, topic,
                             MEANING_TOP * m)
     t1 = time.time()
-    covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS * m]
-    terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES * m]] if explain else covered,
-                           FEEDBACK_TERMS * m)
+    covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]
+    terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
     # verbs stay out: ბნელდება would bring back the eclipse pages (დაბნელება)
     base = " ".join(_lemma(w) for w in content if not _is_verb(w)) or " ".join(_lemma(w) for w in content)
     more = {}
     bad = sum(r.coverage >= FEEDBACK_MIN_COVERAGE for r in first[:10]) < ROUND1_GOOD
-    if terms and (bad or deep):  # deep: always, one query per term for the first DEEP terms
-        for t in terms[:m]:
-            more[f"feedback:{t}"] = f"{base} {t}"
-        if len(terms) > 1:
-            more[f"feedback:{terms[1]}" if m == 1 else f"feedback:{terms[0]} {terms[1]}"] = " ".join(terms[:2])
+    if terms and bad:
+        more[f"feedback:{terms[0]}"] = f"{base} {terms[0]}"
     if more:
         qs.update(more)
         lists += asyncio.run(fan_out(more))

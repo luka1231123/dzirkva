@@ -175,7 +175,7 @@ th{font-size:11px;color:var(--muted);text-align:left;font-weight:600;padding:2px
 
 
 def _page(q: str, body: str, refresh: int = 0) -> str:
-    """ამოძირკვა (deep search): the second button sends deep=1 (search.DEEP × more queries, pages, forms, feedback; slower)."""
+    """ამოძირკვა (deep search): the second button sends deep=1 (search.DEEP × more queries, pages, forms; slower)."""
     return (f"<!doctype html><html lang=ka><meta charset=utf-8>"
             + (f"<meta http-equiv=refresh content={refresh}>" if refresh else "") +
             f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{escape(q) + ' · ' if q else ''}ძირკვა</title>"
@@ -645,8 +645,8 @@ def home_page() -> str:
                      "<ul class=list>" + "".join(f"<li>{escape(x)}</li>" for x in QUERY_TIPS) + "</ul>"
                      "<p>ამინდს, რუკას ან საყიდელს დიდ საძიებო სისტემებში უფრო სწრაფად იპოვით.</p>")
             + _block("როდის გამოვიყენოთ ამოძირკვა",
-                     "<p>ამოძირკვა საძიებო სისტემებში მეტ გვერდს ათვალიერებს, სიტყვის მეტ ფორმას და პასუხის მეტ "
-                     "სიტყვას ცდის, ჩვენი ინდექსებიდან კი სამჯერ მეტ შედეგს იღებს. ამას მეტი დრო სჭირდება, ამიტომ "
+                     "<p>ამოძირკვა საძიებო სისტემებში მეტ გვერდს ათვალიერებს, სიტყვის მეტ ფორმას ცდის, "
+                     "ჩვენი ინდექსებიდან კი სამჯერ მეტ შედეგს იღებს. ამას მეტი დრო სჭირდება, ამიტომ "
                      "ჯერ ჩვეულებრივი ძებნა სცადეთ. ამოძირკვა მაშინ გამოგადგებათ, როცა შედეგი ცოტაა ან ის არ არის, "
                      "რასაც ეძებდით, ან როცა თემას სწავლობთ და გინდათ ნახოთ ყველაფერი, რაც მასზე ქართულად დაწერილა. "
                      "იშვიათ სიტყვებსაც ამოძირკვით უკეთ იპოვით.</p>")
