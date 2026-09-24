@@ -28,7 +28,9 @@ Search time uses no LLM and no paid tokens: only code and a free local model (BG
 uv run python -m dzirkva.web         # the search page at http://127.0.0.1:8000
 ```
 
-`.env` needs `BRAVE_API_KEY` and `SEARXNG_SECRET`. All data lives in `data/` (not in git).
+`.env` needs `BRAVE_API_KEY` and `SEARXNG_SECRET`. Optional: `PORT` (8000), `MAX_SEARCHES` (3 new searches at a
+time; more visitors get a busy page), `BRAVE_DAILY_LIMIT` / `BRAVE_MONTHLY_LIMIT` (20 / 300 paid Brave calls; 0 turns
+Brave off), `STATS_KEY` (opens `/stats` through a tunnel). All data lives in `data/` (not in git).
 `CLAUDE.md` lists every build step and module.
 
 ## Data pipeline

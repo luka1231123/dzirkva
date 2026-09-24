@@ -120,6 +120,7 @@ def stats(evs: list[dict]) -> dict:
             "p90_sec": seconds[int(len(seconds) * 0.9)] if seconds else 0,
             "mobile_share": round(sum(e.get("device") != "desktop" for e in typed) / len(typed), 2) if typed else 0,
             "local_share": round(sum(bool(e.get("local")) for e in evs) / len(evs), 2) if evs else 0,
+            "busy": len(by["busy"]),
         },
         "days": sorted(Counter(day(e) for e in typed).items()),
         "click_days": dict(Counter(day(c) for c in clicks)),

@@ -1,6 +1,9 @@
 """Search page for testing. Run: uv run python -m dzirkva.web  → http://127.0.0.1:8000
 Surfing pages without a query: /site?h=host (what we know about a site), /discover, /random (a small site).
 /about explains dzirkva; /stats shows the telemetry (telemetry.py), for this computer or with ?key=STATS_KEY.
+Visitors: each request has its own thread; one worker (the main thread) runs every new search, one at a time,
+because the meaning model on the Mac GPU hangs in other threads. At most MAX_SEARCHES new searches run or wait at
+a time (.env, default 3); the next visitor gets a busy page that reloads itself. Other pages never wait for it.
 Every link to another site goes through /go with a signature (no open redirect), so each click is counted.
 
 Page structure (plan.md, Session 7): a tab changes the layout, a filter narrows the sources.
@@ -13,20 +16,22 @@ The All tab without filters shows ordinary results, max 2 per site and max 3 soc
 import hashlib
 import hmac
 import os
+import queue
 import random
 import re
 import secrets
+import threading
 import time
 from functools import cache
 from html import escape
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 import yaml
 
 from dzirkva.georgian import normalize
-from dzirkva import archive, clicks, crawl, discover, iverieli, papers, passages, telemetry, wiki
+from dzirkva import archive, clicks, crawl, discover, engines, iverieli, papers, passages, telemetry, wiki
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families
 from dzirkva.search import canonical_url, intents, search
@@ -58,8 +63,13 @@ DATE_FIRST = re.compile(r"^(\d{4}-\d{2}-\d{2})\S* — ")  # crawl snippets start
 EGGS_FILE = Path(__file__).resolve().parents[2] / "config" / "easter_eggs.yaml"
 GO_KEY = hashlib.sha256(b"go" + (os.environ.get("SEARXNG_SECRET") or secrets.token_hex(16)).encode()).digest()
 FORWARDED = ("X-Forwarded-For", "Forwarded", "Cf-Connecting-Ip", "X-Real-Ip")  # the visit came through a tunnel
+MAX_SEARCHES = int(os.environ.get("MAX_SEARCHES", "3"))  # new searches running or waiting at a time
+PORT = int(os.environ.get("PORT", "8000"))
+BUSY_SECONDS = 10  # the busy page reloads itself after this
 _cache: dict[str, tuple[dict, list, dict]] = {}
 _last_view: dict[str, float] = {}  # session → time of its last results page (time to click)
+_jobs: queue.Queue = queue.Queue()  # searches for the worker: (job, done event)
+_searches = threading.BoundedSemaphore(MAX_SEARCHES)
 # Page actions for telemetry (/t): a citation or the "how we found it" panel opened or closed, a citation copied.
 # A click on the summary, not the toggle event: details that start open fire toggle on load.
 BEACON = """<script>
@@ -144,8 +154,9 @@ th{font-size:11px;color:var(--muted);text-align:left;font-weight:600;padding:2px
 
 
 
-def _page(q: str, body: str) -> str:
+def _page(q: str, body: str, refresh: int = 0) -> str:
     return (f"<!doctype html><html lang=ka><meta charset=utf-8>"
+            + (f"<meta http-equiv=refresh content={refresh}>" if refresh else "") +
             f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{escape(q) + ' · ' if q else ''}ძირკვა</title>"
             "<link rel=preconnect href=https://fonts.googleapis.com><link rel=stylesheet href="
             "'https://fonts.googleapis.com/css2?family=Noto+Serif+Georgian:wght@400..600&display=swap'>"
@@ -579,6 +590,15 @@ def home_page() -> str:
             + _foot())
 
 
+def busy_page(path: str) -> str:
+    """Shown when MAX_SEARCHES new searches already run or wait; the page reloads itself (BUSY_SECONDS)."""
+    return (f"<div class='ans hero'><div class=cap>{cap('დატვირთულია')}</div>"
+            "<span class=t>ძირკვა ახლა სხვის ძიებებს ამუშავებს</span>"
+            f"<p class=lead>ერთდროულად მხოლოდ {MAX_SEARCHES} ძიებას ვამუშავებთ. "
+            f"გვერდი თავად განახლდება {BUSY_SECONDS} წამში.</p>"
+            f"<a class=go href='{escape(path)}'>{cap('სცადეთ ახლავე')} →</a></div>")
+
+
 def about_page() -> str:
     """How dzirkva works in detail: sources and their licenses, what telemetry stores."""
     sources = [
@@ -631,7 +651,8 @@ STAT_NAMES = {"searches": "ძიება", "tab_filter_views": "ჩანა�
               "clicks": "დაწკაპება, ყველა", "result_clicks": "დაწკაპება შედეგზე", "sessions": "ვიზიტი",
               "searches_per_session": "ძიება ერთ ვიზიტზე", "clicked_share": "ძიება, რომელსაც დაწკაპება მოჰყვა",
               "zero_results": "ძიება შედეგის გარეშე", "median_sec": "დრო, მედიანა (წმ)", "p90_sec": "დრო, 90% (წმ)",
-              "mobile_share": "ტელეფონით ან პლანშეტით", "local_share": "ამ კომპიუტერიდან"}
+              "mobile_share": "ტელეფონით ან პლანშეტით", "local_share": "ამ კომპიუტერიდან",
+              "busy": "დატვირთვის გვერდი ნახეს"}
 FEATURE_NAMES = {"spelling fixed": "მართლწერა გასწორდა", "did you mean shown": "„ხომ არ გულისხმობდით“",
                  "answer box": "ვიკიპედიის პასუხი", "dictionary box": "ლექსიკონი", "feedback round": "მეორე რაუნდი",
                  "papers in top 10": "ნაშრომი პირველ ათეულში", "citation opened": "ციტირება გაიხსნა",
@@ -714,8 +735,11 @@ def stats_page(days: int, local: bool, key: str) -> str:
     nums = "".join((f"<div><b>{v:.0%}</b>" if k.endswith("_share") else f"<div><b>{v}</b>")
                    + f"<span>{STAT_NAMES[k]}</span></div>" for k, v in s["numbers"].items())
     intent_name = lambda i: intents()[i]["ka"] if i in intents() else i
+    today, month = engines.brave_used()
+    brave = (f"ბრეივის API (ფასიანი): დღეს {today} / {engines.BRAVE_DAILY_LIMIT}, ამ თვეში {month} / "
+             f"{engines.BRAVE_MONTHLY_LIMIT} · ერთდროულად {MAX_SEARCHES} ძიება")
     body = (f"<div class='ans hero'><div class=cap>{cap('ტელემეტრია')}</div><span class=t>როგორ იყენებენ ძირკვას</span>"
-            f"<p class=facts>{nav}</p><div class=nums>{nums}</div></div>")
+            f"<p class=facts>{nav}</p><p class=facts>{brave}</p><div class=nums>{nums}</div></div>")
     body += _block("ძიება დღეების მიხედვით", _bars(s["days"], s["click_days"]))
     body += _block("ხშირი ძიებები", _table(s["top_queries"], ["ძიება", "რამდენჯერ", "დაწკაპება"]))
     body += _block("ძიება შედეგის გარეშე", _table(s["zero"], ["ძიება", "რამდენჯერ"]))
@@ -750,8 +774,24 @@ def stats_page(days: int, local: bool, key: str) -> str:
     return body
 
 
+def _on_worker(fn):
+    """fn() on the worker (the main thread, see __main__), after the searches before it; its value or its error."""
+    done, box = threading.Event(), {}
+
+    def job() -> None:
+        try:
+            box["value"] = fn()
+        except Exception as e:
+            box["error"] = e
+    _jobs.put((job, done))
+    done.wait()
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
 class Handler(BaseHTTPRequestHandler):
-    """One request at a time (see __main__). Every request is a telemetry event (telemetry.py)."""
+    """Request threads; pages are built one at a time on the worker. Every request is a telemetry event."""
 
     def log_message(self, format: str, *args) -> None:
         pass  # access logs hold IP addresses; telemetry keeps what we need without them
@@ -774,7 +814,20 @@ class Handler(BaseHTTPRequestHandler):
         telemetry.log(kind, self.session, q, int((time.time() - self.t0) * 1000), **self.who, **data)
 
     def do_GET(self) -> None:
+        """A new search needs a free place (MAX_SEARCHES), else the visitor gets the busy page at once."""
         route, params = self._begin()
+        q = params.get("q", [""])[0].strip()
+        new_search = route == "/" and bool(q) and q not in _cache
+        if new_search and not _searches.acquire(blocking=False):
+            self._log("busy", q)
+            return self._send(_page("", busy_page(self.path), BUSY_SECONDS), 503)
+        try:
+            self._safe(route, params)
+        finally:
+            if new_search:
+                _searches.release()
+
+    def _safe(self, route: str, params: dict) -> None:
         try:
             self._route(route, params)
         except Exception as e:  # the visitor gets a page; the error goes to telemetry
@@ -828,8 +881,8 @@ class Handler(BaseHTTPRequestHandler):
         fresh = q not in _cache
         if fresh:
             t = time.time()
-            qs, results, debug = search(q)
-            debug["seconds"]["total"] = round(time.time() - t, 1)
+            qs, results, debug = _on_worker(lambda: search(q))  # the meaning model runs on the worker only
+            debug["seconds"]["total"] = round(time.time() - t, 1)  # with the wait for searches before it
             _cache[q] = (qs, results, debug)
         qs, results, debug = _cache[q]
         body = render(q, tab, chosen, qs, results, debug)
@@ -895,6 +948,13 @@ if __name__ == "__main__":
     similarity("გამარჯობა", ["გამარჯობა"])  # load the meaning model once, before the first search
     passages._index()  # ~35 s: load the 743k paragraph vectors before the first search, not during it
     home_page()  # ~10 s: index sizes and the newest posts, counted before the first visitor
-    print("http://127.0.0.1:8000", flush=True)
-    # One thread: the meaning model on the Mac GPU hangs when called from other threads.
-    HTTPServer(("127.0.0.1", 8000), Handler).serve_forever()
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    print(f"http://127.0.0.1:{PORT}", flush=True)
+    # The worker: every new search runs here, one at a time. The meaning model on the Mac GPU hangs when called
+    # from other threads; the request threads build the pages and wait only for their search.
+    while True:
+        job, done = _jobs.get()
+        job()  # catches its own errors
+        done.set()

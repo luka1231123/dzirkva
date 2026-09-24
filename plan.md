@@ -138,8 +138,9 @@ Publication
   citation and panel actions, errors, latency, reformulations, sessions; no IP, DNT/GPC respected
 - [x] Start page that explains dzirkva (examples, index sizes, how it works) and `/about` (sources, licenses, what is stored)
 - [x] `/go` only redirects to links the page showed (HMAC signature); access logs off
-- [ ] Handle more than one visitor at a time (one model worker, a queue, a busy page)
-- [ ] Public mode: no Google, 2 SearXNG queries per search, Yahoo 502 counts as a block, daily Brave cap
+- [x] More than one visitor: a thread per request, one worker for searches, busy page after MAX_SEARCHES (3)
+- [x] Brave: one call per search, daily and monthly caps (.env), use on /stats
+- [ ] Public mode: no Google, 2 SearXNG queries per search, Yahoo 502 counts as a block
 - [ ] `eval/` in .gitignore, a license, a remote repository; tunnel + domain
 
 ## Later (optional)

@@ -97,7 +97,7 @@ SHAPE_BONUS = 0.3
 ANSWER_TYPES = ("why", "how")  # explanation questions
 ANSWER_VECTOR = 3       # why/how: results are also compared with the mean of the 3 nearest paragraphs
 RELATED = 8             # related searches under the results
-BRAVE_QUERIES = ("corrected", "lemmas")      # Brave API: monthly quota
+BRAVE_QUERY = ("corrected", "original")  # Brave API is paid per call: one per search, the corrected query if any
 TYPED_USES = 3          # round-1 pages that use a typed word: a real word, so a fix is only "did you mean"
 SEARXNG_SPACING = 0.3   # seconds between SearXNG requests: Google blocks fast bursts
 TRACKING = re.compile(r"^(utm_|fbclid|gclid|yclid|mc_|ref$|ref_|locale$)")  # locale: DSpace UI language, same record
@@ -515,7 +515,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     """Returns the queries sent, the ranked results, and debug information (with the answer box)."""
     t0 = time.time()
     qs, typed, fixes, named = round1_queries(query)
-    lists = asyncio.run(fan_out(qs, BRAVE_QUERIES if "corrected" in qs else ("original", "lemmas")))
+    lists = asyncio.run(fan_out(qs, (next(n for n in BRAVE_QUERY if n in qs),)))
     named_hosts = {h for h, _, _ in named}
     lists.append(("named", [{"url": f"https://{h}/", "title": name, "snippet": "", "engine": "named"}
                             for h, share, name in named if share >= NAVIGATIONAL]))

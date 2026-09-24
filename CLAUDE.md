@@ -5,7 +5,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 
 ## Rules
 - Search time uses no LLM and no paid tokens: only code and free local models (BGE-M3 embeddings in `meaning.py`).
-- Brave API has a monthly quota: use it for 1–2 query variants per search, cache everything.
+- Brave API is paid per call: one call per search (the corrected query, else as typed), cached 7 days, capped by `BRAVE_DAILY_LIMIT` / `BRAVE_MONTHLY_LIMIT` in `.env` (defaults 20 / 300; 0 turns Brave off; use in `cache.db` table `brave_usage`, shown on `/stats`).
 - No test suites. The only check is the eval script over `eval/queries.tsv` (private, gitignored).
 - Commit after each working step.
 
@@ -24,7 +24,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 - `src/dzirkva/engines.py` — SearXNG and Brave clients
 - `src/dzirkva/georgian.py` — normalize, Latin→Georgian, spelling (a rare word is fixed only when a sound-alike or keyboard-slip word is 20× more frequent in `vocab.tsv`), Georgian ratio
 - `src/dzirkva/morph.py` — word form → lemma + word family (lexicon first, then grammar rules), synonyms
-- `src/dzirkva/web.py` — test page: `uv run python -m dzirkva.web` → http://127.0.0.1:8000. Single thread on purpose: the GPU model hangs in other threads.
+- `src/dzirkva/web.py` — test page: `uv run python -m dzirkva.web` → http://127.0.0.1:8000 (`PORT` in `.env`). A thread per request; every new search runs on one worker, the main thread, because the GPU model hangs in other threads. At most `MAX_SEARCHES` (`.env`, default 3) new searches run or wait; the next visitor gets a busy page that reloads itself.
   Pages without a query: `/site?h=host` (site profile), `/discover`, `/random` (a small site), `/about`; the home page explains dzirkva (examples, index sizes, how it works) and shows 3 finds of the day
   Links to other sites go through `/go` with an HMAC signature (no open redirect); access logs are off (they hold IP addresses)
 - `src/dzirkva/telemetry.py` — every request is an event in `data/telemetry.db` (searches with `from`: typed/tab/filter/related/dym …, clicks with rank and block, page views, citation/panel actions by beacon `/t`, errors); no IP, 30-min anonymous session cookie, none under DNT/GPC, bots marked, 180-day retention. View: `/stats` (this computer, or `?key=` + `STATS_KEY` in `.env`)

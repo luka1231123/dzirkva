@@ -24,7 +24,11 @@ SEARXNG_URL = "http://127.0.0.1:8888/search"
 SEARXNG_ENGINES = ("google", "yandex", "yahoo")  # same as config/searxng.yml
 BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
 CACHE_DB = Path(__file__).resolve().parents[2] / "data" / "cache.db"
-CACHE_HOURS = {"searxng": 24, "brave": 24 * 7}  # Brave: monthly quota, keep longer
+CACHE_HOURS = {"searxng": 24, "brave": 24 * 7}  # Brave: paid per call, keep longer
+# Brave API calls cost money: caps per day and per month (.env; 0 turns Brave off). A spent cap skips Brave,
+# the other engines and our own indexes still answer.
+BRAVE_DAILY_LIMIT = int(os.environ.get("BRAVE_DAILY_LIMIT", "20"))
+BRAVE_MONTHLY_LIMIT = int(os.environ.get("BRAVE_MONTHLY_LIMIT", "300"))
 BLOCK_HOURS = (1, 2, 4, 8, 24)                   # Google pause after the 1st, 2nd, ... block in a row
 BLOCKING = re.compile(r"CAPTCHA|too many|denied", re.I)
 
@@ -40,7 +44,8 @@ def clean(text: str) -> str:
 def _db() -> sqlite3.Connection:
     db = sqlite3.connect(CACHE_DB, check_same_thread=False)
     db.executescript("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, time REAL, results TEXT);"
-                     "CREATE TABLE IF NOT EXISTS blocks (engine TEXT PRIMARY KEY, until REAL, strikes INT);")
+                     "CREATE TABLE IF NOT EXISTS blocks (engine TEXT PRIMARY KEY, until REAL, strikes INT);"
+                     "CREATE TABLE IF NOT EXISTS brave_usage (day TEXT PRIMARY KEY, calls INT);")
     return db
 
 
@@ -97,11 +102,24 @@ async def searxng(client: httpx.AsyncClient, query: str) -> list[dict]:
     return results
 
 
+def brave_used() -> tuple[int, int]:
+    """Brave API calls today and this month."""
+    day, month = time.strftime("%Y-%m-%d"), time.strftime("%Y-%m")
+    rows = _db().execute("SELECT day, calls FROM brave_usage WHERE day LIKE ?", (month + "%",)).fetchall()
+    return sum(n for d, n in rows if d == day), sum(n for _, n in rows)
+
+
 async def brave(client: httpx.AsyncClient, query: str) -> list[dict]:
-    """Official Brave Search API. Uses the monthly quota, so call it sparingly."""
+    """Official Brave Search API. Paid per call: cached a week, and no call once a daily or monthly cap is spent."""
     key = f"brave|{query}"
     if (hit := _cached("brave", key)) is not None:
         return hit
+    today, month = brave_used()
+    if today >= BRAVE_DAILY_LIMIT or month >= BRAVE_MONTHLY_LIMIT:
+        return []
+    _db().execute("INSERT INTO brave_usage VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET calls = calls + 1",
+                  (time.strftime("%Y-%m-%d"),))
+    _db().commit()
     r = await client.get(
         BRAVE_URL,
         params={"q": query, "count": 20},
