@@ -17,7 +17,9 @@ Search time uses no LLM and no paid tokens: only code and a free local model (BG
   `დისერტაცია`, `სტატია` or `მონოგრაფია` in a query puts that type of paper first. Filter chip: სამეცნიერო.
 - **Surfing**: `/site?h=host` (what a site is, its newest pages, similar sites, links in and out, old copies),
   `/discover` (new posts of the small web, old-web finds, new papers, sites by topic), `/random` (a small site).
-  Three finds of the day on the home page.
+  Three finds of the day on the home page, which also explains how dzirkva works (`/about`: sources, licenses).
+- **Telemetry**: every search, tab, filter, click and page view goes to `data/telemetry.db`, without IP addresses;
+  `/stats` shows it (only on this computer, or with `?key=` and `STATS_KEY` in `.env`).
 
 ## Run
 

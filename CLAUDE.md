@@ -25,7 +25,9 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 - `src/dzirkva/georgian.py` — normalize, Latin→Georgian, spelling (a rare word is fixed only when a sound-alike or keyboard-slip word is 20× more frequent in `vocab.tsv`), Georgian ratio
 - `src/dzirkva/morph.py` — word form → lemma + word family (lexicon first, then grammar rules), synonyms
 - `src/dzirkva/web.py` — test page: `uv run python -m dzirkva.web` → http://127.0.0.1:8000. Single thread on purpose: the GPU model hangs in other threads.
-  Pages without a query: `/site?h=host` (site profile), `/discover`, `/random` (a small site); home page shows 3 finds of the day
+  Pages without a query: `/site?h=host` (site profile), `/discover`, `/random` (a small site), `/about`; the home page explains dzirkva (examples, index sizes, how it works) and shows 3 finds of the day
+  Links to other sites go through `/go` with an HMAC signature (no open redirect); access logs are off (they hold IP addresses)
+- `src/dzirkva/telemetry.py` — every request is an event in `data/telemetry.db` (searches with `from`: typed/tab/filter/related/dym …, clicks with rank and block, page views, citation/panel actions by beacon `/t`, errors); no IP, 30-min anonymous session cookie, none under DNT/GPC, bots marked, 180-day retention. View: `/stats` (this computer, or `?key=` + `STATS_KEY` in `.env`)
 - `src/dzirkva/discover.py` — web surfing data: site profiles (crawl pages, links in/out, similar sites by shared links, Wikipedia citations, archive copies), newest small-web posts, shelves
   Feeds: `uv run python scripts/feeds.py` (→ `data/feeds.db`, ~2 min; run daily)
 - `src/dzirkva/papers.py` — Georgian journals and university repositories (OJS, DSpace, EPrints) by OAI-PMH → `data/papers.db`; search source, paper layout (authors, year, journal, PDF, citation)

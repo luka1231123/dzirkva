@@ -133,6 +133,15 @@ voice.db (personal sites), archive.db (old web), papers.db
 - [x] RSS: blogs with feeds → `scripts/feeds.py` daily, so /discover shows new posts first
 - [x] Shelves on /discover: sites by kind and by sources.yaml category (history, literature, science …)
 
+Publication
+- [x] Telemetry (`telemetry.py`, `/stats`): searches and how people reach them, clicks (rank, block, site), pages,
+  citation and panel actions, errors, latency, reformulations, sessions; no IP, DNT/GPC respected
+- [x] Start page that explains dzirkva (examples, index sizes, how it works) and `/about` (sources, licenses, what is stored)
+- [x] `/go` only redirects to links the page showed (HMAC signature); access logs off
+- [ ] Handle more than one visitor at a time (one model worker, a queue, a busy page)
+- [ ] Public mode: no Google, 2 SearXNG queries per search, Yahoo 502 counts as a block, daily Brave cap
+- [ ] `eval/` in .gitignore, a license, a remote repository; tunnel + domain
+
 ## Later (optional)
 - [x] Own crawl of the trusted sites (`scripts/crawl_sites.py` → `data/crawl.db`, FTS5): robots.txt, sitemaps newest first, 1 req/s per site, main text by trafilatura; search source `crawl`
 - [x] Discovery of rare Georgian sites (same crawler): seeds = 121k hosts cited in ka.wikipedia + hosts linked from crawled pages (`links`); new domain = robots + home + 5 pages, full budget only if >30% Georgian and not commercial

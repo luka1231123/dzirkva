@@ -1,5 +1,7 @@
 """Search page for testing. Run: uv run python -m dzirkva.web  → http://127.0.0.1:8000
 Surfing pages without a query: /site?h=host (what we know about a site), /discover, /random (a small site).
+/about explains dzirkva; /stats shows the telemetry (telemetry.py), for this computer or with ?key=STATS_KEY.
+Every link to another site goes through /go with a signature (no open redirect), so each click is counted.
 
 Page structure (plan.md, Session 7): a tab changes the layout, a filter narrows the sources.
 Tabs: ყველა, ვიდეო, სიახლეები; the tab that fits the query words comes right after ყველა.
@@ -8,19 +10,23 @@ The All tab without filters shows ordinary results, max 2 per site and max 3 soc
 (Facebook …), with video, people and old-web blocks between them. With a filter it shows the plain filtered list.
 """
 
+import hashlib
+import hmac
+import os
 import random
 import re
+import secrets
 import time
 from functools import cache
 from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 import yaml
 
 from dzirkva.georgian import normalize
-from dzirkva import clicks, discover, papers, passages
+from dzirkva import archive, clicks, crawl, discover, iverieli, papers, passages, telemetry, wiki
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families
 from dzirkva.search import canonical_url, intents, search
@@ -50,7 +56,20 @@ ARCHIVE_YEAR = re.compile(r"web\.archive\.org/web/(\d{4})")
 WAYBACK = re.compile(r"^https?://web\.archive\.org/web/[^/]+/")
 DATE_FIRST = re.compile(r"^(\d{4}-\d{2}-\d{2})\S* — ")  # crawl snippets start with the page date
 EGGS_FILE = Path(__file__).resolve().parents[2] / "config" / "easter_eggs.yaml"
+GO_KEY = hashlib.sha256(b"go" + (os.environ.get("SEARXNG_SECRET") or secrets.token_hex(16)).encode()).digest()
+FORWARDED = ("X-Forwarded-For", "Forwarded", "Cf-Connecting-Ip", "X-Real-Ip")  # the visit came through a tunnel
 _cache: dict[str, tuple[dict, list, dict]] = {}
+_last_view: dict[str, float] = {}  # session → time of its last results page (time to click)
+# Page actions for telemetry (/t): a citation or the "how we found it" panel opened or closed, a citation copied.
+# A click on the summary, not the toggle event: details that start open fire toggle on load.
+BEACON = """<script>
+const q=document.querySelector("input[name=q]")?.value||"",
+t=(e,o,r)=>navigator.sendBeacon(`/t?e=${e}&o=${o}&r=${r||""}&q=${encodeURIComponent(q)}`);
+document.addEventListener("click",e=>{const s=e.target.closest("summary");if(!s||e.target.closest("a"))return;
+const d=s.parentElement;if(d.dataset.t)t(d.dataset.t,d.open?0:1,d.dataset.r)});
+document.addEventListener("copy",()=>{const c=document.getSelection()?.anchorNode?.parentElement?.closest(".cite");
+if(c)t("copy",1,c.dataset.r)});
+</script>"""
 
 # Colors are tokens: light by default, dark when the system asks for it.
 CSS = """
@@ -109,6 +128,15 @@ mark.fb{background:var(--fb);border-radius:3px;padding:0 2px}
 .go{display:inline-block;margin-top:10px}
 .pm{font-size:13px;color:var(--ok);margin:2px 0}
 .cite{font-size:12.5px;color:var(--muted);margin:6px 0} .cite summary{cursor:pointer}
+.lead{font-size:16px;line-height:1.75;color:var(--text);margin:8px 0 14px}
+.steps{margin:8px 0;padding-left:22px} .steps li{margin:8px 0;line-height:1.6} .steps li::marker{color:var(--accent)}
+.foot{font-size:12px;color:var(--muted);margin:26px 0 40px;line-height:1.8}
+.nums{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-top:10px}
+.nums div{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.nums b{display:block;font-size:20px;color:var(--ink)} .nums span{font-size:11.5px;color:var(--muted)}
+.bars{width:100%;height:90px;display:block} .bars rect{fill:var(--accent)}
+th{font-size:11px;color:var(--muted);text-align:left;font-weight:600;padding:2px 10px 2px 0}
+.sess{font-size:12.5px;margin:10px 0;padding-top:8px;border-top:1px solid var(--line)} .sess div{margin:2px 0}
 .cite code{display:block;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--line);
  border-radius:8px;font:12.5px/1.6 "Noto Serif Georgian",Georgia,serif;color:var(--text);user-select:all}
 @media (max-width:520px){.r .t{font-size:17px} .ans,.blk,.dbg{padding:12px 14px;border-radius:10px}}
@@ -122,7 +150,7 @@ def _page(q: str, body: str) -> str:
             "<link rel=preconnect href=https://fonts.googleapis.com><link rel=stylesheet href="
             "'https://fonts.googleapis.com/css2?family=Noto+Serif+Georgian:wght@400..600&display=swap'>"
             f"<style>{CSS}</style><header><div><a class=logo href=/>{cap('ძირკვა')}</a>"
-            f"<form><input name=q value='{escape(q)}' autofocus><button>{cap('ძებნა')}</button></form></div></header>"
+            f"<form action=/><input name=q value='{escape(q)}' autofocus><button>{cap('ძებნა')}</button></form></div></header>"
             f"<main>{body}</main>")
 
 
@@ -199,12 +227,23 @@ def _site(url: str) -> str:
     """host › path parts, readable: Wayback prefix removed, %-escapes decoded. The host opens the site's page."""
     url = WAYBACK.sub("", url)
     parts = [unquote(p) for p in urlparse(url).path.split("/") if p][:3]
-    return (f"<a class=host href='{_site_link(_host(url))}'>{escape(_host(url))}</a>"
+    return (f"<a class=host href='{_site_link(_host(url), 'result')}'>{escape(_host(url))}</a>"
             + "".join(f" › {escape(p[:40].replace('_', ' '))}" for p in parts))
 
 
-def _site_link(host: str) -> str:
-    return f"/site?h={quote(host)}"
+def _site_link(host: str, src: str = "") -> str:
+    return f"/site?h={quote(host)}" + (f"&from={src}" if src else "")
+
+
+def _sig(url: str) -> str:
+    return hmac.new(GO_KEY, url.encode(), hashlib.sha256).hexdigest()[:16]
+
+
+def _out(url: str, where: str, **params) -> str:
+    """A link to another site through /go: telemetry counts the click (where: main, video, answer, pdf,
+    site:page …); the signature lets /go send the browser only to links this page showed."""
+    extra = {k: v for k, v in params.items() if v not in ("", None, 0)}
+    return "/go?" + urlencode({"u": url, "h": _sig(url), "w": where, **extra})
 
 
 def _understood(q: str, qs: dict[str, str], debug: dict) -> str:
@@ -249,11 +288,12 @@ def _egg(q: str, qs: dict[str, str]) -> str:
     return ""
 
 
-def _definition(d: dict) -> str:
+def _definition(d: dict, q: str) -> str:
     """Dictionary box: the word, part of speech, numbered senses, synonyms as new searches."""
-    syn = ", ".join(f"<a href='{_link(w, 'all', set())}'>{escape(w)}</a>" for w in d["synonyms"])
+    syn = ", ".join(f"<a href='{_link(w, 'all', set(), 'syn')}'>{escape(w)}</a>" for w in d["synonyms"])
     return (f"<div class='ans dict'><div class=cap>{cap('განმარტებითი ლექსიკონი')}</div>"
-            f"<a class=t href='{escape(d['url'])}'>{escape(d['word'])}</a> <span class=m>{escape(d['pos'])}</span>"
+            f"<a class=t href='{escape(_out(d['url'], 'dict', q=q))}'>{escape(d['word'])}</a>"
+            f" <span class=m>{escape(d['pos'])}</span>"
             "<ol>" + "".join(f"<li>{escape(s)}</li>" for s in d["senses"]) + "</ol>"
             + (f"<p class=syn><span class=cap>{cap('სინონიმები')}</span> {syn}</p>" if syn else "")
             + f"<div class=cap>{cap('ვიქსიკონი')}</div></div>")
@@ -263,16 +303,12 @@ def _related(related: list[tuple[str, str]]) -> str:
     if not related:
         return ""
     return (f"<div class=blk><h3>{cap('მსგავსი ძიებები')}</h3><div class=rel>" + "".join(
-        f"<a href='{_link(rq, 'all', set())}'>{escape(rq)}<span class=m>{cap(RELATED_FROM[src])}</span></a>"
+        f"<a href='{_link(rq, 'all', set(), 'related')}'>{escape(rq)}<span class=m>{cap(RELATED_FROM[src])}</span></a>"
         for rq, src in related) + "</div></div>")
 
 
-def _go(r, key: str) -> str:
-    """Result link through /go: the click is logged (clicks.py), then the browser goes to the page."""
-    return f"/go?k={quote(key)}&r={r.rank}&u={quote(r.url)}"
-
-
-def _result(r, marks: dict[str, str], key: str) -> str:
+def _result(r, marks: dict[str, str], key: str, q: str, where: str) -> str:
+    """One result. Its link goes through /go: the click is logged (clicks.py ranks with it, telemetry counts it)."""
     title, t_found = _highlight(r.title, marks)
     date = DATE_FIRST.match(r.snippet)
     snippet, s_found = _highlight(r.snippet[date.end():] if date else r.snippet, marks)
@@ -284,7 +320,7 @@ def _result(r, marks: dict[str, str], key: str) -> str:
     copies = ""
     if r.copies:
         copies = f"ასევე {len(r.copies)} საიტზე: " + ", ".join(
-            f"<a href='{escape(c.url)}'>{escape(_host(c.url))}</a>" for c in r.copies[:6])
+            f"<a href='{escape(_out(c.url, 'copy', q=q, r=r.rank))}'>{escape(_host(c.url))}</a>" for c in r.copies[:6])
     tags = f"<div class=tags>{_labels(r)}{copies}</div>" if _labels(r) or copies else ""
     paper = ""
     if m := papers.meta(r.url):  # a paper: authors, year, journal; the abstract; PDF, citation, the author's papers
@@ -292,21 +328,24 @@ def _result(r, marks: dict[str, str], key: str) -> str:
         who = papers.authors(m["creator"])
         info = " · ".join(escape(x) for x in ("; ".join(who[:3]), m["year"], papers.journal(m["source"]),
                                                 papers.type_name(m["type"])) if x)
-        pdf = f"<a href='{escape(m['pdf'])}'>PDF</a> · " if m["pdf"] else ""
-        more = (f" · <a href='{_link(who[0].replace(',', ''), 'all', {'academic'})}'>{cap('ავტორის ნაშრომები')}</a>"
-                if who else "")
+        pdf = f"<a href='{escape(_out(m['pdf'], 'pdf', q=q, r=r.rank))}'>PDF</a> · " if m["pdf"] else ""
+        more = (f" · <a href='{_link(who[0].replace(',', ''), 'all', {'academic'}, 'author')}'>"
+                f"{cap('ავტორის ნაშრომები')}</a>" if who else "")
         paper = f"<div class=pm>{info}</div>"
-        tags += (f"<details class=cite><summary>{pdf}{cap('ციტირება')}{more}</summary>"
+        tags += (f"<details class=cite data-t=cite data-r={r.rank}><summary>{pdf}{cap('ციტირება')}{more}</summary>"
                  f"<code>{escape(papers.citation(m))}</code></details>")
-    return (f"<div class=r><div class=site>{_site(r.url)}</div><a class=t href='{escape(_go(r, key))}'>{title}</a>"
+    go = _out(r.url, where, k=key, r=r.rank, q=q)
+    return (f"<div class=r><div class=site>{_site(r.url)}</div><a class=t href='{escape(go)}'>{title}</a>"
             f"{paper}<div class=snip>{snippet}</div>{tags}"
             f"<div class=why>დაემთხვა: {matched} · {tier}{escape(kinds)} · აზრი {r.meaning:.2f} · "
             f"დაფარვა {r.coverage:.0%} · ქულა {r.score * 1000:.1f}"
             f"<br>იპოვა: {_found_by(r)}</div></div>")
 
 
-def _link(q: str, tab: str, filters: set[str]) -> str:
-    return f"?q={quote(q)}" + (f"&tab={tab}" if tab != "all" else "") + "".join(f"&f={f}" for f in sorted(filters))
+def _link(q: str, tab: str, filters: set[str], src: str = "") -> str:
+    """A search link; src says for telemetry how the visitor came to it (tab, filter, related, dym …)."""
+    return (f"/?q={quote(q)}" + (f"&tab={tab}" if tab != "all" else "") + "".join(f"&f={f}" for f in sorted(filters))
+            + (f"&from={src}" if src else ""))
 
 
 def _tab_order(content: list[str]) -> list[str]:
@@ -337,17 +376,17 @@ def _all_tab(q: str, results: list, marks: dict[str, str], key: str) -> str:
     shown = {id(r) for r in main}
     body = ""
     for i, r in enumerate(main, 1):
-        body += _result(r, marks, key)
+        body += _result(r, marks, key, q, "main")
         name = BLOCKS.get(i)
         if name is None:
             continue
         pick = (lambda x: x.kind in TAB_KINDS[name]) if name in TABS else (lambda x: name in x.tags)
         block = [x for x in results if pick(x) and id(x) not in shown][:3]
         shown |= {id(x) for x in block}
-        more = _link(q, name, set()) if name in TABS else _link(q, "all", {name})
+        more = _link(q, name, set(), "more") if name in TABS else _link(q, "all", {name}, "more")
         if block:
             body += (f"<div class=blk><h3>{cap(TABS.get(name) or FILTERS[name])}<a href='{more}'>{cap('ყველა')} →</a></h3>"
-                     + "".join(_result(x, marks, key) for x in block) + "</div>")
+                     + "".join(_result(x, marks, key, q, name) for x in block) + "</div>")
     return body
 
 
@@ -357,11 +396,11 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
     passes = lambda r, fs: _in_tab(r, tab) and fs <= r.tags
     tab_count = {t: sum(_in_tab(r, t) and chosen <= r.tags for r in results) for t in TABS}
     body = "<nav class=tabs>" + "".join(
-        f"<a class={'on' if t == tab else 'off'} href='{_link(q, t, chosen)}'>{cap(TABS[t])}"
+        f"<a class={'on' if t == tab else 'off'} href='{_link(q, t, chosen, 'tab')}'>{cap(TABS[t])}"
         + (f" <span class=m>{tab_count[t]}</span>" if t != "all" else "") + "</a>"
         for t in _tab_order(debug["content"])) + "</nav>"
     body += "<nav class=chips>" + "".join(
-        f"<a class={'on' if f in chosen else 'off'} href='{_link(q, tab, set() if f in chosen else {f})}'>{cap(name)}"
+        f"<a class={'on' if f in chosen else 'off'} href='{_link(q, tab, set() if f in chosen else {f}, 'filter')}'>{cap(name)}"
         f" <span class=m>{sum(passes(r, {f}) for r in results)}</span></a>"
         for f, name in FILTERS.items()) + "</nav>"
     if debug["spelling"]:
@@ -369,15 +408,15 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
         body += f"<p class=fix>ნაჩვენებია შედეგები: <b>{escape(fixed)}</b> <span class=m>(დაწერილი: {escape(q)})</span></p>"
     if debug.get("did_you_mean"):
         maybe = " ".join(debug["did_you_mean"].get(normalize(w), w) for w in q.split())
-        body += f"<p class=fix>ხომ არ გულისხმობდით: <a href='{_link(maybe, 'all', set())}'><b>{escape(maybe)}</b></a></p>"
+        body += f"<p class=fix>ხომ არ გულისხმობდით: <a href='{_link(maybe, 'all', set(), 'dym')}'><b>{escape(maybe)}</b></a></p>"
     body += _egg(q, qs) + _understood(q, qs, debug) + _sources(results)
     d = debug.get("definition")
     if d and tab == "all" and not chosen and (d["asked"] or not debug.get("answer")):
-        body += _definition(d)
+        body += _definition(d, q)
     elif (a := debug.get("answer")) and tab == "all" and not chosen:
-        body += (f"<div class=ans><a class=t href='{escape(a['url'])}'>{escape(a['title'])}</a>"
+        body += (f"<div class=ans><a class=t href='{escape(_out(a['url'], 'answer', q=q))}'>{escape(a['title'])}</a>"
                  f"<p>{escape(a['text'])}</p><div class=cap>{cap('ვიკიპედია')}</div></div>")
-    body += (f"<details class=dbg open><summary>{cap(f"როგორ ვიპოვეთ · {len(results)} შედეგი · {debug['seconds']['total']} წმ")}</summary>"
+    body += (f"<details class=dbg open data-t=debug><summary>{cap(f"როგორ ვიპოვეთ · {len(results)} შედეგი · {debug['seconds']['total']} წმ")}</summary>"
              f"<div>საძიებო სიტყვები: {escape(' · '.join(debug['content']))}</div>"
              f"<div>კითხვა: {QUESTION.get(debug['type'], '—')}</div>"
              f"<div>მართლწერა: {escape(', '.join(f'{a} → {b}' for a, b in debug['spelling'].items()) or '—')}</div>"
@@ -390,28 +429,31 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
     if tab == "all" and not chosen:
         body += _all_tab(q, results, marks, debug["key"])
     else:
-        body += "".join(_result(r, marks, debug["key"]) for r in results if passes(r, chosen)) or "<p>—</p>"
-    return body + _related(debug.get("related", []))
+        where = f"filter:{next(iter(chosen))}" if chosen else f"tab:{tab}"
+        body += "".join(_result(r, marks, debug["key"], q, where) for r in results if passes(r, chosen)) or "<p>—</p>"
+    return body + _related(debug.get("related", [])) + BEACON
 
 
 # ---- surfing: pages without a query -----------------------------------------
 
-def _chips(hosts: list[str]) -> str:
-    return "<div class=rel>" + "".join(f"<a href='{_site_link(h)}'>{escape(h)}</a>" for h in hosts) + "</div>"
+def _chips(hosts: list[str], src: str) -> str:
+    return "<div class=rel>" + "".join(f"<a href='{_site_link(h, src)}'>{escape(h)}</a>" for h in hosts) + "</div>"
 
 
 def _block(name: str, inner: str) -> str:
     return f"<div class=blk><h3>{cap(name)}</h3>{inner}</div>" if inner else ""
 
 
-def _post(url: str, title: str, date: str, site: bool = True) -> str:
-    host = f" <span class=m>· <a href='{_site_link(_host(url))}'>{escape(_host(url))}</a></span>" if site else ""
-    return f"<li><span class=m>{escape(date[:10])}</span><a href='{escape(url)}'>{escape(title[:110])}</a>{host}</li>"
+def _post(url: str, title: str, date: str, where: str, site: bool = True) -> str:
+    host = f" <span class=m>· <a href='{_site_link(_host(url), 'post')}'>{escape(_host(url))}</a></span>" if site else ""
+    return (f"<li><span class=m>{escape(date[:10])}</span><a href='{escape(_out(url, where))}'>{escape(title[:110])}</a>"
+            f"{host}</li>")
 
 
 def _paper(url: str, title: str, authors: str, year: str, journal: str) -> str:
     meta = " · ".join(x for x in (authors.split(";")[0], year, journal.split(";")[0]) if x)
-    return f"<li><a href='{escape(url)}'>{escape(title[:140])}</a><br><span class=m>{escape(meta[:140])}</span></li>"
+    return (f"<li><a href='{escape(_out(url, 'discover:paper'))}'>{escape(title[:140])}</a><br>"
+            f"<span class=m>{escape(meta[:140])}</span></li>")
 
 
 def site_page(host: str) -> str:
@@ -435,20 +477,22 @@ def site_page(host: str) -> str:
         facts.append(f"ძველ ვებში {s['old_count']} გვერდი")
     for base, name, records in s["repos"]:
         facts.append(f"{escape(name or base)}: {records:,} ნაშრომი")
+    go = _out(f"https://{s['host']}/", "site:go", s=s["host"])
     body = (f"<div class='ans hero'><div class=cap>{cap('საიტი')}</div><span class=t>{escape(s['name'] or s['host'])}</span>"
             f"<div class=facts>{' · '.join(facts)}</div><div class=tags>{labels}</div>"
-            f"<a class=go href='https://{escape(s['host'])}/'>{cap('საიტზე გადასვლა')} →</a></div>")
-    body += _block("ახალი გვერდები", "<ul class=list>" + "".join(_post(u, t or u, dt, False) for u, t, dt in s["pages"])
-                   + "</ul>" if s["pages"] else "")
-    body += _block("მსგავსი საიტები", _chips(s["similar"]) if s["similar"] else "")
-    body += _block("ამ საიტზე მიუთითებენ", _chips(s["links_in"]) if s["links_in"] else "")
-    body += _block("ეს საიტი მიუთითებს", _chips(s["links_out"]) if s["links_out"] else "")
-    wiki_link = lambda t: "https://ka.wikipedia.org/wiki/" + quote(t.replace(" ", "_"))
+            f"<a class=go href='{escape(go)}'>{cap('საიტზე გადასვლა')} →</a></div>")
+    body += _block("ახალი გვერდები", "<ul class=list>" + "".join(
+        _post(u, t or u, dt, "site:page", False) for u, t, dt in s["pages"]) + "</ul>" if s["pages"] else "")
+    body += _block("მსგავსი საიტები", _chips(s["similar"], "similar") if s["similar"] else "")
+    body += _block("ამ საიტზე მიუთითებენ", _chips(s["links_in"], "links_in") if s["links_in"] else "")
+    body += _block("ეს საიტი მიუთითებს", _chips(s["links_out"], "links_out") if s["links_out"] else "")
+    wiki_link = lambda t: _out("https://ka.wikipedia.org/wiki/" + quote(t.replace(" ", "_")), "site:wiki", s=s["host"])
     body += _block("ვიკიპედიის სტატიები, რომლებიც მას ციტირებენ", "<ul class=list>" + "".join(
-        f"<li><a href='{wiki_link(t)}'>{escape(t)}</a> <span class=m>{n}</span></li>" for t, n in s["cited"])
+        f"<li><a href='{escape(wiki_link(t))}'>{escape(t)}</a> <span class=m>{n}</span></li>" for t, n in s["cited"])
         + "</ul>" if s["cited"] else "")
+    old_link = lambda u, snap: _out(discover.archive.WAYBACK.format(snap, u), "site:old", s=s["host"])
     body += _block("ძველი ვები", "<ul class=list>" + "".join(
-        f"<li><span class=m>{snap[:4]}</span><a href='{discover.archive.WAYBACK.format(snap, u)}'>{escape(t or u)}</a></li>"
+        f"<li><span class=m>{snap[:4]}</span><a href='{escape(old_link(u, snap))}'>{escape(t or u)}</a></li>"
         for u, snap, t in s["old"]) + "</ul>" if s["old"] else "")
     return body
 
@@ -457,18 +501,109 @@ def _finds(rng: random.Random) -> list[str]:
     """Three finds for the home page: a new post of the small web, an old-web page, a small site."""
     out = []
     if posts := discover.newest_posts(12):
-        out.append(_post(*rng.choice(posts)))
+        out.append(_post(*rng.choice(posts), "home:post"))
     if old := discover.old_find(rng):
-        out.append(f"<li><span class=m>{cap('ძველი ვები')} · {old[2]}</span><a href='{escape(old[0])}'>{escape(old[1])}</a></li>")
+        out.append(f"<li><span class=m>{cap('ძველი ვები')} · {old[2]}</span>"
+                   f"<a href='{escape(_out(old[0], 'home:old'))}'>{escape(old[1])}</a></li>")
     if h := discover.random_site(rng):
-        out.append(f"<li><span class=m>{cap('პატარა ვები')}</span><a href='{_site_link(h)}'>{escape(h)}</a></li>")
+        out.append(f"<li><span class=m>{cap('პატარა ვები')}</span><a href='{_site_link(h, 'find')}'>{escape(h)}</a></li>")
     return out
 
 
+EXAMPLES = [("ვეფხისტყაოსანი დისერტაცია", "კვლევა"), ("kartuli anbani", "ლათინური ასოებით"),
+            ("სიყვარული რას ნიშნავს", "ლექსიკონი"), ("თამარ მეფე", "ცოდნა"), ("ამინდი ბატუმში", "მართლწერა")]
+STEPS = [
+    "<b>კითხულობს შეკითხვას.</b> ასწორებს მართლწერას, ლათინური ასოებით ნაწერს ქართულად კითხულობს, პოულობს "
+    "სიტყვების ლექსიკონის ფორმებს და ხვდება, რა გჭირდებათ: ამინდი, კანონი, კვლევა…",
+    "<b>ეკითხება ბევრ წყაროს ერთად.</b> რამდენიმე საძიებო სისტემას და ჩვენს ინდექსებს: ვიკიპედიას, ივერიელს, "
+    "სამეცნიერო ჟურნალებს, ჩვენ მიერ შეგროვებულ გვერდებს და ძველ ვებს.",
+    "<b>ალაგებს აზრის მიხედვით.</b> ადგილობრივი ენის მოდელი ადარებს შეკითხვასა და გვერდის ტექსტს. სანდო წყაროები "
+    "და პატარა საიტები წინ იწევს; ერთი საიტი მთელ სიას ვერ დაიკავებს.",
+    "<b>აჩვენებს, როგორ იპოვა.</b> ყოველ შედეგთან ჩანს, რომელმა წყარომ იპოვა, რა სიტყვები დაემთხვა და რატომ "
+    "დგას ამ ადგილზე.",
+    "<b>რეკლამისა და გამოგონილი პასუხების გარეშე.</b> ძირკვა მხოლოდ ნაპოვნ გვერდებს აჩვენებს; პასუხებს "
+    "ხელოვნური ინტელექტი არ წერს.",
+]
+PRIVACY = "ვინახავთ ძიების სიტყვებს და არჩეულ ბმულებს, IP მისამართის გარეშე."
+
+
+@cache
+def _sizes() -> dict[str, int]:
+    """Index sizes for the start page, counted once per start."""
+    count = lambda db, sql: db.execute(sql).fetchone()[0] if db else 0
+    return {"wiki": count(wiki._db(), "SELECT count(*) FROM wiki"),
+            "crawl": count(crawl._db(), "SELECT count(*) FROM pages_content"),
+            "sites": count(crawl._db(), "SELECT count(*) FROM domains WHERE state = 'full'"),
+            "iverieli": count(iverieli._db(), "SELECT count(*) FROM items"),
+            "papers": count(papers._db(), "SELECT count(*) FROM papers"),
+            "repos": count(papers._db(), "SELECT count(*) FROM repos"),
+            "archive": count(archive._db(), "SELECT count(*) FROM pages"),
+            "people": len(discover.people())}
+
+
+def _thousands(n: int) -> str:
+    return f"{n // 1000:,} ათასი" if n >= 10000 else f"{n:,}"
+
+
+def _foot() -> str:
+    return (f"<p class=foot>{PRIVACY} <a href=/about>{cap('როგორ მუშაობს')}</a> · "
+            f"<a href=/discover>{cap('აღმოჩენა')}</a> · <a href=/random>{cap('შემთხვევითი საიტი')}</a></p>")
+
+
 def home_page() -> str:
-    finds = _finds(random.Random(time.strftime("%Y-%m-%d")))  # the same finds all day
-    return _block("დღის მიგნებები", "<ul class=list>" + "".join(finds) + "</ul>"
-                  f"<a class=go href=/discover>{cap('აღმოაჩინე მეტი')} →</a>" if finds else "")
+    """The start page: what dzirkva is, example queries, what it finds, how it works, the finds of the day."""
+    n, k = _sizes(), _thousands
+    examples = "".join(f"<a href='{_link(q, 'all', set(), 'example')}'>{escape(q)}<span class=m>{cap(what)}</span></a>"
+                       for q, what in EXAMPLES)
+    finds = [
+        ("ცოდნა", f"ქართული ვიკიპედია ({k(n['wiki'])} სტატია), ვიკიწყარო, ეროვნული ბიბლიოთეკის „ივერიელი“ "
+                  f"({k(n['iverieli'])} ჩანაწერი)"),
+        ("კვლევა", f"{k(n['papers'])} ნაშრომი {n['repos']} ქართული ჟურნალიდან და რეპოზიტორიიდან: ავტორი, წელი, PDF, "
+                   "ციტირება"),
+        ("ქართული ვები", f"ჩვენ მიერ შეგროვებული {k(n['crawl'])} გვერდი {n['sites']:,} საიტიდან და საძიებო სისტემების "
+                         "შედეგები"),
+        ("პატარა ვები", f"{n['people']} პირადი საიტი და ბლოგი; მათი ახალი პოსტები „აღმოჩენის“ გვერდზე"),
+        ("ძველი ვები", f"{n['archive']:,} გვერდი დახურული ქართული საიტებიდან, ინტერნეტ-არქივიდან"),
+    ]
+    today = _finds(random.Random(time.strftime("%Y-%m-%d")))  # the same finds all day
+    return (f"<div class='ans hero'><div class=cap>{cap('ქართული ვების საძიებო')}</div>"
+            "<p class=lead>ძირკვა ეძებს მხოლოდ ქართულ გვერდებს. ის აერთიანებს რამდენიმე საძიებო სისტემას, საკუთარ "
+            "ინდექსებს და ქართული ენის ცოდნას: ესმის ლათინური ასოებით დაწერილი სიტყვები, ასწორებს შეცდომებს და "
+            f"პოულობს სიტყვის ყველა ფორმას.</p><div class=rel>{examples}</div></div>"
+            + _block("რას პოულობს", "<ul class=list>" + "".join(f"<li><b>{a}</b> — {escape(b)}</li>" for a, b in finds)
+                     + "</ul>")
+            + _block("როგორ მუშაობს", "<ol class=steps>" + "".join(f"<li>{s}</li>" for s in STEPS) + "</ol>"
+                     f"<a class=go href=/about>{cap('დეტალურად')} →</a>")
+            + _block("დღის მიგნებები", "<ul class=list>" + "".join(today) + "</ul>"
+                     f"<a class=go href=/discover>{cap('აღმოაჩინე მეტი')} →</a>" if today else "")
+            + _foot())
+
+
+def about_page() -> str:
+    """How dzirkva works in detail: sources and their licenses, what telemetry stores."""
+    sources = [
+        "საძიებო სისტემები: იანდექსი, იაჰუ, გუგლი და ბრეივი. მათ შედეგებს ვინახავთ ერთი დღით (ბრეივისას — ერთი კვირით).",
+        "ვიკიპედია, ვიკიწყარო და ვიქსიკონი: ტექსტები CC BY-SA 4.0 ლიცენზიით; ყოველ ამონარიდს ახლავს ბმული სტატიაზე.",
+        "ივერიელი: ეროვნული ბიბლიოთეკის ციფრული ბიბლიოთეკის კატალოგი.",
+        "სამეცნიერო ჟურნალები და უნივერსიტეტების რეპოზიტორიები: ნაშრომების აღწერები მათი OAI-PMH არხებიდან; "
+        "ბმულები ორიგინალზე მიდის.",
+        "ჩვენი ქრაულერი: სანდო ქართული საიტები და პატარა ვები. იცავს robots.txt-ს და ერთ საიტს წამში ერთხელ მიმართავს.",
+        "ძველი ვები: დახურული საიტების ასლები ინტერნეტ-არქივიდან (Wayback Machine).",
+    ]
+    stored = [
+        "ყოველ ძიებას, ჩანართს, ფილტრს და დაწკაპებას: სიტყვებს, დროს, შედეგის ადგილს, მოწყობილობის ტიპს "
+        "(ტელეფონი ან კომპიუტერი) და ბრაუზერის ენას.",
+        "IP მისამართს არ ვინახავთ.",
+        "ერთი ვიზიტის ნაბიჯებს აკავშირებს შემთხვევითი ნომერი (ქუქი), რომელიც ბოლო მოქმედებიდან 30 წუთში ქრება. "
+        "თუ ბრაუზერი აგზავნის Do Not Track ან GPC სიგნალს, ნომერს არ ვქმნით.",
+        f"ჩანაწერები {telemetry.KEEP_DAYS} დღეში იშლება.",
+        "რატომ: ვხედავთ, რას ვერ პოულობს ძირკვა და სად უნდა გაუმჯობესდეს.",
+    ]
+    return (f"<div class='ans hero'><div class=cap>{cap('ძირკვის შესახებ')}</div><span class=t>როგორ მუშაობს</span></div>"
+            + _block("ნაბიჯები", "<ol class=steps>" + "".join(f"<li>{s}</li>" for s in STEPS) + "</ol>")
+            + _block("წყაროები", "<ul class=list>" + "".join(f"<li>{escape(s)}</li>" for s in sources) + "</ul>")
+            + _block("რას ვინახავთ", "<ul class=list>" + "".join(f"<li>{escape(s)}</li>" for s in stored) + "</ul>")
+            + _foot())
 
 
 def discover_page() -> str:
@@ -477,68 +612,289 @@ def discover_page() -> str:
             f"<div class=facts>ახალი პოსტები პატარა ვებში, ძველი ვები, ახალი ნაშრომები, საიტები თემების მიხედვით</div>"
             f"<a class=go href=/random>{cap('შემთხვევითი საიტი')} →</a></div>")
     posts = discover.newest_posts()
-    body += _block("ახალი პოსტები პატარა ვებში", "<ul class=list>" + "".join(_post(*p) for p in posts) + "</ul>"
-                   if posts else "")
+    body += _block("ახალი პოსტები პატარა ვებში", "<ul class=list>" + "".join(
+        _post(*p, "discover:post") for p in posts) + "</ul>" if posts else "")
     old = [f for f in (discover.old_find(rng) for _ in range(5)) if f]
     body += _block("ძველი ვებიდან", "<ul class=list>" + "".join(
-        f"<li><span class=m>{y}</span><a href='{escape(u)}'>{escape(t)}</a></li>" for u, t, y in old) + "</ul>"
-        if old else "")
+        f"<li><span class=m>{y}</span><a href='{escape(_out(u, 'discover:old'))}'>{escape(t)}</a></li>"
+        for u, t, y in old) + "</ul>" if old else "")
     new = discover.new_papers()
     body += _block("ახალი ნაშრომები", "<ul class=list>" + "".join(_paper(*p) for p in new) + "</ul>" if new else "")
     for name, hosts in discover.shelves():
-        body += _block(name, _chips(hosts) if hosts else "")
+        body += _block(name, _chips(hosts, "shelf") if hosts else "")
+    return body
+
+
+# ---- telemetry page ---------------------------------------------------------
+
+STAT_NAMES = {"searches": "ძიება", "tab_filter_views": "ჩანართის ან ფილტრის ცვლა", "computed": "ახლად გამოთვლილი",
+              "clicks": "დაწკაპება, ყველა", "result_clicks": "დაწკაპება შედეგზე", "sessions": "ვიზიტი",
+              "searches_per_session": "ძიება ერთ ვიზიტზე", "clicked_share": "ძიება, რომელსაც დაწკაპება მოჰყვა",
+              "zero_results": "ძიება შედეგის გარეშე", "median_sec": "დრო, მედიანა (წმ)", "p90_sec": "დრო, 90% (წმ)",
+              "mobile_share": "ტელეფონით ან პლანშეტით", "local_share": "ამ კომპიუტერიდან"}
+FEATURE_NAMES = {"spelling fixed": "მართლწერა გასწორდა", "did you mean shown": "„ხომ არ გულისხმობდით“",
+                 "answer box": "ვიკიპედიის პასუხი", "dictionary box": "ლექსიკონი", "feedback round": "მეორე რაუნდი",
+                 "papers in top 10": "ნაშრომი პირველ ათეულში", "citation opened": "ციტირება გაიხსნა",
+                 "citation copied": "ციტირება დაკოპირდა", "how-we-found panel toggled": "„როგორ ვიპოვეთ“ გაიხსნა ან დაიხურა"}
+FROM_NAMES = {"typed": "აკრიფა", "tab": "ჩანართი", "filter": "ფილტრი", "more": "ბლოკის „ყველა“", "related": "მსგავსი ძიება",
+              "dym": "„ხომ არ გულისხმობდით“", "syn": "სინონიმი", "author": "ავტორის ნაშრომები", "example": "მაგალითი"}
+PAGE_NAMES = {"home": "მთავარი გვერდი", "about": "როგორ მუშაობს", "discover": "აღმოჩენა", "site": "საიტის გვერდი",
+              "random": "შემთხვევითი საიტი"}
+PERIODS = {1: "დღე", 7: "კვირა", 30: "თვე", 0: "ყველა"}
+DEVICE_NAMES = {"desktop": "კომპიუტერი", "mobile": "ტელეფონი", "tablet": "პლანშეტი"}
+WHERE_NAMES = {"main": "მთავარი სია", "video": "ვიდეოს ბლოკი", "people": "ხალხის ბლოკი", "old": "ძველი ვების ბლოკი",
+               "answer": "ვიკიპედიის პასუხი", "dict": "ლექსიკონი", "copy": "იგივე ტექსტი სხვა საიტზე", "pdf": "PDF",
+               "site:go": "საიტის გვერდი: საიტზე გადასვლა", "site:page": "საიტის გვერდი: ახალი გვერდები",
+               "site:wiki": "საიტის გვერდი: ვიკიპედია", "site:old": "საიტის გვერდი: ძველი ვები",
+               "discover:post": "აღმოჩენა: პოსტი", "discover:old": "აღმოჩენა: ძველი ვები", "discover:paper": "აღმოჩენა: ნაშრომი",
+               "home:post": "მთავარი გვერდი: პოსტი", "home:old": "მთავარი გვერდი: ძველი ვები"}
+
+
+def _where(w: str) -> str:
+    """Where on a page a link was clicked (telemetry `where`), in Georgian."""
+    kind, _, name = w.partition(":")
+    if kind == "tab":
+        return f"ჩანართი: {TABS.get(name, name)}"
+    if kind == "filter":
+        return f"ფილტრი: {FILTERS.get(name, name)}"
+    return WHERE_NAMES.get(w, w)
+
+
+def _table(rows: list, heads: list[str]) -> str:
+    if not rows:
+        return "<p class=m>—</p>"
+    return ("<div class=tbl><table><tr>" + "".join(f"<th>{h}</th>" for h in heads) + "</tr>"
+            + "".join("<tr>" + "".join(f"<td>{escape(str(c))}</td>" for c in row) + "</tr>" for row in rows)
+            + "</table></div>")
+
+
+def _bars(days: list[tuple[str, int]], clicks: dict[str, int]) -> str:
+    """Searches per day, days without searches included."""
+    if not days:
+        return "<p class=m>—</p>"
+    first, last = (time.mktime(time.strptime(d, "%Y-%m-%d")) for d in (days[0][0], days[-1][0]))
+    count = dict(days)
+    dates = [time.strftime("%Y-%m-%d", time.localtime(first + i * 86400)) for i in range(int((last - first) / 86400) + 1)]
+    top = max(count.values())
+    bars = "".join(f"<rect x={i * 14} y={60 - 56 * count.get(d, 0) / top:.1f} width=11 "
+                   f"height={56 * count.get(d, 0) / top:.1f}><title>{d}: {count.get(d, 0)} ძიება, "
+                   f"{clicks.get(d, 0)} დაწკაპება</title></rect>" for i, d in enumerate(dates))
+    return (f"<svg class=bars viewBox='0 0 {len(dates) * 14} 60' preserveAspectRatio=none>{bars}</svg>"
+            f"<p class=m>{dates[0]} — {dates[-1]} · დღეში მაქსიმუმ {top} ძიება</p>")
+
+
+def _step(e: dict) -> str:
+    """One step of a visit on the telemetry page."""
+    k = e["kind"]
+    if k == "search":
+        what = f"ძიება «{escape(e['q'])}» · {FROM_NAMES.get(e.get('from', 'typed'), escape(str(e.get('from'))))}"
+        what += f" · {TABS.get(e.get('tab'), '')}" if e.get("tab", "all") != "all" else ""
+        what += f" · {FILTERS.get(e['f'], e['f'])}" if e.get("f") else ""
+        what += f" · {e.get('n', 0)} შედეგი" + (f" · {e.get('sec')} წმ" if e.get("fresh") else "")
+    elif k == "click":
+        rank = f"#{e['rank']} " if e.get("rank") else ""
+        what = f"→ {rank}{escape(e.get('host', ''))} <span class=m>{escape(_where(e.get('where', '')))}</span>"
+    elif k == "ui":
+        what = f"მოქმედება: {escape(e.get('what', ''))}" + (" · გაიხსნა" if e.get("open") else "")
+    elif k == "error":
+        what = f"შეცდომა: {escape(e.get('error', ''))}"
+    else:
+        what = PAGE_NAMES.get(k, k) + (f": {escape(e['host'])}" if e.get("host") else "")
+    return f"<div><span class=m>{time.strftime('%H:%M:%S', time.localtime(e['time']))}</span> {what}</div>"
+
+
+def stats_page(days: int, local: bool, key: str) -> str:
+    """How people use dzirkva (telemetry.stats), for the period and with or without this computer's visits."""
+    s = telemetry.stats(telemetry.events(days, local))
+    link = lambda d, loc: f"/stats?d={d}" + ("" if loc else "&local=0") + (f"&key={quote(key)}" if key else "")
+    nav = " · ".join(f"<b>{name}</b>" if d == days else f"<a href='{link(d, local)}'>{name}</a>"
+                     for d, name in PERIODS.items())
+    nav += " · " + (f"<a href='{link(days, False)}'>ამ კომპიუტერის გარეშე</a>" if local
+                    else f"<a href='{link(days, True)}'>ამ კომპიუტერითაც</a>")
+    nums = "".join((f"<div><b>{v:.0%}</b>" if k.endswith("_share") else f"<div><b>{v}</b>")
+                   + f"<span>{STAT_NAMES[k]}</span></div>" for k, v in s["numbers"].items())
+    intent_name = lambda i: intents()[i]["ka"] if i in intents() else i
+    body = (f"<div class='ans hero'><div class=cap>{cap('ტელემეტრია')}</div><span class=t>როგორ იყენებენ ძირკვას</span>"
+            f"<p class=facts>{nav}</p><div class=nums>{nums}</div></div>")
+    body += _block("ძიება დღეების მიხედვით", _bars(s["days"], s["click_days"]))
+    body += _block("ხშირი ძიებები", _table(s["top_queries"], ["ძიება", "რამდენჯერ", "დაწკაპება"]))
+    body += _block("ძიება შედეგის გარეშე", _table(s["zero"], ["ძიება", "რამდენჯერ"]))
+    body += _block("ძიება დაწკაპების გარეშე", _table(s["no_click"], ["ძიება", "ვიზიტი"]))
+    body += _block("შეკითხვის შეცვლა (დაწკაპების გარეშე)", _table([(a, b, n) for (a, b), n in s["refine"]],
+                                                                  ["ჯერ", "მერე", "რამდენჯერ"]))
+    body += _block("დაწკაპების ადგილი სიაში", _table([("11+" if r == 11 else r, n) for r, n in s["ranks"]],
+                                                    ["ადგილი", "დაწკაპება"]))
+    body += _block("სად დააწკაპეს", _table([(_where(w), n) for w, n in s["where"]], ["ადგილი გვერდზე", "დაწკაპება"]))
+    body += _block("საიტები, სადაც წავიდნენ", _table(s["hosts"], ["საიტი", "დაწკაპება"]))
+    body += _block("რა სახის შედეგები აირჩიეს", _table([(KIND_NAMES.get(k, k), n) for k, n in s["kinds"]]
+                                                     + [(f"ფილტრი: {FILTERS.get(t, t)}", n) for t, n in s["tags"]],
+                                                     ["სახე", "დაწკაპება"]))
+    body += _block("როგორ მივიდნენ ძიებამდე", _table([(FROM_NAMES.get(f, f), n) for f, n in s["from"]], ["გზა", "ძიება"]))
+    body += _block("ჩანართები და ფილტრები", _table([(TABS.get(t, t), n) for t, n in s["tabs"]]
+                                                   + [(FILTERS.get(f, f), n) for f, n in s["filters"]], ["", "ნახვა"]))
+    body += _block("რა სჭირდებათ", _table([(intent_name(i), n) for i, n in s["intents"]]
+                                         + [(f"კითხვა: {QUESTION.get(t, t)}", n) for t, n in s["types"] if t != "—"],
+                                         ["საჭიროება", "ძიება"]))
+    body += _block("ფუნქციები", _table([(FEATURE_NAMES.get(k, k), n) for k, n in s["features"].items()], ["", "რამდენჯერ"]))
+    body += _block("გვერდები", _table([(PAGE_NAMES.get(k, k), n) for k, n in s["pages"]] + s["sites"], ["გვერდი", "ნახვა"]))
+    body += _block("მოწყობილობა, ენა, საიდან მოვიდნენ", _table(
+        [(DEVICE_NAMES.get(d, d), n) for d, n in s["devices"]] + [(f"ენა: {lang}", n) for lang, n in s["langs"]]
+        + [(f"საიდან: {r}", n) for r, n in s["refs"]], ["", "რამდენჯერ"]))
+    body += _block("ყველაზე ნელი ძიებები", _table(s["slow"], ["წამი", "ძიება"]))
+    body += _block("შეცდომები", _table([(time.strftime("%m-%d %H:%M", time.localtime(t)), w, q, e)
+                                        for t, w, q, e in s["errors"]], ["დრო", "გვერდი", "ძიება", "შეცდომა"]))
+    body += _block("ბოლო ვიზიტები", "".join(
+        f"<div class=sess><div class=m>{time.strftime('%m-%d %H:%M', time.localtime(seq[0]['time']))} · "
+        f"{DEVICE_NAMES.get(seq[0].get('device', ''), '')} · {len(seq)} ნაბიჯი</div>" + "".join(_step(e) for e in seq[:40]) + "</div>"
+        for _, seq in reversed(s["recent"])))
     return body
 
 
 class Handler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
-        path = urlparse(self.path)
-        params = parse_qs(path.query)
-        if path.path == "/go":
-            url = params.get("u", [""])[0]
-            if not url.startswith(("http://", "https://")):
-                self.send_error(400)
-                return
-            clicks.log(params.get("k", [""])[0], canonical_url(url), int(params.get("r", ["0"])[0] or 0))
-            _cache.clear()  # the next search of the question ranks with this click
-            self.send_response(302)
-            self.send_header("Location", url)
-            self.end_headers()
-            return
-        if path.path == "/random":  # surfing: a random small site, straight to it
-            self.send_response(302)
-            self.send_header("Location", f"https://{discover.random_site()}/")
-            self.end_headers()
-            return
-        if path.path in ("/site", "/discover"):
-            h = params.get("h", [""])[0].strip()
-            body = site_page(h) if path.path == "/site" and h else discover_page()
-            self._send(_page("", body))
-            return
-        q = params.get("q", [""])[0].strip()
-        tab = params.get("tab", ["all"])[0]
-        tab = tab if tab in TABS else "all"
-        chosen = {f for f in params.get("f", [])[:1] if f in FILTERS}  # one filter at a time
-        body = ""
-        if q:
-            if q not in _cache:
-                t = time.time()
-                qs, results, debug = search(q)
-                debug["seconds"]["total"] = round(time.time() - t, 1)
-                _cache[q] = (qs, results, debug)
-            body = render(q, tab, chosen, *_cache[q])
-        self._send(_page(q, body or home_page()))
+    """One request at a time (see __main__). Every request is a telemetry event (telemetry.py)."""
 
-    def _send(self, html: str) -> None:
-        self.send_response(200)
+    def log_message(self, format: str, *args) -> None:
+        pass  # access logs hold IP addresses; telemetry keeps what we need without them
+
+    def _begin(self) -> tuple[str, dict]:
+        """Session id (cookie, none under Do Not Track or GPC), local or not, the visitor's client class."""
+        self.t0 = time.time()
+        url = urlparse(self.path)
+        private = self.headers.get("DNT") == "1" or self.headers.get("Sec-GPC") == "1"
+        m = re.search(r"(?:^|;\s*)s=([0-9a-f]{12})(?:;|$)", self.headers.get("Cookie", ""))
+        self.session = "" if private else m[1] if m else secrets.token_hex(6)
+        host = self.headers.get("Host", "").split(":")[0]
+        self.local = host in ("127.0.0.1", "localhost") and not any(h in self.headers for h in FORWARDED)
+        ref = urlparse(self.headers.get("Referer", "")).hostname or ""
+        self.who = telemetry.client(self.headers.get("User-Agent", ""), self.headers.get("Accept-Language", ""),
+                                    "" if ref == host else ref, self.local)
+        return url.path, parse_qs(url.query)
+
+    def _log(self, kind: str, q: str = "", **data) -> None:
+        telemetry.log(kind, self.session, q, int((time.time() - self.t0) * 1000), **self.who, **data)
+
+    def do_GET(self) -> None:
+        route, params = self._begin()
+        try:
+            self._route(route, params)
+        except Exception as e:  # the visitor gets a page; the error goes to telemetry
+            self._log("error", params.get("q", [""])[0], where=route, error=f"{type(e).__name__}: {e}"[:300])
+            self._send(_page("", "<p class=fix>ეს გვერდი ახლა ვერ გაიხსნა. სცადეთ ცოტა ხანში.</p>"), 500)
+
+    def do_POST(self) -> None:  # navigator.sendBeacon posts
+        route, params = self._begin()
+        if route == "/t":
+            self._beacon(params)
+        else:
+            self.send_error(405)
+
+    def _route(self, route: str, params: dict) -> None:
+        p = lambda k, default="": params.get(k, [default])[0].strip()
+        if route == "/go":
+            return self._go(params)
+        if route == "/t":
+            return self._beacon(params)
+        if route == "/random":  # surfing: a random small site, straight to it
+            host = discover.random_site()
+            self._log("random", host=host)
+            return self._redirect(f"https://{host}/")
+        if route == "/site" and p("h"):
+            host = p("h").lower().removeprefix("www.")
+            body = site_page(host)
+            self._log("site", host=host, **{"from": p("from")})
+            return self._send(_page("", body))
+        if route in ("/site", "/discover"):
+            body = discover_page()
+            self._log("discover")
+            return self._send(_page("", body))
+        if route == "/about":
+            self._log("about")
+            return self._send(_page("", about_page()))
+        if route == "/stats":
+            key = os.environ.get("STATS_KEY", "")
+            if not (self.local or key and hmac.compare_digest(p("key"), key)):
+                return self.send_error(404)
+            return self._send(_page("", stats_page(int(p("d", "7")) if p("d", "7").isdigit() else 7,
+                                                   p("local") != "0", p("key"))))
+        if route != "/":
+            return self.send_error(404)
+        q = p("q")
+        if not q:
+            body = home_page()
+            self._log("home")
+            return self._send(_page("", body))
+        tab = p("tab", "all") if p("tab", "all") in TABS else "all"
+        chosen = {f for f in params.get("f", [])[:1] if f in FILTERS}  # one filter at a time
+        fresh = q not in _cache
+        if fresh:
+            t = time.time()
+            qs, results, debug = search(q)
+            debug["seconds"]["total"] = round(time.time() - t, 1)
+            _cache[q] = (qs, results, debug)
+        qs, results, debug = _cache[q]
+        body = render(q, tab, chosen, qs, results, debug)
+        if self.session:
+            _last_view[self.session] = time.time()
+        top = main_list(results)[:10]
+        self._log("search", q, fresh=fresh, tab=tab, f=next(iter(chosen), ""), n=len(results),
+                  sec=debug["seconds"]["total"], intent=debug.get("intent"), type=debug.get("type"),
+                  fixed=bool(debug["spelling"]), dym=bool(debug.get("did_you_mean")), answer=bool(debug.get("answer")),
+                  definition=bool(debug.get("definition")), feedback=bool(debug["feedback"]),
+                  papers=any("papers" in r.queries for r in top), top=[_host(r.url) for r in top],
+                  **{"from": p("from", "typed")})
+        self._send(_page(q, body))
+
+    def _go(self, params: dict) -> None:
+        """A click on a link to another site: only links this server signed; results also go to clicks.py."""
+        p = lambda k: params.get(k, [""])[0]
+        url, q = p("u"), p("q")
+        if not url.startswith(("http://", "https://")) or not hmac.compare_digest(p("h"), _sig(url)):
+            return self.send_error(400)
+        rank = int(p("r")) if p("r").isdigit() else 0
+        info = {}
+        if p("k") and rank:
+            clicks.log(p("k"), canonical_url(url), rank)
+            hit = next((r for r in _cache[q][1] if r.rank == rank), None) if q in _cache else None
+            if hit:
+                info = {"result_kind": hit.kind, "tags": sorted(hit.tags), "tier": hit.tier,
+                        "paper": "papers" in hit.queries}
+            _cache.clear()  # the next search of the question ranks with this click
+        since = _last_view.get(self.session)
+        self._log("click", q, where=p("w"), rank=rank, host=_host(url), site=p("s"),
+                  after_ms=int((time.time() - since) * 1000) if since else None, **info)
+        self._redirect(url)
+
+    def _beacon(self, params: dict) -> None:
+        """A page action (BEACON): citation or panel opened or closed, citation copied."""
+        p = lambda k: params.get(k, [""])[0]
+        self._log("ui", p("q"), what=p("e")[:20], open=p("o") == "1", rank=int(p("r")) if p("r").isdigit() else 0)
+        self.send_response(204)
+        self._cookie()
+        self.end_headers()
+
+    def _cookie(self) -> None:
+        if self.session:
+            self.send_header("Set-Cookie", f"s={self.session}; Max-Age={telemetry.SESSION_MINUTES * 60}; Path=/; "
+                                           "HttpOnly; SameSite=Lax")
+
+    def _send(self, html: str, status: int = 200) -> None:
+        self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self._cookie()
         self.end_headers()
         self.wfile.write(html.encode())
+
+    def _redirect(self, url: str) -> None:
+        self.send_response(302)
+        self.send_header("Location", url)
+        self._cookie()
+        self.end_headers()
 
 
 if __name__ == "__main__":
     similarity("გამარჯობა", ["გამარჯობა"])  # load the meaning model once, before the first search
     passages._index()  # ~35 s: load the 743k paragraph vectors before the first search, not during it
+    home_page()  # ~10 s: index sizes and the newest posts, counted before the first visitor
     print("http://127.0.0.1:8000", flush=True)
     # One thread: the meaning model on the Mac GPU hangs when called from other threads.
     HTTPServer(("127.0.0.1", 8000), Handler).serve_forever()
