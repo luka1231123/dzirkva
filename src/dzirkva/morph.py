@@ -275,7 +275,7 @@ def _preverb(word: str) -> str:
 
 
 @cache
-def other_forms(word: str) -> tuple[str, list[str]]:
+def other_forms(word: str, limit: int = OTHER_FORMS) -> tuple[str, list[str]]:
     """Other forms of a verb that people write (vocab), most common first, and their kind ("noun" or "verb").
 
     A verb form → its verbal nouns (გავაკეთოთ → გაკეთება, კეთება): the text that answers "how" names the action.
@@ -313,7 +313,7 @@ def other_forms(word: str) -> tuple[str, list[str]]:
     else:
         return "", []
     count = lambda w: vocab().get(w, 0)
-    return kind, sorted((f for f in forms - {word} if count(f)), key=count, reverse=True)[:OTHER_FORMS]
+    return kind, sorted((f for f in forms - {word} if count(f)), key=count, reverse=True)[:limit]
 
 
 def genitive(lemma: str) -> str:
@@ -322,6 +322,8 @@ def genitive(lemma: str) -> str:
     stem = lemma[:-1] if lemma[-1] in VOWELS else lemma
     syncope = [stem[:-2] + stem[-1]] if len(stem) > 3 and stem[-1] in SYNCOPE_BEFORE and stem[-2] in "აეო" else []
     cands = [s + "ის" for s in [stem, *syncope]] + ([lemma + "ს"] if lemma[-1] in "ოუე" else [])  # რეზიუმეს
+    if known := set(forms_of(lemma)):  # the lexicon table decides: მეტრის is "metre", not მეტრო
+        cands = [c for c in cands if c in known] or [lemma]
     best = max(cands, key=lambda c: vocab().get(c, 0))
     return best if vocab().get(best) else lemma
 

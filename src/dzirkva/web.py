@@ -83,6 +83,7 @@ MAX_SEARCHES = int(os.environ.get("MAX_SEARCHES", "3"))  # new searches running 
 PORT = int(os.environ.get("PORT", "8000"))
 BUSY_SECONDS = 10  # the busy page reloads itself after this
 _cache: dict[str, tuple[dict, list, dict]] = {}
+DEEP_KEY = "\x00deep"  # _cache key of a deep search: the question + this
 _last_view: dict[str, float] = {}  # session → time of its last results page (time to click)
 _jobs: queue.Queue = queue.Queue()  # searches for the worker: (job, done event)
 _searches = threading.BoundedSemaphore(MAX_SEARCHES)
@@ -115,6 +116,7 @@ input{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--ink);background
  border:1px solid var(--line);border-radius:22px;padding:8px 16px;outline:none}
 input:focus{border-color:var(--link)}
 button{font:inherit;font-size:12.5px;font-weight:600;border:0;border-radius:22px;padding:8px 18px;background:var(--accent);color:#1b1714;cursor:pointer}
+button.deep{background:transparent;color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);padding:8px 14px}
 .tabs{display:flex;gap:22px;border-bottom:1px solid var(--line);margin-top:6px}
 .tabs a{padding:11px 0 8px;font-size:12.5px;color:var(--muted);border-bottom:2px solid transparent}
 .tabs a.on{color:var(--ink);border-color:var(--accent);font-weight:600} .tabs a:hover{text-decoration:none;color:var(--ink)}
@@ -174,13 +176,16 @@ th{font-size:11px;color:var(--muted);text-align:left;font-weight:600;padding:2px
 
 
 def _page(q: str, body: str, refresh: int = 0) -> str:
+    """ამოძირკვა (deep search): the second button sends deep=1 (search.DEEP × more queries, pages, forms, feedback; slower)."""
     return (f"<!doctype html><html lang=ka><meta charset=utf-8>"
             + (f"<meta http-equiv=refresh content={refresh}>" if refresh else "") +
             f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{escape(q) + ' · ' if q else ''}ძირკვა</title>"
             "<link rel=preconnect href=https://fonts.googleapis.com><link rel=stylesheet href="
             "'https://fonts.googleapis.com/css2?family=Noto+Serif+Georgian:wght@400..600&display=swap'>"
             f"<style>{CSS}</style><header><div><a class=logo href=/>{cap('ძირკვა')}</a>"
-            f"<form action=/><input name=q value='{escape(q)}' autofocus><button>{cap('ძებნა')}</button></form></div></header>"
+            f"<form action=/><input name=q value='{escape(q)}' autofocus><button>{cap('ძებნა')}</button>"
+            f"<button class=deep name=deep value=1 title='სამჯერ მეტი მოთხოვნა, სიტყვის ფორმა და შედეგი, უფრო ნელა'>"
+            f"{cap('ამოძირკვა')}</button></form></div></header>"
             f"<main>{body}</main>")
 
 
@@ -227,8 +232,10 @@ def _query_name(name: str) -> str:
     """Query names from search.py (original, lemmas, site:law, feedback:…) in Georgian."""
     kind, _, arg = name.partition(":")
     fixed = {"original": "როგორც დაიწერა", "corrected": "გასწორებული", "lemmas": "ლექსიკონის ფორმები",
-             "lemmas:corrected": "გასწორებულის ლექსიკონის ფორმები", "forms": "სიტყვის ფორმები"}
-    if kind == "site":
+             "lemmas:corrected": "გასწორებულის ლექსიკონის ფორმები", "forms": "სიტყვის ფორმები",
+             "variants": "ყველა ფორმა"}
+    if kind == "site":  # deep search: site:reference:2 = the next sites of the list
+        arg = arg.partition(":")[0]
         return f"საიტები: {intents()[arg]['ka'] if arg in intents() else CATEGORY_NAMES.get(arg, arg)}"
     if kind == "named":
         return f"დასახელებული საიტი: {arg}"
@@ -384,10 +391,11 @@ def _result(r, marks: dict[str, str], key: str, q: str, where: str) -> str:
             f"<br>იპოვა: {_found_by(r)}</div></div>")
 
 
-def _link(q: str, tab: str, filters: set[str], src: str = "") -> str:
-    """A search link; src says for telemetry how the visitor came to it (tab, filter, related, dym …)."""
+def _link(q: str, tab: str, filters: set[str], src: str = "", deep: bool = False) -> str:
+    """A search link; src says for telemetry how the visitor came to it (tab, filter, related, dym …).
+    deep: tabs and filters of a deep search stay on its results."""
     return (f"/?q={quote(q)}" + (f"&tab={tab}" if tab != "all" else "") + "".join(f"&f={f}" for f in sorted(filters))
-            + (f"&from={src}" if src else ""))
+            + ("&deep=1" if deep else "") + (f"&from={src}" if src else ""))
 
 
 def _tab_order(content: list[str]) -> list[str]:
@@ -413,7 +421,7 @@ def main_list(results: list, size: int = 30) -> list:
     return main[:size]
 
 
-def _all_tab(q: str, results: list, marks: dict[str, str], key: str) -> str:
+def _all_tab(q: str, results: list, marks: dict[str, str], key: str, deep: bool = False) -> str:
     main = main_list(results)
     shown = {id(r) for r in main}
     body = ""
@@ -425,7 +433,7 @@ def _all_tab(q: str, results: list, marks: dict[str, str], key: str) -> str:
         pick = (lambda x: x.kind in TAB_KINDS[name]) if name in TABS else (lambda x: name in x.tags)
         block = [x for x in results if pick(x) and id(x) not in shown][:3]
         shown |= {id(x) for x in block}
-        more = _link(q, name, set(), "more") if name in TABS else _link(q, "all", {name}, "more")
+        more = _link(q, name, set(), "more", deep) if name in TABS else _link(q, "all", {name}, "more", deep)
         if block:
             body += (f"<div class=blk><h3>{cap(TABS.get(name) or FILTERS[name])}<a href='{more}'>{cap('ყველა')} →</a></h3>"
                      + "".join(_result(x, marks, key, q, name) for x in block) + "</div>")
@@ -435,14 +443,15 @@ def _all_tab(q: str, results: list, marks: dict[str, str], key: str) -> str:
 def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list, debug: dict) -> str:
     """The results part of the page."""
     marks = _marks(debug)
+    deep = debug.get("deep", False)
     passes = lambda r, fs: _in_tab(r, tab) and fs <= r.tags
     tab_count = {t: sum(_in_tab(r, t) and chosen <= r.tags for r in results) for t in TABS}
     body = "<nav class=tabs>" + "".join(
-        f"<a class={'on' if t == tab else 'off'} href='{_link(q, t, chosen, 'tab')}'>{cap(TABS[t])}"
+        f"<a class={'on' if t == tab else 'off'} href='{_link(q, t, chosen, 'tab', deep)}'>{cap(TABS[t])}"
         + (f" <span class=m>{tab_count[t]}</span>" if t != "all" else "") + "</a>"
         for t in _tab_order(debug["content"])) + "</nav>"
     body += "<nav class=chips>" + "".join(
-        f"<a class={'on' if f in chosen else 'off'} href='{_link(q, tab, set() if f in chosen else {f}, 'filter')}'>{cap(name)}"
+        f"<a class={'on' if f in chosen else 'off'} href='{_link(q, tab, set() if f in chosen else {f}, 'filter', deep)}'>{cap(name)}"
         f" <span class=m>{sum(passes(r, {f}) for r in results)}</span></a>"
         for f, name in FILTERS.items()) + "</nav>"
     if debug["spelling"]:
@@ -458,7 +467,7 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
     elif (a := debug.get("answer")) and tab == "all" and not chosen:
         body += (f"<div class=ans><a class=t href='{escape(_out(a['url'], 'answer', q=q))}'>{escape(a['title'])}</a>"
                  f"<p>{escape(a['text'])}</p><div class=cap>{cap('ვიკიპედია')}</div></div>")
-    body += (f"<details class=dbg open data-t=debug><summary>{cap(f"როგორ ვიპოვეთ · {len(results)} შედეგი · {debug['seconds']['total']} წმ")}</summary>"
+    body += (f"<details class=dbg open data-t=debug><summary>{cap(f"როგორ ვიპოვეთ{' · ამოძირკვა' if deep else ''} · {len(results)} შედეგი · {debug['seconds']['total']} წმ")}</summary>"
              f"<div>საძიებო სიტყვები: {escape(' · '.join(debug['content']))}</div>"
              f"<div>კითხვა: {QUESTION.get(debug['type'], 'არა')}</div>"
              f"<div>მართლწერა: {escape(', '.join(f'{a} → {b}' for a, b in debug['spelling'].items()) or 'არ შეცვლილა')}</div>"
@@ -469,7 +478,7 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
                        for n, v in qs.items())
              + "</table></div></details>")
     if tab == "all" and not chosen:
-        body += _all_tab(q, results, marks, debug["key"])
+        body += _all_tab(q, results, marks, debug["key"], deep)
     else:
         where = f"filter:{next(iter(chosen))}" if chosen else f"tab:{tab}"
         body += "".join(_result(r, marks, debug["key"], q, where) for r in results if passes(r, chosen)) or "<p class=m>ამ ფილტრით შედეგი არ არის.</p>"
@@ -966,7 +975,8 @@ class Handler(BaseHTTPRequestHandler):
         """A new search needs a free place (MAX_SEARCHES), else the visitor gets the busy page at once."""
         route, params = self._begin()
         q = params.get("q", [""])[0].strip()
-        new_search = route == "/" and bool(q) and q not in _cache
+        deep = params.get("deep", [""])[0] == "1"
+        new_search = route == "/" and bool(q) and (q + DEEP_KEY if deep else q) not in _cache
         if new_search and not _searches.acquire(blocking=False):
             self._log("busy", q)
             return self._send(_page("", busy_page(self.path), BUSY_SECONDS), 503)
@@ -1027,18 +1037,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(_page("", body))
         tab = p("tab", "all") if p("tab", "all") in TABS else "all"
         chosen = {f for f in params.get("f", [])[:1] if f in FILTERS}  # one filter at a time
-        fresh = q not in _cache
+        deep = p("deep") == "1"
+        key = q + DEEP_KEY if deep else q
+        fresh = key not in _cache
         if fresh:
             t = time.time()
-            qs, results, debug = _on_worker(lambda: search(q))  # the meaning model runs on the worker only
+            qs, results, debug = _on_worker(lambda: search(q, deep))  # the meaning model runs on the worker only
             debug["seconds"]["total"] = round(time.time() - t, 1)  # with the wait for searches before it
-            _cache[q] = (qs, results, debug)
-        qs, results, debug = _cache[q]
+            _cache[key] = (qs, results, debug)
+        qs, results, debug = _cache[key]
         body = render(q, tab, chosen, qs, results, debug)
         if self.session:
             _last_view[self.session] = time.time()
         top = main_list(results)[:10]
-        self._log("search", q, fresh=fresh, tab=tab, f=next(iter(chosen), ""), n=len(results),
+        self._log("search", q, fresh=fresh, deep=deep, tab=tab, f=next(iter(chosen), ""), n=len(results),
                   sec=debug["seconds"]["total"], intent=debug.get("intent"), type=debug.get("type"),
                   fixed=bool(debug["spelling"]), dym=bool(debug.get("did_you_mean")), answer=bool(debug.get("answer")),
                   definition=bool(debug.get("definition")), feedback=bool(debug["feedback"]),

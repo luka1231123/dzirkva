@@ -79,13 +79,14 @@ def _block(engine: str) -> None:
 
 # ---- engines ------------------------------------------------------------
 
-async def searxng(client: httpx.AsyncClient, query: str) -> list[dict]:
-    """Google + Yandex + Yahoo through the local SearXNG (without Google while it is paused)."""
+async def searxng(client: httpx.AsyncClient, query: str, page: int = 1) -> list[dict]:
+    """Google + Yandex + Yahoo through the local SearXNG (without Google while it is paused). page: 2, 3 … for deep search."""
     use = [e for e in SEARXNG_ENGINES if not blocked(e)]
-    key = f"searxng|{','.join(use)}|{query}"
+    key = f"searxng|{','.join(use)}|{query}" + (f"|{page}" if page > 1 else "")
     if (hit := _cached("searxng", key)) is not None:
         return hit
-    r = await client.get(SEARXNG_URL, params={"q": query, "format": "json", "engines": ",".join(use)}, timeout=15)
+    r = await client.get(SEARXNG_URL, params={"q": query, "format": "json", "engines": ",".join(use), "pageno": page},
+                         timeout=15)
     r.raise_for_status()
     data = r.json()
     failed = {e for e, error in data.get("unresponsive_engines", []) if BLOCKING.search(error)}
