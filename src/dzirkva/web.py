@@ -169,7 +169,8 @@ th{font-size:11px;color:var(--muted);text-align:left;font-weight:600;padding:2px
 .sess{font-size:12.5px;margin:10px 0;padding-top:8px;border-top:1px solid var(--line)} .sess div{margin:2px 0}
 .cite code{display:block;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--line);
  border-radius:8px;font:12.5px/1.6 "Noto Serif Georgian",Georgia,serif;color:var(--text);user-select:all}
-@media (max-width:520px){.r .t{font-size:17px} .ans,.blk,.dbg{padding:12px 14px;border-radius:10px}}
+@media (max-width:520px){.r .t{font-size:17px} .ans,.blk,.dbg{padding:12px 14px;border-radius:10px}
+ form{flex-wrap:wrap;min-width:100%} input{flex-basis:100%} button{flex:1}}
 """
 
 
