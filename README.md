@@ -1,58 +1,298 @@
-# dzirkva (ძირკვა)
+# ძირკვა (dzirkva)
 
-A search engine for the Georgian web, made for study and for exploring. It shows only Georgian results.
-Search time uses no LLM and no paid tokens: only code and a free local model (BGE-M3).
+ქართული საძიებო სისტემა სწავლისა და ქართული ვების აღმოჩენისთვის. ის მხოლოდ ქართულ შედეგებს აჩვენებს.
 
-## What it does
+ძირკვა ეძებს ტექსტს, რომელიც ადამიანმა დაწერა: პირად ბლოგებს, სამეცნიერო ნაშრომებს, ვიკიპედიის წყაროებს,
+დახურული ქართული საიტების ძველ ასლებს და ხელით შერჩეულ სანდო საიტებს.
+ძიების დროს ენის დიდი მოდელი (LLM) და ფასიანი ტოკენები არ გამოიყენება: მხოლოდ კოდი და ერთი უფასო ლოკალური
+მოდელი (BGE-M3).
 
-- **Search**: meta-search (Google, Yandex and Yahoo through a local SearXNG; the Brave API) plus our own indexes:
-  Georgian Wikipedia (174k articles), Wikisource (6k texts), our own crawl (360k pages on 864 Georgian sites),
-  the old web from the Internet Archive, the National Library catalog Iverieli (246k records) and 29k papers
-  from 29 Georgian journals and university repositories.
-- **Georgian language layer**: spelling in context, Latin letters to Georgian (`kartuli` → `ქართული`),
-  word forms and word families, a dictionary box for "X რას ნიშნავს".
-- **Ranking**: engine rank + meaning (BGE-M3) + trusted sources (`config/sources.yaml`) + word coverage.
-  What a query wants (`config/intents.yaml`) adds sites made for that need.
-- **Research**: papers show authors · year · journal, the abstract, a PDF link and a citation line.
-  `დისერტაცია`, `სტატია` or `მონოგრაფია` in a query puts that type of paper first. Filter chip: სამეცნიერო.
-- **Surfing**: `/site?h=host` (what a site is, its newest pages, similar sites, links in and out, old copies),
-  `/discover` (new posts of the small web, old-web finds, new papers, sites by topic), `/random` (a small site).
-  Three finds of the day on the home page, which also shows how dzirkva finds text that people wrote
-  (signs: small web, research, Wikipedia citations, old web, trusted sites, earlier clicks), when it helps and
-  how to use it; `/about`: the exact rules, how it can grow, sources, licenses.
-- **Telemetry**: every search, tab, filter, click and page view goes to `data/telemetry.db`, without IP addresses;
-  `/stats` shows it (only on this computer, or with `?key=` and `STATS_KEY` in `.env`).
+ეს პატარა პროექტია. მთავარი წესი: სიმარტივე.
 
-## Run
+## შინაარსი
+
+1. [რას აკეთებს](#რას-აკეთებს)
+2. [როგორ მუშაობს ძიება](#როგორ-მუშაობს-ძიება)
+3. [წყაროები და ინდექსები](#წყაროები-და-ინდექსები)
+4. [ადამიანის ტექსტის ნიშნები](#ადამიანის-ტექსტის-ნიშნები)
+5. [გვერდები](#გვერდები)
+6. [დაყენება და გაშვება](#დაყენება-და-გაშვება)
+7. [მონაცემების აგება](#მონაცემების-აგება)
+8. [კოდის სტრუქტურა](#კოდის-სტრუქტურა)
+9. [კონფიგურაცია](#კონფიგურაცია)
+10. [კონფიდენციალურობა და ტელემეტრია](#კონფიდენციალურობა-და-ტელემეტრია)
+11. [მდგომარეობა](#მდგომარეობა)
+12. [ლიცენზიები](#ლიცენზიები)
+
+## რას აკეთებს
+
+- **მეტაძიება.** ძირკვა ეკითხება Google-ს, Yandex-ს და Yahoo-ს ლოკალური SearXNG-ის გავლით და Brave Search API-ს.
+  ამას ემატება ჩვენი ინდექსები: ვიკიპედია, ვიკიწყარო, ჩვენი ქრაულერი, ძველი ვები, ივერიელი და სამეცნიერო ნაშრომები.
+- **ქართული ენის ფენა.** მართლწერის გასწორება კონტექსტში, ლათინური ასოები ქართულად (`kartuli` → `ქართული`),
+  სიტყვის ფორმები და სიტყვის ოჯახი, სინონიმები, ლექსიკონის პასუხი შეკითხვაზე „X რას ნიშნავს“.
+- **რიგი.** საძიებო სისტემის ადგილი + აზრობრივი მსგავსება (BGE-M3) + სანდო წყარო + შეკითხვის სიტყვების დაფარვა.
+  ერთი ტექსტის ასლები ერთ შედეგად ჯგუფდება.
+- **კვლევა.** ნაშრომს აქვს ავტორები, წელი, ჟურნალი, ანოტაცია, PDF-ის ბმული და ციტირების სტრიქონი.
+  სიტყვა `დისერტაცია`, `სტატია` ან `მონოგრაფია` შეკითხვაში ამ ტიპის ნაშრომებს პირველ ადგილზე აყენებს.
+- **ვებში მოგზაურობა.** საიტის პროფილი, პატარა ვების ახალი პოსტები, ძველი ვების მიგნებები, შემთხვევითი საიტი.
+- **ტელემეტრია IP მისამართის გარეშე.** ყოველი ძიება და დაწკაპება ინახება `data/telemetry.db`-ში; `/stats` აჩვენებს მას.
+
+## როგორ მუშაობს ძიება
+
+ძიების კოდი არის `src/dzirkva/search.py`. ერთი ძიება ასე მიდის:
+
+1. **შეკითხვის წაკითხვა.** Unicode NFC, მთავრული → მხედრული, AcadNusx და ლათინური კლავიატურა → ქართული.
+   იშვიათ სიტყვას ძირკვა ასწორებს მხოლოდ მაშინ, როცა ხმით მსგავსი ან კლავიშის შეცდომის სიტყვა
+   `vocab.tsv`-ში 20-ჯერ უფრო ხშირია. სწორ ვარიანტს ირჩევს ვიკიპედიაში სხვა სიტყვებთან ერთად გამოჩენით.
+2. **სიტყვის ფორმები.** `morph.py` სიტყვის ფორმას ლექსიკონის ფორმად აქცევს (ჯერ ლექსიკონით, შემდეგ გრამატიკის
+   წესებით): არსებითის 7 ბრუნვა, თანდებულები, მრავლობითი, ზმნის წინსართი, პირი, ქცევა, მწკრივი.
+   სიზუსტე UniMorph-ით: არსებითი 100%, ზედსართავი 96%, ზმნა 88%.
+3. **რა სჭირდება შეკითხვას.** `config/intents.yaml`-ში 50 მიზანია (ამინდი, ვალუტა, სამსახური, ფილმი, კვლევა …).
+   მოგებული მიზანი ამატებს ერთ `site:` შეკითხვას და ბონუსს რიგში.
+   თუ შეკითხვა საიტს ასახელებს, ამ საიტის გვერდები მაღლა დგება.
+4. **პირველი რაუნდი.** SearXNG და Brave (ერთი ფასიანი გამოძახება ძიებაზე) და ლოკალური ინდექსები ერთდროულად.
+   თითოეულ შედეგს ქართული ასოების წილი უნდა ჰქონდეს 30%-ზე მეტი, თორემ შედეგი არ ჩანს.
+5. **აზრით ძიება.** BGE-M3 შეკითხვას ერთხელ აქცევს ვექტორად. ვიკიპედიის, ვიკიწყაროს და ნაშრომების აბზაცებს
+   ვექტორები წინასწარ აქვთ გამოთვლილი (`passages.db`, ~872 ათასი აბზაცი).
+6. **მეორე რაუნდი.** თუ პირველი ათიდან 5-ზე ნაკლებს აქვს შეკითხვის ყველა სიტყვა, ძირკვა კარგი შედეგებიდან
+   იშვიათ სიტყვებს იღებს და მეორედ ეძებს.
+7. **რიგი.** ქულა = საძიებო სისტემის ადგილი (RRF) + აზრი + სანდოობის დონე + დაფარვა + ადამიანის ტექსტის ნიშნები
+   + ადრე არჩეული გვერდები. ერთი საიტი მთავარ სიაში მაქსიმუმ ორჯერ ჩანს.
+8. **პასუხის ბლოკები.** ვიკიპედიის სტატია (შეკითხვა სტატიის სათაურს ასახელებს), ლექსიკონი (ka.wiktionary),
+   მსგავსი ძიებები.
+9. **ყველაფერი ჩანს.** ყოველი შედეგის ქვეშ ჩანს ქულის მიზეზი; პანელი „როგორ ვიპოვეთ“ აჩვენებს ყველა ნაბიჯს.
+
+ჩანართები: **ყველა**, **ვიდეო**, **სიახლეები**. ფილტრები: ცოდნა, ტექსტები, ხალხი, სამეცნიერო, ძველი ვები, პატარა ვები.
+
+ცნობილი შეზღუდვა: კითხვები, რომლებსაც ცოდნა სჭირდება და არა ტექსტის მოძებნა
+(„ვინაა ყველაზე ჩქარი მორბენალი“), ხშირად ვერ პასუხობს.
+
+## წყაროები და ინდექსები
+
+| წყარო | ფაილი | ზომა | მოდული |
+|---|---|---|---|
+| ქართული ვიკიპედია (FTS5) | `data/wiki.db` | 174 ათასი სტატია | `wiki.py` |
+| ვიკიწყარო | `data/wikisource.db` | 6 ათასი ტექსტი | `wiki.py` |
+| ვიქსიკონი (ka.wiktionary) | `data/dictionary.db` | 8 ათასზე მეტი სიტყვა | `dictionary.py` |
+| ჩვენი ქრაულერი | `data/crawl.db` | 360 ათასი გვერდი, 864 საიტი | `crawl.py` |
+| ძველი ვები (Internet Archive) | `data/archive.db` | ვიკიპედიაში ციტირებული დახურული საიტები | `archive.py` |
+| ივერიელი (ეროვნული ბიბლიოთეკა) | `data/iverieli.db` | 601 ათასი ჩანაწერი | `iverieli.py` |
+| სამეცნიერო ნაშრომები (OAI-PMH) | `data/papers.db` | 29 ათასი ნაშრომი, 29 ჟურნალი და რეპოზიტორია | `papers.py` |
+| აბზაცების ვექტორები | `data/passages.db` | ~872 ათასი აბზაცი | `passages.py`, `meaning.py` |
+| RSS არხები | `data/feeds.db` | ბლოგების ახალი პოსტები | `discover.py` |
+| სანდო საიტები | `config/sources.yaml` | 101 საიტი, 15 კატეგორია, 3 დონე | `sources.py` |
+
+სანდოობის დონეები: 1 = ოფიციალური, სამეცნიერო, საცნობარო; 2 = ჟურნალისტიკა, ინსტიტუტები, საზოგადოებები;
+3 = სიები და ყვითელი პრესის სტილი. კომერციული საიტები (ბანკები, მაღაზიები, აფთიაქები) სიაში არ არის.
+
+## ადამიანის ტექსტის ნიშნები
+
+შედეგს ჭდე ემატება, როცა არის ნიშანი, რომ ადამიანმა დაწერა ან აირჩია გვერდი. ყოველი ნიშანი ქულას ზრდის.
+
+| ჭდე | წესი |
+|---|---|
+| პატარა ვები | პირადი საიტი ან ბლოგი: ავტორი პირველ პირში წერს („მე“, „ჩემი“, „მახსოვს“), არა კომპანიის ან სააგენტოს ენით, და მაღაზია არ აქვს. ქულები: `data/voice.db` |
+| სამეცნიერო | ჟურნალი ან უნივერსიტეტის რეპოზიტორია (OAI-PMH), `.edu` ან `.ac.ge` საიტი, ივერიელი |
+| ვიკიპედიის წყარო | გვერდს ციტირებს ვიკიპედიის სტატია, რომელიც შეკითხვასთან ყველაზე ახლოს დგას |
+| ძველი ვები | დახურული ქართული საიტის ასლი ინტერნეტ-არქივიდან; ჭდეზე ასლის წელია |
+| სანდო წყარო | საიტი `config/sources.yaml`-დან (დონე 1 ან 2) |
+| ადრე არჩეული | ამავე კითხვაზე სხვებმა ეს გვერდი აირჩიეს (`data/clicks.db`); დაწკაპება არ ითვლება, თუ 30 წამში სხვა მოჰყვა |
+
+## გვერდები
+
+| მისამართი | რას აჩვენებს |
+|---|---|
+| `/` | საძიებო ველი, როგორ პოულობს ძირკვა ადამიანის ტექსტს, მაგალითები, ინდექსების ზომა, დღის 3 მიგნება |
+| `/?q=…` | შედეგები |
+| `/about` | ზუსტი წესები, რას აშორებს, როგორ შეიძლება გაიზარდოს, წყაროები და ლიცენზიები, რას ვინახავთ |
+| `/site?h=host` | საიტის პროფილი: ტიპი, ახალი გვერდები, ბმულები შიგნით და გარეთ, მსგავსი საიტები, ძველი ასლები |
+| `/discover` | პატარა ვების ახალი პოსტები, ძველი ვები, ახალი ნაშრომები, საიტები თემების მიხედვით |
+| `/random` | შემთხვევითი პატარა საიტი |
+| `/stats` | ტელემეტრია (მხოლოდ ამ კომპიუტერიდან, ან `?key=` + `STATS_KEY`) |
+| `/go` | გარე ბმულზე გადასვლა HMAC ხელმოწერით (ღია გადამისამართება არ არის) |
+
+## დაყენება და გაშვება
+
+საჭიროა: macOS ან Linux, Python 3.12, [uv](https://docs.astral.sh/uv/), git.
+GPU სასურველია BGE-M3-ისთვის (CUDA ან Apple MPS); CPU-ზეც მუშაობს, მაგრამ ნელა.
+
+1. პროექტის დამოკიდებულებები:
+
+   ```bash
+   uv sync
+   ```
+
+2. SearXNG წყაროდან, საკუთარი venv-ით (`vendor/` git-ში არ არის):
+
+   ```bash
+   git clone https://github.com/searxng/searxng vendor/searxng
+   cd vendor/searxng && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-server.txt && .venv/bin/pip install --no-build-isolation -e .
+   ```
+
+3. ფაილი `.env` პროექტის ძირში:
+
+   ```bash
+   BRAVE_API_KEY=...        # Brave Search API გასაღები
+   SEARXNG_SECRET=...       # ნებისმიერი გრძელი შემთხვევითი სტრიქონი
+   ```
+
+4. SearXNG-ის გაშვება (http://127.0.0.1:8888, ლოგი `data/searxng.log`):
+
+   ```bash
+   ./scripts/searxng.sh
+   ```
+
+5. საძიებო გვერდის გაშვება (http://127.0.0.1:8000):
+
+   ```bash
+   uv run python -m dzirkva.web
+   ```
+
+BGE-M3 პირველად ~2 GB-ს ჩამოტვირთავს `~/.cache/huggingface`-ში; ჩატვირთვას ~5 წამი სჭირდება.
+ინდექსების გარეშე ძირკვა მხოლოდ მეტაძიებით მუშაობს. ინდექსების აგება ქვემოთაა.
+
+სატესტო ბრძანებები:
 
 ```bash
-./scripts/searxng.sh                 # SearXNG at http://127.0.0.1:8888 (engines: google, yandex, yahoo)
-uv run python -m dzirkva.web         # the search page at http://127.0.0.1:8000
+uv run python -m dzirkva.search ქართული ანბანი   # ძიება ტერმინალში
+uv run python -m dzirkva.engines ქუთაისი         # მხოლოდ საძიებო სისტემები
+uv run python -m dzirkva.morph წიგნებში წავიკითხე # სიტყვის ლექსიკონის ფორმა
+uv run python scripts/check_morph.py             # გრამატიკის სიზუსტე UniMorph-ით
+uv run python scripts/check_sources.py           # სანდო საიტები ცოცხალია?
 ```
 
-`.env` needs `BRAVE_API_KEY` and `SEARXNG_SECRET`. Optional: `PORT` (8000), `MAX_SEARCHES` (3 new searches at a
-time; more visitors get a busy page), `BRAVE_DAILY_LIMIT` / `BRAVE_MONTHLY_LIMIT` (20 / 300 paid Brave calls; 0 turns
-Brave off), `STATS_KEY` (opens `/stats` through a tunnel). All data lives in `data/` (not in git).
-`CLAUDE.md` lists every build step and module.
+## მონაცემების აგება
 
-## Data pipeline
+ყველა მონაცემი არის `data/`-ში (git-ში არ არის). ფონური სკრიპტები განახლებადია: იგივე ბრძანება იქიდან აგრძელებს,
+სადაც გაჩერდა.
 
-| Data | Built by | Run again |
+### ენა და ვიკიპედია
+
+1. ჩამოტვირთეთ `data/`-ში:
+   - `kawiki-latest-pages-articles.xml.bz2` → `kawiki.xml.bz2`
+   - kaikki.org-ის ქართული JSONL → `kaikki-ka.jsonl`
+   - unimorph/kat → `unimorph-kat.tsv`
+   - `kawikisource-latest-pages-articles.xml.bz2` → `kawikisource.xml.bz2`
+   - ka.wiktionary-ის dump → `kawiktionary.xml.bz2`
+2. გაუშვით თანმიმდევრობით:
+
+   ```bash
+   uv run python scripts/build_words.py              # სიტყვის ფორმები და სიხშირე → words.tsv
+   uv run python scripts/build_lexicon.py            # ფორმა → ლექსიკონის ფორმა → lexicon.tsv, synonyms.tsv
+   uv run python scripts/build_wiki_index.py         # → wiki.db (~1 წთ)
+   uv run python scripts/build_wiki_index.py wikisource   # → wikisource.db
+   uv run python scripts/build_dictionary.py         # → dictionary.db (~10 წმ)
+   uv run python scripts/build_titles.py             # სათაურების ვექტორები → titles.npy, titles.tsv (~4 წთ GPU)
+   ```
+
+3. მართლწერის სიტყვების სია: ჩადეთ `data/wordlists/`-ში Leipzig `kat-ge_web_2019_1M` და `kat_newscrawl_2016_1M`
+   (`*-words.txt`) და gamag/ka_GE.spell (`bumbeishvili.txt`, `crubadan.txt`), შემდეგ:
+
+   ```bash
+   uv run python scripts/build_vocab.py              # → vocab.tsv (~30 წმ; გაუშვით თავიდან ქრაულის შემდეგ)
+   ```
+
+### საიტები და ქრაულერი
+
+```bash
+uv run python scripts/build_sites.py      # საიტების სახელები Wikidata-დან → sites.tsv (~2 წთ)
+uv run python scripts/cc_hosts.py         # ქართული საიტების ენა Common Crawl-დან → cc_hosts.db
+nohup uv run python scripts/crawl_sites.py > data/crawl.log 2>&1 &      # ქრაულერი → crawl.db
+uv run python scripts/score_small_web.py  # პატარა ვების ქულები → voice.db (~1 წთ)
+uv run python scripts/feeds.py            # RSS → feeds.db (~2 წთ; ყოველდღე)
+nohup uv run python scripts/archive_collect.py > data/archive.log 2>&1 &  # ძველი ვები → archive.db
+```
+
+ქრაულერი იცავს `robots.txt`-ს, ერთ საიტს წამში ერთხელ მიმართავს და ტექსტს trafilatura-თი იღებს.
+ახალ საიტს მთლიანად მხოლოდ მაშინ აგროვებს, თუ მისი გვერდები ქართულია და ის მაღაზია არ არის.
+
+### კვლევა და ბიბლიოთეკა
+
+```bash
+uv run python scripts/find_repos.py       # ქართული OAI-PMH რეპოზიტორიების ძებნა (~15 წთ)
+nohup uv run python scripts/papers_collect.py > data/papers.log 2>&1 &          # ნაშრომების აღწერები → papers.db
+nohup uv run python scripts/papers_text.py > data/papers_text.log 2>&1 &        # PDF-ის ტექსტი → passages.db
+nohup uv run python scripts/iverieli_collect.py > data/iverieli.log 2>&1 &      # ივერიელის კატალოგი (~4 სთ)
+nohup uv run python scripts/iverieli_text.py > data/iverieli_text.log 2>&1 &    # 5 MB-მდე PDF-ების ტექსტი
+nohup uv run python scripts/build_passages.py > data/passages.log 2>&1 &        # აბზაცების ვექტორები
+```
+
+`scripts/watchdog.sh` თავიდან უშვებს `build_passages.py`-ს, თუ ლოგი 10 წუთი არ იცვლება.
+
+## კოდის სტრუქტურა
+
+```
+src/dzirkva/
+  search.py      ძიების მთელი გზა: ვარიანტები, რაუნდები, რიგი, ასლების ჯგუფი
+  web.py         ვებ-გვერდი (მხოლოდ სტანდარტული ბიბლიოთეკა, http.server)
+  engines.py     SearXNG და Brave კლიენტები, ქეში (cache.db), Google-ის პაუზა CAPTCHA-ს შემდეგ
+  georgian.py    ნორმალიზაცია, ლათინური → ქართული, მართლწერა, ქართული ასოების წილი
+  morph.py       სიტყვის ფორმა → ლექსიკონის ფორმა და სიტყვის ოჯახი, სინონიმები
+  meaning.py     BGE-M3 მსგავსება (fp16), შედეგების ვექტორების ქეში (vectors.db)
+  passages.py    აბზაცების ინდექსი და ვექტორები
+  wiki.py        ვიკიპედიისა და ვიკიწყაროს ლოკალური ინდექსი
+  dictionary.py  ლექსიკონის პასუხი ვიქსიკონიდან
+  crawl.py       ჩვენი ქრაული, პატარა ვების წესები
+  archive.py     ძველი ვები, AcadNusx/LitNusx ფონტები → Unicode
+  papers.py      სამეცნიერო ნაშრომები (OJS, DSpace, EPrints)
+  iverieli.py    ეროვნული ბიბლიოთეკის კატალოგი
+  discover.py    საიტის პროფილი, ახალი პოსტები, თაროები
+  sources.py     სანდო საიტები, დასახელებული საიტები
+  clicks.py      არჩეული გვერდები
+  telemetry.py   მოვლენები, /stats
+config/          sources.yaml, intents.yaml, searxng.yml, easter_eggs.yaml
+scripts/         მონაცემების აგება და შემოწმება
+```
+
+კოდი მცირეა: `src/` ~3,900 სტრიქონი. ტესტების ნაკრები არ არის; ხარისხს ამოწმებს შეფასების სკრიპტი
+პირად შეკითხვებზე (`eval/`, git-ში არ არის).
+
+## კონფიგურაცია
+
+`.env`-ის ცვლადები:
+
+| ცვლადი | ნაგულისხმევი | მნიშვნელობა |
 |---|---|---|
-| Wikipedia, Wikisource indexes | `scripts/build_wiki_index.py` | after a new dump |
-| Meaning vectors (`passages.db`) | `scripts/build_passages.py` | after new passages |
-| Own crawl (`crawl.db`) | `scripts/crawl_sites.py` (runs all the time) | resumable |
-| Small web (`voice.db`), feeds (`feeds.db`) | `scripts/score_small_web.py`, `scripts/feeds.py` | after crawling; feeds daily |
-| Papers (`papers.db`) | `scripts/find_repos.py`, then `scripts/papers_collect.py` | new repositories: both |
-| Paper full text | `scripts/papers_text.py`, then `build_passages.py` | resumable |
-| Iverieli catalog and text | `scripts/iverieli_collect.py`, `scripts/iverieli_text.py` | resumable |
-| Old web (`archive.db`) | `scripts/archive_collect.py` | resumable |
+| `BRAVE_API_KEY` | (საჭიროა) | Brave Search API გასაღები |
+| `SEARXNG_SECRET` | (საჭიროა) | SearXNG-ის საიდუმლო; ასევე `/go`-ს HMAC გასაღების საფუძველი |
+| `PORT` | `8000` | ვებ-გვერდის პორტი |
+| `MAX_SEARCHES` | `3` | ახალი ძიებები ერთდროულად; შემდეგი სტუმარი ხედავს „დატვირთულია“ გვერდს |
+| `BRAVE_DAILY_LIMIT` | `20` | Brave-ის ფასიანი გამოძახებები დღეში; `0` გამორთავს Brave-ს |
+| `BRAVE_MONTHLY_LIMIT` | `300` | Brave-ის ფასიანი გამოძახებები თვეში |
+| `STATS_KEY` | (არ არის) | `/stats`-ს ხსნის სხვა კომპიუტერიდან (`?key=`) |
 
-## State (2026-09-23)
+ქეში: SearXNG-ის პასუხები 24 საათი, Brave-ის 7 დღე. CAPTCHA-ს შემდეგ Google 1-დან 24 საათამდე ისვენებს;
+Yandex და Yahoo აგრძელებენ.
 
-- Running: the crawler (`scripts/crawl_sites.py`).
-- Paused to limit downloads, resumable with the same command:
-  - paper PDFs: 11,028 of 17,124 read (`nohup uv run python scripts/papers_text.py > data/papers_text.log 2>&1 &`)
-  - Iverieli PDFs: 1,820 of 90,804 items read (`nohup uv run python scripts/iverieli_text.py > data/iverieli_text.log 2>&1 &`)
-- Check (private, not in git): `eval/` holds 100 test queries with saved Google results; `scripts/run_stress.py`
-  runs them through dzirkva.
+ფაილები `config/`-ში:
+
+- `sources.yaml`: სანდო საიტები, კატეგორია და დონე.
+- `intents.yaml`: რა სჭირდება შეკითხვას: სიტყვები → ამ საჭიროებისთვის შექმნილი საიტები.
+- `searxng.yml`: SearXNG-ის პარამეტრები; ძრავები google, yandex, yahoo (მიზეზები ფაილშია).
+- `easter_eggs.yaml`: შეკითხვა → ერთი მთავრული სტრიქონი შედეგების ზემოთ.
+
+## კონფიდენციალურობა და ტელემეტრია
+
+- IP მისამართი არ ინახება; წვდომის ლოგები გამორთულია.
+- ერთი ვიზიტის ნაბიჯებს აკავშირებს შემთხვევითი ქუქი, რომელიც 30 წუთში ქრება.
+- Do Not Track ან GPC სიგნალის დროს ქუქი არ იქმნება.
+- ბოტები ცალკე აღინიშნება; ჩანაწერები 180 დღეში იშლება.
+- გარე ბმულები `/go`-ს გავლით მიდის მხოლოდ HMAC ხელმოწერით, ასე რომ სხვა ვერ გამოიყენებს მას გადამისამართებისთვის.
+
+## მდგომარეობა
+
+2026-09-23:
+
+- ქრაულერი მუშაობს.
+- ჩამოტვირთვების შესაზღუდად გაჩერებულია (იგივე ბრძანება აგრძელებს):
+  - ნაშრომების PDF: წაკითხულია 11,028 / 17,124
+  - ივერიელის PDF: წაკითხულია 1,820 / 90,804
+- გეგმა და ჩამონათვალი: [`plan.md`](plan.md). ყველა მოდული და ბრძანება: [`CLAUDE.md`](CLAUDE.md).
+
+## ლიცენზიები
+
+- ვიკიპედია, ვიკიწყარო, ვიქსიკონი: CC BY-SA 4.0; ყოველ ამონარიდს ახლავს ბმული წყაროზე.
+- ნაშრომების აღწერები მოდის მათი OAI-PMH არხებიდან; ბმულები ორიგინალზე მიდის.
+- SearXNG: AGPL-3.0 (`vendor/`-ში, ამ რეპოზიტორიაში არ შედის).
+- BGE-M3: MIT.
+- ძირკვის კოდის ლიცენზია: ჯერ არ არის არჩეული.

@@ -1,7 +1,8 @@
-eval/queries.tsv
+eval/
 .env
 .venv/
 vendor/
 data/
 __pycache__/
 .DS_Store
+scripts/run_stress.py
