@@ -100,7 +100,7 @@ def search(words: list[str], limit: int = 20, site: str = "wikipedia") -> list[d
             "ORDER BY bm25(wiki, 10, 1) LIMIT ?", (expr, limit)).fetchall()
         if len(rows) >= 5 or len(words) == 1:
             break
-    return [{"url": prefix + quote(title.replace(" ", "_")), "title": f"{title} — {name}",
+    return [{"url": prefix + quote(title.replace(" ", "_")), "title": f"{title} · {name}",
              "snippet": snip, "engine": site} for title, snip in rows]
 
 

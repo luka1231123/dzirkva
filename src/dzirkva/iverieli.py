@@ -73,7 +73,7 @@ def search(words: list[str], limit: int = 10) -> list[dict]:
             continue
         series.add(key)
         meta = " · ".join(x for x in (typ, year, creator, publisher) if x)
-        out.append({"url": f"{BASE}/handle/{handle}", "title": f"{title} — ივერიელი",
+        out.append({"url": f"{BASE}/handle/{handle}", "title": f"{title.replace(' — ', ' / ')} · ივერიელი",
                     "snippet": f"{meta}. {desc[:250]}".strip(" ."), "engine": "iverieli"})
         if len(out) == limit:
             break

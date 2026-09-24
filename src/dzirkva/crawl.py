@@ -124,5 +124,5 @@ def search(words: list[str], limit: int = 20, urls: list[str] = ()) -> list[dict
             f"WHERE pages MATCH ?{only} ORDER BY bm25(pages, 0, 5, 0, 1) LIMIT ?", (expr, *urls, limit)).fetchall()
         if len(rows) >= 5 or len(words) == 1:
             break
-    return [{"url": url, "title": title or url, "snippet": f"{date} — {snip}" if date else snip, "engine": "crawl"}
+    return [{"url": url, "title": title or url, "snippet": f"{date} · {snip}" if date else snip, "engine": "crawl"}
             for url, title, date, snip in rows]

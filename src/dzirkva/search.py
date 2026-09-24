@@ -493,10 +493,10 @@ def related(content: list[str], base: str, terms: list[str], wiki_hits: list[dic
     wiki: narrower Wikipedia titles with every query word (თბილისის მეტრო → ღრმაღელე (თბილისის მეტრო));
     feedback: the query + a word the answer pages use; meaning: articles nearest in meaning (passages.py).
     """
-    strip = lambda t: t.removesuffix(" — ვიკიპედია")
+    strip = lambda t: t.removesuffix(" · ვიკიპედია")
     cands = [(strip(h["title"]), "wiki") for h in wiki_hits if coverage(h["title"], content) >= FEEDBACK_MIN_COVERAGE][:4]
     cands += [(f"{base} {t}", "feedback") for t in terms]
-    cands += [(strip(p["title"]), "meaning") for p in near if p["title"].endswith(" — ვიკიპედია")]  # not papers
+    cands += [(strip(p["title"]), "meaning") for p in near if p["title"].endswith(" · ვიკიპედია")]  # not papers
     seen = {normalize(" ".join(content)), normalize(answer["title"]) if answer else ""}
     out = []
     for q, source in cands:

@@ -1,4 +1,4 @@
-"""dzirkva and Google on the same Georgian queries: the numbers on the home page (web.VS_GOOGLE).
+"""dzirkva and Google on the same Georgian queries: an internal check (the site shows no such numbers).
 
 Usage: uv run python scripts/compare_google.py eval/stress100_dz8.jsonl
 Google: eval/stress100_google.json (saved result pages); dzirkva: a run of scripts/run_stress.py (All tab rules).

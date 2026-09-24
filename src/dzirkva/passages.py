@@ -135,7 +135,7 @@ def search(query: str, limit: int = 20) -> list[dict]:
         else:
             _, prefix, name = SITES[site]
             url = prefix + quote(title.replace(" ", "_"))
-        out.append({"url": url, "title": f"{title} — {name}",
+        out.append({"url": url, "title": f"{title} · {name}",
                     "snippet": text, "engine": "passages", "score": score})
         if len(out) == limit:
             break
