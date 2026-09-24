@@ -126,6 +126,7 @@ class Result:
     engines: set[str] = field(default_factory=set)
     hits: list[tuple[str, str, int]] = field(default_factory=list)  # (query name, engine, rank)
     copies: list["Result"] = field(default_factory=list)
+    vector: np.ndarray | None = None  # BGE-M3; wiki pages: their paragraph's stored vector (passages.best)
 
     @property
     def text(self) -> str:
@@ -405,11 +406,12 @@ def answer_vector(near: list[dict]):
 
 
 def wiki_snippets(results: list[Result], qv, content: list[str]) -> list[Result]:
-    """Wikipedia and Wikisource results show their paragraph nearest to the question, not the engine's snippet."""
+    """Wikipedia and Wikisource results show their paragraph nearest to the question, not the engine's snippet,
+    and keep its stored vector: two thirds of the results need no new embedding."""
     for r in results:
         if page := _wiki_page(r.url):
-            if text := passages.best(page[1], qv, page[0]):
-                r.snippet = text
+            if hit := passages.best(page[1], qv, page[0]):
+                r.snippet, r.vector = hit
                 r.coverage = coverage(r.text, content)
     return results
 
@@ -431,8 +433,9 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
     """Final order: fusion of the engine rank and the meaning rank.
 
     Meaning = similarity to the question; with an answer vector, the mean of both. Only the top
-    MEANING_TOP results in engine order get a vector (cached, meaning.cached_vectors); results below
-    rank 40 seldom reach the top 10, so they keep their engine rank as their meaning rank.
+    MEANING_TOP results in engine order get a vector (cached, meaning.cached_vectors; wiki pages have their
+    paragraph's vector already); results below rank 40 seldom reach the top 10, so they keep their engine rank
+    as their meaning rank.
     A Wikipedia or Wikisource page that only our local indexes found needs its title to be about the query
     (_title_fit): the body of a long article mentions every word somewhere (აფთიაქი ღამის → აღდგომის კუნძული).
     A query that wants a service (encyclopedia=False: a pharmacy, a flat) gets no such page high, however close
@@ -442,10 +445,13 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
     qtype = question_type(query)
     shape = re.compile(SHAPES[qtype][1]) if qtype else None
     top = results[:MEANING_TOP]
-    for r, v in zip(top, cached_vectors([r.text for r in top]) if top else []):
-        r.meaning = float(v @ qv)
+    new = [r for r in top if r.vector is None]
+    for r, v in zip(new, cached_vectors([r.text for r in new]) if new else []):
+        r.vector = v
+    for r in top:
+        r.meaning = float(r.vector @ qv)
         if answer is not None:
-            r.meaning = (r.meaning + float(v @ answer)) / 2
+            r.meaning = (r.meaning + float(r.vector @ answer)) / 2
     by_meaning = {id(r): i for i, r in enumerate(sorted(top, key=lambda r: r.meaning, reverse=True))}
     for i, r in enumerate(results):  # results are in engine order here
         fused = 1 / (RRF_K + i) + MEANING_WEIGHT / (RRF_K + by_meaning.get(id(r), i))
@@ -533,7 +539,8 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     topic = [w for w in content if not _lemmas(w) & intents()["research"]["words"]] or content
     kinds = {k for w in content for k in _lemmas(w) if k in papers.KIND_WORDS}
     lists.append(("papers", papers.search(topic, kinds=kinds)))
-    near = passages.search(query)                    # Wikipedia paragraphs nearest in meaning
+    qv = vectors([query])[0]
+    near = passages.search(query, qv=qv)             # Wikipedia paragraphs nearest in meaning
     lists.append(("passages", near))
     answer = wiki.article(content)
     wiki_hits = next(res for name, res in lists if name == "wikipedia")
@@ -546,7 +553,6 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
     key = click_key(content)
     clicked = clicks.good(key)
     lists.append(("cited", crawl.search(content, 10, cites) if cites else []))  # crawled pages the articles cite
-    qv = vectors([query])[0]
     # explanations (why/how): answer vector and feedback from the nearest paragraphs; names and facts: from
     # the covered snippets (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
     explain = question_type(query) in ANSWER_TYPES and bool(near)

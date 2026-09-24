@@ -86,7 +86,8 @@ def embed_text(title: str, text: str) -> str:
 
 @cache
 def _index():
-    """All vectors on the GPU (fp16, ~1 GB). Loaded once per process; passages built later need a restart."""
+    """All vectors in memory (fp16, ~1.8 GB), on the CPU: a torch fp16 dot product with all 872k takes ~20 ms, as fast
+    as the GPU, and the GPU memory stays free. Loaded once per process; passages built later need a restart."""
     import torch
 
     if not DB.exists():
@@ -96,32 +97,35 @@ def _index():
         return None
     ids = np.array([i for i, _ in rows])
     vecs = np.frombuffer(b"".join(v for _, v in rows), dtype=np.float16).reshape(-1, DIM)
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-    return ids, torch.from_numpy(vecs.copy()).to(device)
+    return ids, torch.from_numpy(vecs.copy())
 
 
-def best(title: str, qv, site: str = "wikipedia") -> str | None:
-    """The paragraph of one article nearest to the question vector (a better snippet than the engine's)."""
+def best(title: str, qv, site: str = "wikipedia") -> tuple[str, np.ndarray] | None:
+    """The paragraph of one article nearest to the question vector (a better snippet than the engine's) and its
+    vector: search ranks the page by it, no new embedding."""
     rows = _db().execute("SELECT text, v FROM passages WHERE title = ? AND site = ? AND v IS NOT NULL",
                          (title, site)).fetchall()
     if not rows:
         return None
     vecs = np.frombuffer(b"".join(v for _, v in rows), dtype=np.float16).reshape(-1, DIM).astype(np.float32)
-    return rows[int(np.argmax(vecs @ qv))][0]
+    i = int(np.argmax(vecs @ qv))
+    return rows[i][0], vecs[i]
 
 
-def search(query: str, limit: int = 20) -> list[dict]:
+def search(query: str, limit: int = 20, qv=None) -> list[dict]:
     """The paragraphs nearest to the question in meaning, best one per article (Wikipedia, Wikisource, Iverieli,
-    papers)."""
-    from dzirkva.meaning import _model
+    papers). qv: the question vector, when the caller has it already."""
+    import torch
+
+    from dzirkva.meaning import vectors
     from dzirkva.wiki import SITES
 
     index = _index()
     if index is None:
         return []
     ids, vecs = index
-    q = _model().encode([query], normalize_embeddings=True, convert_to_tensor=True).to(vecs)
-    scores, top = (vecs @ q[0]).topk(min(limit * 4, len(ids)))
+    q = torch.as_tensor(vectors([query])[0] if qv is None else qv).to(vecs)
+    scores, top = (vecs @ q).topk(min(limit * 4, len(ids)))
     db = _db()
     out, seen = [], set()
     for score, i in zip(scores.tolist(), top.tolist()):

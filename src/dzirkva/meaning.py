@@ -24,8 +24,8 @@ def _model():
 
     if not torch.backends.mps.is_available():
         m = SentenceTransformer(MODEL, device="cpu")
-    else:
-        m = SentenceTransformer(MODEL, device="mps").half()  # fp16: 3.8× faster, same vectors (0.9998)
+    else:  # fp16: 3.8× faster, same vectors (0.9998); loaded as fp16, since fp32 then .half() kept 2.3 GB of GPU memory
+        m = SentenceTransformer(MODEL, device="mps", model_kwargs={"dtype": torch.float16})
     m.max_seq_length = MAX_TOKENS
     return m
 
