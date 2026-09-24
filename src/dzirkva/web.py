@@ -20,6 +20,7 @@ import queue
 import random
 import re
 import secrets
+import sqlite3
 import threading
 import time
 from functools import cache
@@ -31,10 +32,11 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 import yaml
 
 from dzirkva.georgian import normalize
-from dzirkva import archive, clicks, crawl, discover, engines, iverieli, papers, passages, telemetry, wiki
+from dzirkva import archive, clicks, crawl, dictionary, discover, engines, iverieli, papers, passages, telemetry, wiki
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families
-from dzirkva.search import COPY_SIMILARITY, MIN_GEORGIAN, canonical_url, intents, search
+from dzirkva.georgian import KEEP_RATIO
+from dzirkva.search import COPY_SIMILARITY, MIN_GEORGIAN, ROUND1_GOOD, canonical_url, intents, search
 from dzirkva.sources import sources
 
 TABS = {"all": "ყველა", "video": "ვიდეო", "news": "სიახლეები"}
@@ -74,6 +76,7 @@ ARCHIVE_YEAR = re.compile(r"web\.archive\.org/web/(\d{4})")
 WAYBACK = re.compile(r"^https?://web\.archive\.org/web/[^/]+/")
 DATE_FIRST = re.compile(r"^(\d{4}-\d{2}-\d{2})\S* · ")  # crawl snippets start with the page date
 EGGS_FILE = Path(__file__).resolve().parents[2] / "config" / "easter_eggs.yaml"
+LEXICON = Path(__file__).resolve().parents[2] / "data" / "lexicon.tsv"  # word forms → dictionary form (morph.py)
 GO_KEY = hashlib.sha256(b"go" + (os.environ.get("SEARXNG_SECRET") or secrets.token_hex(16)).encode()).digest()
 FORWARDED = ("X-Forwarded-For", "Forwarded", "Cf-Connecting-Ip", "X-Real-Ip")  # the visit came through a tunnel
 MAX_SEARCHES = int(os.environ.get("MAX_SEARCHES", "3"))  # new searches running or waiting at a time
@@ -592,7 +595,11 @@ def _sizes() -> dict[str, int]:
             "papers": count(papers._db(), "SELECT count(*) FROM papers"),
             "repos": count(papers._db(), "SELECT count(*) FROM repos"),
             "archive": count(archive._db(), "SELECT count(*) FROM pages"),
-            "people": len(discover.people())}
+            "people": len(discover.people()),
+            "passages": count(passages._db(), "SELECT count(*) FROM passages"),
+            "dictionary": count(sqlite3.connect(dictionary.DB) if dictionary.DB.exists() else None,
+                                "SELECT count(*) FROM words"),
+            "forms": sum(1 for _ in open(LEXICON, encoding="utf-8")) if LEXICON.exists() else 0}
 
 
 def _thousands(n: int) -> str:
@@ -650,6 +657,53 @@ def busy_page(path: str) -> str:
             f"<a class=go href='{escape(path)}'>{cap('სცადეთ ახლავე')} →</a></div>")
 
 
+def _details() -> list[tuple[str, str, list[str]]]:
+    """How dzirkva works, step by step: (heading, text, example queries). Numbers come from the code and the indexes."""
+    n, k = _sizes(), _thousands
+    kd = lambda x: k(x).removesuffix("ი")  # before a dative noun: 508 ათას გვერდს
+    return [
+        ("შეკითხვის წაკითხვა",
+         "ლათინური ასოებით დაწერილს ძირკვა ქართულად კითხულობს: kartuli anbani იგივეა, რაც ქართული ანბანი. სიტყვას "
+         f"ასწორებს მხოლოდ მაშინ, თუ მსგავსი სიტყვა ქართულ ტექსტებში {KEEP_RATIO}-ჯერ უფრო ხშირია და პირველი შედეგებიც "
+         "ამას ადასტურებს. თუ დაწერილი სიტყვაც ნამდვილია, შედეგებს არ ცვლის და მხოლოდ გკითხავთ: „ხომ არ "
+         "გულისხმობდით“.", ["kartuli anbani", "ამინდი ბატუმში"]),
+        ("სიტყვის ყველა ფორმა",
+         f"ქართულ სიტყვას ბევრი ფორმა აქვს. ძირკვა {k(n['forms'])} ფორმის ლექსიკონით და გრამატიკის წესებით პოულობს "
+         "ყოველი სიტყვის ლექსიკონის ფორმას და ეძებს ორივეთი, როგორც დაწერეთ და ლექსიკონის ფორმით. ამიტომ ქუთაისში, "
+         "ქუთაისის და ქუთაისი ერთ სიტყვად ითვლება, შედეგში კი ყველა ფორმა ყვითლად ინიშნება.", ["ქუთაისის ისტორია"]),
+        ("რა გჭირდებათ",
+         f"ძირკვას {len(intents())} საჭიროების სია აქვს: ამინდი, კანონი, სკოლა, კვლევა, წიგნები, რელიგია და სხვა. "
+         "თითოეულს თავისი საიტები აქვს, და ძირკვა ამ საიტებზე ცალკეც ეძებს. თუ შეკითხვაში „დისერტაცია“ ან "
+         "„სტატია“ წერია, ნაშრომები წინ დგას და ამ ტიპის ნაშრომები პირველია.", ["ვეფხისტყაოსანი დისერტაცია"]),
+        ("სად ეძებს",
+         "ერთდროულად ეკითხება რამდენიმე საძიებო სისტემას და საკუთარ ინდექსებს: ქართულ ვიკიპედიას "
+         f"({k(n['wiki'])} სტატია), ვიკიწყაროს, ჩვენ მიერ შეგროვებულ {kd(n['crawl'])} გვერდს {n['sites']:,} საიტიდან, "
+         f"„ივერიელის“ {kd(n['iverieli'])} ჩანაწერს, {kd(n['papers'])} სამეცნიერო ნაშრომს და ძველი ვების ასლებს. "
+         "საძიებო სისტემების პასუხები ერთი დღე ინახება, ამიტომ იგივე ძიება მეორედ ბევრად სწრაფად ჩნდება.", []),
+        ("აზრით ძიება",
+         f"ადგილობრივი ენის მოდელი (BGE-M3) {kd(n['passages'])} აბზაცს ინახავს რიცხვების სახით: ვიკიპედიის, "
+         "ვიკიწყაროს, ნაშრომებისა და ბიბლიოთეკის ტექსტებს. შეკითხვაც ასეთ რიცხვებად იქცევა, და ძირკვა პოულობს "
+         "აბზაცს, რომელიც იგივეს სხვა სიტყვებით ამბობს. მოდელი ამ კომპიუტერზე მუშაობს და ფასიანი სერვისი არ "
+         "სჭირდება.", ["რატომ წითლდება მზე როცა ბნელდება"]),
+        ("რიგი",
+         "ყოველი შედეგი ქულას იღებს. ქულა იზრდება, თუ გვერდს რამდენიმე წყარო პოულობს, თუ აზრით ახლოსაა "
+         "შეკითხვასთან, თუ შეკითხვის ყველა სიტყვა აქვს (იშვიათი სიტყვა მეტს ითვლის), თუ სანდო საიტზეა, თუ ვიკიპედია "
+         f"მას ციტირებს, ან თუ პირადი საიტი ან ბლოგია. ერთ საიტს მთავარ სიაში {PER_SITE} ადგილი აქვს, ერთი და იგივე "
+         "ტექსტი ბევრ საიტზე კი ერთ შედეგად ჩანს.", ["თამარ მეფე"]),
+        ("მეორე რაუნდი",
+         f"თუ პირველი ათი შედეგიდან {ROUND1_GOOD}-ზე ნაკლებს აქვს შეკითხვის ყველა სიტყვა, ძირკვა საუკეთესო "
+         "შედეგებიდან იღებს იშვიათ სიტყვებს, რომლებსაც პასუხის გვერდები იყენებს, და მათით მეორედ ეძებს. ეს სიტყვები "
+         "შედეგებში ცისფრად ინიშნება.", []),
+        ("პასუხის ყუთები",
+         f"„X რას ნიშნავს“ ვიქსიკონის {n['dictionary']:,} სიტყვიდან განმარტებას და სინონიმებს აჩვენებს. თუ "
+         "შეკითხვა ვიკიპედიის სტატიის სახელია, სიის თავზე სტატიის პირველი წინადადებები ჩანს. ნაშრომს ახლავს "
+         "ავტორი, წელი, ჟურნალი, PDF და მზა ციტირება.", ["სიყვარული რას ნიშნავს"]),
+        ("ყველაფერი ჩანს",
+         "ყოველი შედეგის ქვეშ წერია, რომელმა წყარომ იპოვა და რომელ ადგილზე, რა სიტყვები დაემთხვა და რა ქულა მიიღო. "
+         "„როგორ ვიპოვეთ“ ველში ჩანს ყველა შეკითხვა, რაც ძირკვამ გაგზავნა, და თითოეულის დრო.", []),
+    ]
+
+
 def about_page() -> str:
     """How dzirkva works in detail: the signs of a person's text and their rules, what it pushes away, how it can grow,
     sources and their licenses, what telemetry stores."""
@@ -695,7 +749,9 @@ def about_page() -> str:
         "ქრაულერი ახალ საიტს მთლიანად მხოლოდ მაშინ აგროვებს, თუ მისი გვერდები ქართულია და ის მაღაზია არ არის.",
     ]
     return (f"<div class='ans hero'><div class=cap>{cap('ძირკვის შესახებ')}</div><span class=t>როგორ მუშაობს</span></div>"
-            + _block("ნაბიჯები", "<ol class=steps>" + "".join(f"<li>{s}</li>" for s in STEPS) + "</ol>")
+            + "".join(_block(head, f"<p>{escape(text)}</p>" + ("<div class=rel>" + "".join(
+                f"<a href='{_link(q, 'all', set(), 'example')}'>{escape(q)}</a>" for q in examples) + "</div>"
+                if examples else "")) for head, text, examples in _details())
             + _block("ადამიანის ტექსტის ნიშნები", "<ul class='list signs'>" + "".join(
                 f"<li>{_sign(k)} {escape(t)}</li>" for k, t in rules.items())
                      + "</ul><p>ყოველი ნიშანი ქულას ზრდის; ქულა და მიზეზი ჩანს ყოველი შედეგის ქვეშ.</p>")
