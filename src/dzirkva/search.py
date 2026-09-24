@@ -84,6 +84,7 @@ FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every q
 ROUND1_GOOD = 5         # round 1 is good when this many of its top 10 contain every query word: no round 2
 SITE_FREE = 2           # results per site before the site penalty (თბილისი: half the page was Wikipedia)
 SITE_PENALTY = 0.5      # × for each further result from the same site
+SITE_MAX = 5            # results per site at most, unless the query names the site (ჩამოლაბორანტება: 25 Wikipedia pages)
 VOICE_BONUS = 0.3       # × (1 + bonus × coverage) for people: small web, blogs, forums, social posts (ხალხი)
 COPY_SIMILARITY = 0.6   # word overlap (Jaccard) of two snippets that makes them copies
 # Question word → the shape of a text that answers it. A result with that shape gets SHAPE_BONUS.
@@ -478,18 +479,34 @@ def group_copies(results: list[Result]) -> list[Result]:
     return [k for k, _ in kept]
 
 
-def diversify(results: list[Result]) -> list[Result]:
-    """Many sites, not one: after SITE_FREE results from a site, each further one gets × SITE_PENALTY.
-    Wikipedia and Wikisource count as one site. People (small web, blogs, forums) get VOICE_BONUS when they
-    use the query words: institutions fill the top otherwise."""
+def _site(url: str) -> str:
+    """Site of a result for diversify: Wikipedia and Wikisource are one site, an archive copy is its old site."""
+    h = host(url)
+    if h == "web.archive.org" and (m := re.match(r"https?://web\.archive\.org/web/[^/]+/(.+)", url)):
+        h = host(m[1] if "://" in m[1] else "http://" + m[1])
+    return "wiki" if h in WIKI_HOSTS else h
+
+
+def diversify(results: list[Result], named_hosts: set[str] = frozenset()) -> list[Result]:
+    """Many sites, not one: after SITE_FREE results from a site, each further one gets × SITE_PENALTY,
+    and after SITE_MAX the rest go (not for a site the query names). People (small web, blogs, forums) get
+    VOICE_BONUS when they use the query words: institutions fill the top otherwise."""
     seen: Counter[str] = Counter()
     for r in results:
         if r.small or "people" in r.tags:
             r.score *= 1 + VOICE_BONUS * r.coverage
-        site = "wiki" if host(r.url) in WIKI_HOSTS else host(r.url)
+        site = _site(r.url)
         r.score *= SITE_PENALTY ** max(0, seen[site] - SITE_FREE + 1)
         seen[site] += 1
-    return sorted(results, key=lambda r: r.score, reverse=True)
+    results = sorted(results, key=lambda r: r.score, reverse=True)
+    kept: Counter[str] = Counter()
+    out = []
+    for r in results:
+        site = _site(r.url)
+        kept[site] += 1
+        if kept[site] <= SITE_MAX or host(r.url) in named_hosts:
+            out.append(r)
+    return out
 
 
 def related(content: list[str], base: str, terms: list[str], wiki_hits: list[dict], near: list[dict],
@@ -576,7 +593,7 @@ def search(query: str) -> tuple[dict[str, str], list[Result], dict]:
         lists += asyncio.run(fan_out(more))
         merged = merge(lists, content, cited, clicked, named_hosts, wanted)
         first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia, topic)
-    results = diversify(group_copies(first))
+    results = diversify(group_copies(first), named_hosts)
     for i, r in enumerate(results, 1):
         r.rank = i
     debug = {
