@@ -120,6 +120,10 @@ economy:
 
 community:            # people answering people
   forum.ge: 2
+  karavi.ge: 2                # hiking and travel forum (since 2003)
+  church.ge: 2                # Orthodox forum: faith, history, saints
+  compinfo.ge: 2              # computer help forum (compinfo.ge/forum)
+  forum.petstory.ge: 3        # pet owners' forum
 
 sport:
   gff.ge: 1
