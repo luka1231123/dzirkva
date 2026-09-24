@@ -27,7 +27,7 @@ from functools import cache
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse, urlsplit, urlunsplit
 
 import yaml
 
@@ -267,6 +267,16 @@ def _site_link(host: str, src: str = "") -> str:
 
 def _sig(url: str) -> str:
     return hmac.new(GO_KEY, url.encode(), hashlib.sha256).hexdigest()[:16]
+
+
+def _ascii_url(url: str) -> str:
+    """A Location header must be ASCII: a Georgian host (ამინდი.com) becomes punycode, other letters %XX."""
+    u = urlsplit(url)
+    try:
+        u = u._replace(netloc=u.netloc.encode("idna").decode())
+    except UnicodeError:
+        pass
+    return quote(urlunsplit(u), safe=":/?#[]@!$&'()*+,;=%~")
 
 
 def _out(url: str, where: str, **params) -> str:
@@ -1076,7 +1086,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _redirect(self, url: str) -> None:
         self.send_response(302)
-        self.send_header("Location", url)
+        self.send_header("Location", _ascii_url(url))
         self._cookie()
         self.end_headers()
 
