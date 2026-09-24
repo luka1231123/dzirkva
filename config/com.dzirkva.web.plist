@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The public page (scripts/serve.sh): starts at login, starts again after every exit.
+     Install: cp config/com.dzirkva.web.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.dzirkva.web.plist -->
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.dzirkva.web</string>
+    <key>ProgramArguments</key>
+    <array><string>/Users/rexvlapt/Programming/dzirkva/scripts/serve.sh</string></array>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>ThrottleInterval</key><integer>30</integer>
+    <key>ProcessType</key><string>Interactive</string>
+    <key>StandardOutPath</key><string>/Users/rexvlapt/Programming/dzirkva/data/web.log</string>
+    <key>StandardErrorPath</key><string>/Users/rexvlapt/Programming/dzirkva/data/web.log</string>
+</dict>
+</plist>

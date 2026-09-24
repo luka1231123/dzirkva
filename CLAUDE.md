@@ -11,6 +11,7 @@ Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source lis
 
 ## Commands
 - Start SearXNG: `./scripts/searxng.sh` (http://127.0.0.1:8888, log in `data/searxng.log`)
+- Public page service: launchd agent `com.dzirkva.web` (`config/com.dzirkva.web.plist` → `~/Library/LaunchAgents/`) runs `scripts/serve.sh` (SearXNG + web, log `data/web.log`): starts at login and after every exit, `caffeinate -s` (awake on AC power, sleeps on battery), one ntfy push to `NTFY_TOPIC` (`.env`) when the page does not answer in 5 min. Every `git push` restarts it (`.git/hooks/reference-transaction` → `launchctl kickstart -k gui/$(id -u)/com.dzirkva.web`)
 - Engine demo: `uv run python -m dzirkva.engines <query>`
 - Grammar demo: `uv run python -m dzirkva.morph <words>`; accuracy: `uv run python scripts/check_morph.py`
 - Rebuild data (in `data/`, gitignored): download `kawiki-latest-pages-articles.xml.bz2` → `kawiki.xml.bz2`,
