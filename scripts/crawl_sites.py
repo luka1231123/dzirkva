@@ -2,20 +2,22 @@
 
 Domains (table `domains`):
 - trusted (config/sources.yaml): full budget from the start.
-- discovered: hosts cited in Georgian Wikipedia (data/kawiki.xml.bz2, read once) and hosts linked from
-  crawled Georgian pages (table `links`). A new domain is probed: robots.txt, home page + 5 pages
+- discovered: hosts cited in Georgian Wikipedia (data/kawiki.xml.bz2, read once), Georgian hosts in
+  Common Crawl (data/cc_hosts.db, read once) and hosts linked from crawled Georgian pages (table `links`). A new domain is probed: robots.txt, home page + 5 pages
   (cited pages first). Full budget only if its pages are >30% Georgian and it is not commercial.
 Rules, no ML (signals in the HTML of each page, collected per domain):
 - commercial score: ad/tracker scripts 1, WooCommerce 2, shop page (3+ shop words on one page: კალათა, ყიდვა, ₾ …) 2
 - kind: academic (.edu, OJS or DSpace generator), blog (Blogger, WordPress, blogspot, RSS)
 Full domains: pages cited in Georgian Wikipedia first (outside the budget), then home page + sitemaps
-(newest first) each run, same-site links up to MAX_DEPTH, max PER_HOST new pages per run.
+(newest first) each run, same-site links up to MAX_DEPTH, max PER_HOST new pages per run for a trusted
+domain, PER_SITE for a discovered one (many sites before deep sites).
+A host that does not answer is tried ROBOTS_TRIES times, RETRY seconds apart, before it is rejected.
 Polite: robots.txt, one request per second per domain.
 Each domain runs as its own task, one page at a time; up to MAX_TASKS in flight. New domains
 are probed best first: .ge and blogs, then most linked.
 
 Run in the background:  nohup uv run python scripts/crawl_sites.py > data/crawl.log 2>&1 &
-More pages per site:    uv run python scripts/crawl_sites.py 10000
+More pages per trusted site: uv run python scripts/crawl_sites.py 10000
 Progress:               sqlite3 data/crawl.db "select state, kind, count(*) from domains group by 1, 2"
 """
 
@@ -24,6 +26,7 @@ import bz2
 import gzip
 import html
 import re
+import sqlite3
 import sys
 import time
 from collections import Counter
@@ -43,13 +46,17 @@ from dzirkva.sources import SOCIAL_HOSTS, VIDEO_HOSTS, sources  # noqa: E402
 from dzirkva.wiki import cited_on  # noqa: E402
 
 WIKI_DUMP = Path(__file__).resolve().parent.parent / "data" / "kawiki.xml.bz2"
+CC_HOSTS = WIKI_DUMP.with_name("cc_hosts.db")
 AGENT = "dzirkva-crawler/0.1 (Georgian search research; 1 req/s)"
-PER_HOST = int(sys.argv[1]) if len(sys.argv) > 1 else 2000
+PER_HOST = int(sys.argv[1]) if len(sys.argv) > 1 else 2000  # trusted domain
+PER_SITE = 200          # discovered domain
 PROBE = 6               # new domain: home page + 5 pages
+ROBOTS_TRIES = 3        # a host that does not answer: tries before it is rejected
+RETRY = 600             # seconds between the tries
 MAX_DEPTH = 3
 MAX_SITEMAPS = 30       # sitemap files read per site, newest first
-MAX_FULL = 300          # full domains started per step (least recent first)
-MAX_PROBES = 100        # new domains started per step (best first)
+MAX_FULL = 200          # full domains started per step (least recent first)
+MAX_PROBES = 200        # new domains started per step (best first)
 MAX_TASKS = 400         # pages in flight
 PAUSE = 1.0
 MIN_TEXT = 200
@@ -122,10 +129,13 @@ class Site:
         self.todo = 0           # pages waiting in the queue
         self.seeded = False     # full domain: home page and sitemaps queued in this run
         self.busy = False       # a page or the seeding is in flight
+        self.fails = 0          # robots.txt fetches without an answer in this run
 
     @property
     def budget(self) -> int:
-        return {"full": PER_HOST, "probe": PROBE}.get(self.state, 0)
+        if self.state == "full":
+            return PER_HOST if self.source == "trusted" else PER_SITE
+        return PROBE if self.state == "probe" else 0
 
     def priority(self) -> tuple:
         return (not (self.host.endswith(".ge") or BLOG_HOST.search(self.host)), -self.inbound)
@@ -189,6 +199,27 @@ def seed_wiki(db, sites: dict[str, Site]) -> None:
     print(f"wiki seeds: {sum(s.source == 'wiki' for s in sites.values()):,} domains", flush=True)
 
 
+def seed_cc(db, sites: dict[str, Site]) -> None:
+    """Hosts that write mostly Georgian in Common Crawl: probe = home page + a page CC saw.
+    A known host rejected with no page (it did not answer) is probed again."""
+    cc = sqlite3.connect(CC_HOSTS)
+    for host, url in cc.execute("SELECT host, url FROM hosts WHERE main > 0"):
+        key = domain_of(f"https://{host}/")
+        s = sites.get(key)
+        if s is None and not skip(key):
+            s = add_site(db, sites, key, "cc")
+        elif s is not None and s.state == "rejected" and s.pages == 0:
+            s.state = "probe"
+            db.execute("UPDATE queue SET status='todo' WHERE host=? AND status='dead'", (key,))
+            save(db, s)
+        else:
+            continue
+        enqueue(db, s, [f"https://{key}/"], 0)
+        enqueue(db, s, [url], 1)
+    db.commit()
+    print(f"cc seeds: {sum(s.source == 'cc' for s in sites.values()):,} new domains", flush=True)
+
+
 async def get(client: httpx.AsyncClient, url: str) -> httpx.Response | None:
     try:
         return await client.get(url)
@@ -204,16 +235,19 @@ async def load_robots(client: httpx.AsyncClient, site: Site) -> bool:
     if r is None:
         site.base = f"http://{site.host}"
         r = await get(client, f"{site.base}/robots.txt")
+    if r is None:  # read again on the next try
+        site.robots, site.base = None, f"https://{site.host}"
+        return False
     ok = r is not None and r.status_code == 200 and "html" not in r.headers.get("content-type", "")
     site.robots.parse(r.text.splitlines() if ok else [])
     site.delay = min(max(PAUSE, float(site.robots.crawl_delay(AGENT) or 0)), 30)
-    return r is not None
+    return True
 
 
 async def sitemap_urls(client: httpx.AsyncClient, site: Site, maps: list[str]) -> list[str]:
     """Page URLs from the site's sitemaps (and sitemap indexes), newest first by <lastmod>."""
     todo, seen, pages = list(maps), set(), {}
-    while todo and len(seen) < MAX_SITEMAPS and len(pages) < PER_HOST * 2:
+    while todo and len(seen) < MAX_SITEMAPS and len(pages) < site.budget * 2:
         url = todo.pop(0)
         if url in seen:
             continue
@@ -289,6 +323,10 @@ def links(page: str, base: str) -> list[str]:
 
 async def visit(client: httpx.AsyncClient, db, sites: dict[str, Site], site: Site, url: str, depth: int) -> None:
     if site.robots is None and not await load_robots(client, site):
+        site.fails += 1
+        if site.fails < ROBOTS_TRIES:  # one lost connection is not a dead site
+            site.next = time.monotonic() + RETRY
+            return
         db.execute("UPDATE queue SET status='dead' WHERE host=? AND status='todo'", (site.host,))
         site.todo, site.state = 0, "rejected"
         save(db, site)
@@ -339,6 +377,8 @@ async def main() -> None:
             save(db, sites[d])
     if not any(s.source == "wiki" for s in sites.values()):
         seed_wiki(db, sites)
+    if CC_HOSTS.exists() and not any(s.source == "cc" for s in sites.values()):
+        seed_cc(db, sites)
     for host, n in db.execute("SELECT host, count(*) FROM queue WHERE status='todo' GROUP BY host"):
         if host in sites:
             sites[host].queued = sites[host].todo = n
@@ -363,7 +403,7 @@ async def main() -> None:
             except Exception as e:  # a broken link on the page (bad IPv6 URL, newline): the page fails, the site goes on
                 db.execute("UPDATE queue SET status='error' WHERE url=?", (url,))
                 print(f"error    {e!r:.60} {url[:100]}", flush=True)
-            s.busy, s.next = False, time.monotonic() + s.delay
+            s.busy, s.next = False, max(s.next, time.monotonic() + s.delay)  # visit may set a later retry
 
         while True:
             for s in sites.values():
