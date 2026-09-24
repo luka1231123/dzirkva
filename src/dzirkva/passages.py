@@ -140,7 +140,7 @@ def search(query: str, limit: int = 20, qv=None) -> list[dict]:
             _, prefix, name = SITES[site]
             url = prefix + quote(title.replace(" ", "_"))
         out.append({"url": url, "title": f"{title} · {name}",
-                    "snippet": text, "engine": "passages", "score": score})
+                    "snippet": text, "engine": "passages", "score": score, "vector": vecs[i].float().numpy()})
         if len(out) == limit:
             break
     return out

@@ -24,6 +24,7 @@ Only results that are mostly Georgian are kept. `kind` decides the tab (sources.
 
 import asyncio
 import math
+import os
 import re
 import time
 from collections import Counter
@@ -77,6 +78,7 @@ FEEDBACK_MIN_DOCS = 3   # a feedback term repeats in at least this many texts
 FEEDBACK_MIN_IDF = 4.0  # ignore common words (idf of მსოფლიოში ≈ 3.9, სწრაფი ≈ 5.3, rare names ≈ 9)
 MEANING_WEIGHT = 1.5    # meaning rank vs engine rank in the final fusion
 MEANING_TOP = 40        # results (engine order) compared by meaning; the rest keep their engine rank
+MEANING_WEB = os.environ.get("MEANING_WEB", "1") != "0"  # 0 (.env, slow CPU): no new result vectors, only stored ones
 COVERAGE_FLOOR = 0.2    # score × (floor + (1 - floor) × coverage)
 LOCAL_FLOOR = 0.3       # a page only our local indexes found: × (floor + (1 - floor) × title fit)
 TITLE_FIT = (0.5, 0.65)   # title-query similarity: filler 0.23-0.55, the right article 0.60-1.00 → fit 0..1
@@ -456,7 +458,7 @@ def question_type(query: str) -> str | None:
 def answer_vector(near: list[dict]):
     """Questions and answers read differently (რატომ წითლდება ≠ მიმოფანტვის გამო): the mean of the
     nearest paragraphs is a vector of the answer, like HyDE but with real paragraphs, no LLM."""
-    v = vectors([p["snippet"] for p in near[:ANSWER_VECTOR]]).mean(0)
+    v = np.stack([p["vector"] for p in near[:ANSWER_VECTOR]]).mean(0)  # stored vectors: no new embedding
     return v / np.linalg.norm(v)
 
 
@@ -500,14 +502,17 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
     qtype = question_type(query)
     shape = re.compile(SHAPES[qtype][1]) if qtype else None
     top = results[:top]
-    new = [r for r in top if r.vector is None]
+    new = [r for r in top if r.vector is None] if MEANING_WEB else []
     for r, v in zip(new, cached_vectors([r.text for r in new]) if new else []):
         r.vector = v
-    for r in top:
+    have = [r for r in top if r.vector is not None]
+    for r in have:
         r.meaning = float(r.vector @ qv)
         if answer is not None:
             r.meaning = (r.meaning + float(r.vector @ answer)) / 2
-    by_meaning = {id(r): i for i, r in enumerate(sorted(top, key=lambda r: r.meaning, reverse=True))}
+    # results with a vector share their engine-order places by meaning; one without keeps its place
+    slots = [i for i, r in enumerate(top) if r.vector is not None]
+    by_meaning = {id(r): i for i, r in zip(slots, sorted(have, key=lambda r: r.meaning, reverse=True))}
     for i, r in enumerate(results):  # results are in engine order here
         fused = 1 / (RRF_K + i) + MEANING_WEIGHT / (RRF_K + by_meaning.get(id(r), i))
         r.score = fused * (1 + _trust(r)) * (COVERAGE_FLOOR + (1 - COVERAGE_FLOOR) * r.coverage)
