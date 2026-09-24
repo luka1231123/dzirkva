@@ -137,6 +137,9 @@ Publication
 - [x] Telemetry (`telemetry.py`, `/stats`): searches and how people reach them, clicks (rank, block, site), pages,
   citation and panel actions, errors, latency, reformulations, sessions; no IP, DNT/GPC respected
 - [x] Start page that explains dzirkva (examples, index sizes, how it works) and `/about` (sources, licenses, what is stored)
+- [x] Start page: how dzirkva finds text people wrote (sign labels, their meaning on hover; exact rules on `/about`)
+  and dzirkva vs Google on the same 100 queries: trusted 47% vs 21%, research 8% vs 1%, people 9% vs 3%
+  (`scripts/compare_google.py`)
 - [x] `/go` only redirects to links the page showed (HMAC signature); access logs off
 - [x] More than one visitor: a thread per request, one worker for searches, busy page after MAX_SEARCHES (3)
 - [x] Brave: one call per search, daily and monthly caps (.env), use on /stats

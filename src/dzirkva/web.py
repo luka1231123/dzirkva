@@ -34,7 +34,8 @@ from dzirkva.georgian import normalize
 from dzirkva import archive, clicks, crawl, discover, engines, iverieli, papers, passages, telemetry, wiki
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families
-from dzirkva.search import canonical_url, intents, search
+from dzirkva.search import COPY_SIMILARITY, MIN_GEORGIAN, canonical_url, intents, search
+from dzirkva.sources import sources
 
 TABS = {"all": "ყველა", "video": "ვიდეო", "news": "სიახლეები"}
 TAB_KINDS = {"video": {"video", "film"}, "news": {"news"}}
@@ -54,6 +55,18 @@ KIND_NAMES = {"knowledge": "ცოდნა", "news": "სიახლე", "web
               "video": "ვიდეო", "film": "ფილმი"}
 CATEGORY_NAMES = {"reference": "ცნობარი", "law": "სამართალი", "history": "ისტორია", "religion": "რელიგია",
                   "education": "განათლება", "government": "სახელმწიფო", "culture": "კულტურა"}
+# Signs that a person wrote or chose a page: key → (label, CSS class, meaning). Results show the meaning on hover;
+# the home page lists them in this order.
+SIGNS = {
+    "small": ("პატარა ვები", "rare", "პირადი საიტი ან ბლოგი: ავტორი პირველ პირში წერს („მე“, „ჩემი“, „მახსოვს“), "
+                                     "არა კომპანიის ან სააგენტოს ენით, და მაღაზია არ აქვს"),
+    "academic": ("სამეცნიერო", "", "სამეცნიერო ჟურნალი, უნივერსიტეტის რეპოზიტორია ან ეროვნული ბიბლიოთეკა"),
+    "cited": ("ვიკიპედიის წყარო", "", "ამ თემის ვიკიპედიის სტატია ამ გვერდს ციტირებს: რედაქტორებმა ის წყაროდ აირჩიეს"),
+    "old": ("ძველი ვები", "old", "დახურული ქართული საიტის ასლი ინტერნეტ-არქივიდან; ჭდეზე ასლის წელია "
+                                 "(უმეტესობა ჩატბოტებამდეა)"),
+    "trusted": ("სანდო წყარო", "", "ხელით შერჩეული საიტი: ცნობარი, მეცნიერება, კანონი, სახელმწიფო ან ჟურნალისტიკა"),
+    "clicks": ("ადრე არჩეული", "", "ამავე კითხვაზე სხვებმა ეს გვერდი აირჩიეს"),
+}
 QUESTION = {"why": "რატომ", "how": "როგორ", "when": "როდის", "amount": "რამდენი"}
 RELATED_FROM = {"wiki": "ვიკიპედიის სათაური", "feedback": "პასუხის სიტყვა", "meaning": "აზრით ახლო"}
 STEP_NAMES = {"round1": "პირველი რაუნდი", "round2+rank": "მეორე რაუნდი და რიგი", "total": "სულ"}
@@ -145,6 +158,9 @@ mark.fb{background:var(--fb);border-radius:3px;padding:0 2px}
 .nums div{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
 .nums b{display:block;font-size:20px;color:var(--ink)} .nums span{font-size:11.5px;color:var(--muted)}
 .bars{width:100%;height:90px;display:block} .bars rect{fill:var(--accent)}
+.blk p{margin:8px 0} .signs li{margin:10px 0} .lbl[title]{cursor:help}
+.vs{width:100%;margin:4px 0;font-size:14px} .vs th,.vs td{padding:7px 12px 7px 0;border-bottom:1px solid var(--line)}
+.vs th+th,.vs td+td{text-align:right;white-space:nowrap} .vs b{color:var(--ink)}
 th{font-size:11px;color:var(--muted);text-align:left;font-weight:600;padding:2px 10px 2px 0}
 .sess{font-size:12.5px;margin:10px 0;padding-top:8px;border-top:1px solid var(--line)} .sess div{margin:2px 0}
 .cite code{display:block;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--line);
@@ -218,19 +234,19 @@ def _query_name(name: str) -> str:
     return fixed.get(name) or ENGINE_NAMES.get(name, name)
 
 
+def _sign(key: str, extra: str = "") -> str:
+    """A label with its meaning on hover (SIGNS)."""
+    name, cls, meaning = SIGNS[key]
+    return f"<span class='lbl {cls}' title='{escape(meaning)}'>{cap(name)}{escape(extra)}</span>"
+
+
 def _labels(r) -> str:
-    """What dzirkva knows about the source: trusted list, rare site, cited by Wikipedia, old web with its year."""
-    out = []
-    if r.tier in (1, 2):
-        out.append(f"<span class=lbl>{cap('სანდო წყარო')}</span>")
-    if r.small:
-        out.append(f"<span class='lbl rare'>{cap('პატარა ვები')}</span>")
-    if r.clicks:
-        out.append(f"<span class=lbl>{cap('ადრე არჩეული')}</span>")
-    if r.cited:
-        out.append(f"<span class=lbl>{cap('ვიკიპედიის წყარო')}</span>")
+    """Signs that a person wrote or chose the page: trusted list, small web, chosen before, cited by Wikipedia,
+    research, old web with its year."""
+    out = [_sign(k) for k, on in (("trusted", r.tier in (1, 2)), ("small", r.small), ("clicks", r.clicks),
+                                  ("cited", r.cited), ("academic", "academic" in r.tags)) if on]
     if y := ARCHIVE_YEAR.search(r.url):
-        out.append(f"<span class='lbl old'>{cap('ძველი ვები')} · {y[1]}</span>")
+        out.append(_sign("old", f" · {y[1]}"))
     return "".join(out)
 
 
@@ -473,11 +489,11 @@ def site_page(host: str) -> str:
     d = s["domain"]  # (source, state, pages, georgian, kind, inbound) or None
     labels = ""
     if s["trusted"]:
-        labels += f"<span class=lbl>{cap('სანდო წყარო')} · {discover.CATEGORY_NAMES.get(s['trusted'][0], '')}</span>"
+        labels += _sign("trusted", f" · {discover.CATEGORY_NAMES.get(s['trusted'][0], '')}")
     if s["small"]:
-        labels += f"<span class='lbl rare'>{cap('პატარა ვები')}</span>"
+        labels += _sign("small")
     if s["repos"]:
-        labels += f"<span class=lbl>{cap('სამეცნიერო')}</span>"
+        labels += _sign("academic")
     facts = [f"{s['page_count']:,} გვერდი ჩვენს ინდექსში"]
     if d:
         facts.append(f"{d[3]:.0%} ქართული")
@@ -536,6 +552,13 @@ STEPS = [
     "ხელოვნური ინტელექტი არ წერს.",
 ]
 PRIVACY = "ვინახავთ ძიების სიტყვებს და არჩეულ ბმულებს, IP მისამართის გარეშე."
+# The same 100 Georgian queries in dzirkva and Google on 2026-09-23 (eval/stress100): shares of the first ten results.
+# Recount: uv run python scripts/compare_google.py eval/stress100_dz8.jsonl
+VS_GOOGLE = [("ხელით შერჩეული სანდო წყარო", "47%", "21%"), ("სამეცნიერო ნაშრომი ან ბიბლიოთეკა", "8%", "1%"),
+             ("ფორუმი, ბლოგი, სოციალური ქსელი, პირადი საიტი", "9%", "3%"), ("არაქართული გვერდი", "3%", "9%"),
+             ("პასუხს წერს ხელოვნური ინტელექტი", "არასდროს", "4 ძიებაში"), ("რეკლამა", "არა", "კი"),
+             ("ქულა და მიზეზი ყოველ შედეგთან", "კი", "არა"), ("ინახავს IP მისამართს", "არა", "კი")]
+OTHER_SITES = "66%"  # dzirkva's first ten results on sites that Google's first ten does not show
 
 
 @cache
@@ -562,29 +585,41 @@ def _foot() -> str:
 
 
 def home_page() -> str:
-    """The start page: what dzirkva is, example queries, what it finds, how it works, the finds of the day."""
+    """The start page: what dzirkva is, how it tells a person's text, how it differs from Google, the finds of the day."""
     n, k = _sizes(), _thousands
     examples = "".join(f"<a href='{_link(q, 'all', set(), 'example')}'>{escape(q)}<span class=m>{cap(what)}</span></a>"
                        for q, what in EXAMPLES)
-    finds = [
-        ("ცოდნა", f"ქართული ვიკიპედია ({k(n['wiki'])} სტატია), ვიკიწყარო, ეროვნული ბიბლიოთეკის „ივერიელი“ "
-                  f"({k(n['iverieli'])} ჩანაწერი)"),
-        ("კვლევა", f"{k(n['papers'])} ნაშრომი {n['repos']} ქართული ჟურნალიდან და რეპოზიტორიიდან: ავტორი, წელი, PDF, "
-                   "ციტირება"),
-        ("ქართული ვები", f"ჩვენ მიერ შეგროვებული {k(n['crawl'])} გვერდი {n['sites']:,} საიტიდან და საძიებო სისტემების "
-                         "შედეგები"),
-        ("პატარა ვები", f"{n['people']} პირადი საიტი და ბლოგი; მათი ახალი პოსტები „აღმოჩენის“ გვერდზე"),
-        ("ძველი ვები", f"{n['archive']:,} გვერდი დახურული ქართული საიტებიდან, ინტერნეტ-არქივიდან"),
-    ]
+    index = (f"ინდექსში: {k(n['wiki'])} ვიკიპედიის სტატია · {k(n['crawl'])} გვერდი {n['sites']:,} საიტიდან · "
+             f"{k(n['papers'])} სამეცნიერო ნაშრომი · {k(n['iverieli'])} ბიბლიოთეკის ჩანაწერი · "
+             f"{n['people']} პირადი საიტი · {n['archive']:,} ძველი ვების გვერდი")
+    signs = "".join(f"<li>{_sign(key, ' · 2010' if key == 'old' else '')} {escape(meaning)}</li>"
+                    for key, (_, _, meaning) in SIGNS.items())
+    rows = "".join(f"<tr><td>{a}</td><td><b>{b}</b></td><td>{c}</td></tr>" for a, b, c in VS_GOOGLE)
     today = _finds(random.Random(time.strftime("%Y-%m-%d")))  # the same finds all day
     return (f"<div class='ans hero'><div class=cap>{cap('ქართული ვების საძიებო')}</div>"
-            "<p class=lead>ძირკვა ეძებს მხოლოდ ქართულ გვერდებს. ის აერთიანებს რამდენიმე საძიებო სისტემას, საკუთარ "
-            "ინდექსებს და ქართული ენის ცოდნას: ესმის ლათინური ასოებით დაწერილი სიტყვები, ასწორებს შეცდომებს და "
-            f"პოულობს სიტყვის ყველა ფორმას.</p><div class=rel>{examples}</div></div>"
-            + _block("რას პოულობს", "<ul class=list>" + "".join(f"<li><b>{a}</b> — {escape(b)}</li>" for a, b in finds)
-                     + "</ul>")
-            + _block("როგორ მუშაობს", "<ol class=steps>" + "".join(f"<li>{s}</li>" for s in STEPS) + "</ol>"
-                     f"<a class=go href=/about>{cap('დეტალურად')} →</a>")
+            "<span class=t>ადამიანების დაწერილი ქართული ვები</span>"
+            "<p class=lead>ძირკვა ეძებს მხოლოდ ქართულ გვერდებს და ჯერ იმას აჩვენებს, რაც ადამიანებმა დაწერეს: "
+            "ბლოგებს, ფორუმებს, მეცნიერთა ნაშრომებს, ბიბლიოთეკის ფონდებს და ძველ ვებს. რეკლამა არ არის და პასუხს "
+            f"ხელოვნური ინტელექტი არ წერს.</p><div class=rel>{examples}</div><p class=facts>{index}</p></div>"
+            + _block("როგორ ცნობს ადამიანის ტექსტს",
+                     "<p>ძირკვა არ ცდილობს გამოიცნოს, რომელი ტექსტი დაწერა მანქანამ. ის ეძებს ნიშანს, რომ გვერდი "
+                     "ადამიანმა დაწერა ან შეარჩია, და ასეთ გვერდებს სიის თავში აყენებს. შედეგებთან ეს ნიშნები ასე ჩანს:</p>"
+                     f"<ul class='list signs'>{signs}</ul>"
+                     "<p>ერთი და იგივე ტექსტი ბევრ საიტზე ერთ შედეგად ჩანს („ასევე 5 საიტზე“), ერთ საიტს სიაში "
+                     "მხოლოდ ორი ადგილი აქვს, ხოლო გვერდი, რომელზეც ქართული ასოები ცოტაა, საერთოდ არ ჩანს. ჩვენი "
+                     "ქრაულერი ონლაინ-მაღაზიებს არ აგროვებს. ასე კოპირებული სტატიები და ერთი საიტის ათასობით "
+                     "გვერდი სიას ვერ ავსებს.</p>")
+            + _block("ძირკვა და გუგლი",
+                     f"<div class=tbl><table class=vs><tr><th></th><th>{cap('ძირკვა')}</th><th>{cap('გუგლი')}</th>"
+                     f"</tr>{rows}</table></div>"
+                     "<p class=m>პროცენტი — წილი პირველ ათ შედეგში: ერთი და იგივე 100 ქართული ძიება ორივე "
+                     "სისტემაში, 2026 წლის სექტემბერი.</p>"
+                     f"<p>ძირკვის პირველი ათი შედეგის {OTHER_SITES} ისეთ საიტებზეა, რომლებსაც გუგლი პირველ ათეულში "
+                     "არ აჩვენებს.</p>"
+                     "<p>ამინდის, ვალუტის კურსის ან მაღაზიის საძებნელად გუგლი უფრო სწრაფია. ძირკვა სწავლისა და "
+                     "ქართული ვების აღმოსაჩენადაა. ჩატბოტი პასუხს თავად წერს; ძირკვა გაჩვენებთ გვერდს, სადაც ეს "
+                     "ადამიანმა დაწერა.</p>"
+                     f"<a class=go href=/about>{cap('როგორ მუშაობს')} →</a>")
             + _block("დღის მიგნებები", "<ul class=list>" + "".join(today) + "</ul>"
                      f"<a class=go href=/discover>{cap('აღმოაჩინე მეტი')} →</a>" if today else "")
             + _foot())
@@ -600,8 +635,9 @@ def busy_page(path: str) -> str:
 
 
 def about_page() -> str:
-    """How dzirkva works in detail: sources and their licenses, what telemetry stores."""
-    sources = [
+    """How dzirkva works in detail: the signs of a person's text and their rules, what it pushes away, how the Google
+    comparison was made, sources and their licenses, what telemetry stores."""
+    origins = [
         "საძიებო სისტემები: იანდექსი, იაჰუ, გუგლი და ბრეივი. მათ შედეგებს ვინახავთ ერთი დღით (ბრეივისას — ერთი კვირით).",
         "ვიკიპედია, ვიკიწყარო და ვიქსიკონი: ტექსტები CC BY-SA 4.0 ლიცენზიით; ყოველ ამონარიდს ახლავს ბმული სტატიაზე.",
         "ივერიელი: ეროვნული ბიბლიოთეკის ციფრული ბიბლიოთეკის კატალოგი.",
@@ -619,9 +655,41 @@ def about_page() -> str:
         f"ჩანაწერები {telemetry.KEEP_DAYS} დღეში იშლება.",
         "რატომ: ვხედავთ, რას ვერ პოულობს ძირკვა და სად უნდა გაუმჯობესდეს.",
     ]
+    n = _sizes()
+    rules = {  # SIGNS: the exact rule of each
+        "small": f"1000 სიტყვაზე მინიმუმ {crawl.MIN_VOICE} პირველი პირის სიტყვა („მე“, „ჩემი“, „ვფიქრობ“, „მახსოვს“ …), "
+                 f"{crawl.MAX_CORPORATE}-ზე ნაკლები კომპანიის სიტყვა („შპს“, „მომსახურება“, „ფასი“ …) და "
+                 f"{crawl.MAX_REPORTING}-ზე ნაკლები სააგენტოს სიტყვა („განაცხადა“, „ცნობით“ …). არ არის სახელმწიფო, "
+                 "ახალი ამბების, ტელევიზიის, რადიოს, სპორტის, სკოლის ან სასამართლოს საიტი, მაღაზია არ აქვს და მასზე "
+                 f"მაქსიმუმ {crawl.SMALL_INBOUND} საიტი ან ვიკიპედიის სტატია მიუთითებს (ერთი ადამიანის ბლოგზე — "
+                 "რამდენიც არ უნდა იყოს).",
+        "academic": "ჟურნალის ან უნივერსიტეტის რეპოზიტორია (OAI-PMH), .edu ან .ac.ge საიტი, ან ეროვნული ბიბლიოთეკის "
+                    f"„ივერიელი“. ინდექსში {n['papers']:,} ნაშრომია {n['repos']} ჟურნალიდან და რეპოზიტორიიდან.",
+        "cited": "გვერდს ციტირებს ვიკიპედიის სტატია, რომელიც შეკითხვას სიტყვებით ან აზრით ყველაზე ახლოს დგას.",
+        "old": "ვიკიპედიაში ციტირებული, ახლა დახურული ქართული საიტების ასლები ინტერნეტ-არქივიდან.",
+        "trusted": f"{sum(t in (1, 2) for _, t in sources().values())} საიტი ხელით შედგენილი სიიდან: ოფიციალური, "
+                   "სამეცნიერო და საცნობარო საიტები, ჟურნალისტიკა და ინსტიტუტები.",
+        "clicks": f"დაწკაპება ითვლება, თუ იმავე კითხვაზე {clicks.POGO} წამში სხვა დაწკაპება არ მოჰყვა.",
+    }
+    against = [
+        f"თუ ორ ამონარიდს სიტყვების {COPY_SIMILARITY:.0%} საერთო აქვს, ეს ერთი ტექსტია და ერთ შედეგად ჩანს.",
+        f"ერთი საიტი მთავარ სიაში მაქსიმუმ {PER_SITE}-ჯერ ჩანს.",
+        f"თუ სათაურსა და ამონარიდში ქართული ასოები {MIN_GEORGIAN:.0%}-ზე ნაკლებია, შედეგი არ ჩანს (გარდა საიტებისა, "
+        "რომლებიც ძირითადად ქართულად წერენ).",
+        "ქრაულერი ახალ საიტს მთლიანად მხოლოდ მაშინ აგროვებს, თუ მისი გვერდები ქართულია და ის მაღაზია არ არის.",
+    ]
+    compared = ("2026 წლის 23 სექტემბერს ერთი და იგივე 100 ქართული ძიება — ამინდიდან პოეზიამდე — გავუშვით ძირკვასა "
+                "და გუგლში და შევადარეთ პირველი ათი შედეგი. ორივე ერთი წესით შევაფასეთ: სანდო წყარო და სამეცნიერო — "
+                "ზემოთ აღწერილი ნიშნები; ხალხი — ფორუმი, ბლოგი, სოციალური ქსელი ან პატარა ვები; არაქართული — "
+                f"სათაურსა და ამონარიდში ქართული ასოები {MIN_GEORGIAN:.0%}-ზე ნაკლებია.")
     return (f"<div class='ans hero'><div class=cap>{cap('ძირკვის შესახებ')}</div><span class=t>როგორ მუშაობს</span></div>"
             + _block("ნაბიჯები", "<ol class=steps>" + "".join(f"<li>{s}</li>" for s in STEPS) + "</ol>")
-            + _block("წყაროები", "<ul class=list>" + "".join(f"<li>{escape(s)}</li>" for s in sources) + "</ul>")
+            + _block("ადამიანის ტექსტის ნიშნები", "<ul class='list signs'>" + "".join(
+                f"<li>{_sign(k)} {escape(t)}</li>" for k, t in rules.items())
+                     + "</ul><p>ყოველი ნიშანი ქულას ზრდის; ქულა და მიზეზი ჩანს ყოველი შედეგის ქვეშ.</p>")
+            + _block("რას აშორებს", "<ul class=list>" + "".join(f"<li>{escape(s)}</li>" for s in against) + "</ul>")
+            + _block("გუგლთან შედარება", f"<p>{escape(compared)}</p>")
+            + _block("წყაროები", "<ul class=list>" + "".join(f"<li>{escape(s)}</li>" for s in origins) + "</ul>")
             + _block("რას ვინახავთ", "<ul class=list>" + "".join(f"<li>{escape(s)}</li>" for s in stored) + "</ul>")
             + _foot())
 
