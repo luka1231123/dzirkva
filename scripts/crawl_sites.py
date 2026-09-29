@@ -13,7 +13,8 @@ Full domains: pages cited in Georgian Wikipedia first (outside the budget), then
 domain, PER_SITE for a discovered one (many sites before deep sites).
 A host that does not answer is tried ROBOTS_TRIES times, RETRY seconds apart, before it is rejected.
 Polite: robots.txt, one request per second per domain.
-Each domain runs as its own task, one page at a time; up to MAX_TASKS in flight. New domains
+Each domain runs as its own task, one page at a time; up to MAX_TASKS pages and MAX_SEEDS sitemap reads in flight;
+WORKERS processes parse the pages. New domains
 are probed best first: .ge and blogs, then most linked.
 
 Run in the background:  nohup uv run python scripts/crawl_sites.py > data/crawl.log 2>&1 &
@@ -30,6 +31,7 @@ import sqlite3
 import sys
 import time
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
@@ -58,6 +60,8 @@ MAX_SITEMAPS = 30       # sitemap files read per site, newest first
 MAX_FULL = 200          # full domains started per step (least recent first)
 MAX_PROBES = 200        # new domains started per step (best first)
 MAX_TASKS = 400         # pages in flight
+MAX_SEEDS = 40          # full domains reading sitemaps at once (all at once starved the loop: every connect timed out)
+WORKERS = 8             # processes that parse pages (trafilatura is the CPU cost)
 PAUSE = 1.0
 MIN_TEXT = 200
 URL = re.compile(r"https?://[^\s\[\]|<>\"'{}]+")
@@ -313,6 +317,17 @@ def discover(db, sites: dict[str, Site], src: Site, urls: list[str]) -> None:
             save(db, dst)
 
 
+def parse(content: bytes, encoding: str | None, url: str, host: str) -> tuple:
+    """In a worker process: (text, title, date, signals, links) of one HTML page."""
+    page = content.decode(encoding or "utf-8", "replace")
+    try:
+        doc = trafilatura.bare_extraction(content, url=url, with_metadata=True)
+    except Exception:  # trafilatura raises many kinds on broken pages
+        doc = None
+    text = (doc.text or "") if doc else ""
+    return text, (doc.title or "") if doc else "", (doc.date or "") if doc else "", page_signals(page, host), links(page, url)
+
+
 def links(page: str, base: str) -> list[str]:
     try:
         root = lxml.html.fromstring(page)
@@ -339,21 +354,17 @@ async def visit(client: httpx.AsyncClient, db, sites: dict[str, Site], site: Sit
         r = await get(client, fetch)
         status = "error" if r is None else f"http:{r.status_code}"
     if r is not None and r.status_code == 200 and "html" in r.headers.get("content-type", ""):
-        try:
-            doc = trafilatura.bare_extraction(r.content, url=str(r.url), with_metadata=True)
-        except Exception:  # trafilatura raises many kinds on broken pages
-            doc = None
-        text = (doc.text or "") if doc else ""
+        text, title, date, signals, page_links = await asyncio.get_running_loop().run_in_executor(
+            POOL, parse, r.content, r.encoding, str(r.url), site.host)
         ratio = georgian_ratio(text)
-        site.signals |= page_signals(r.text, site.host)
+        site.signals |= signals
         if text:
             site.pages += 1
             site.georgian += (ratio - site.georgian) / site.pages  # running mean
         # home pages (depth 0) are link lists: follow their links, do not store them
         status = "done" if ratio >= MIN_GEORGIAN and len(text) >= MIN_TEXT and depth > 0 else "skipped"
         if status == "done":
-            db.execute("INSERT INTO pages VALUES (?, ?, ?, ?)", (fetch, doc.title or "", doc.date or "", text))
-        page_links = links(r.text, str(r.url))
+            db.execute("INSERT INTO pages VALUES (?, ?, ?, ?)", (fetch, title, date, text))
         if depth < MAX_DEPTH:
             enqueue(db, site, page_links, depth + 1)
         if status == "done":
@@ -406,9 +417,13 @@ async def main() -> None:
             s.busy, s.next = False, max(s.next, time.monotonic() + s.delay)  # visit may set a later retry
 
         while True:
+            seeding = sum(s.busy and not s.seeded for s in sites.values() if s.state == "full")
             for s in sites.values():
+                if seeding >= MAX_SEEDS:
+                    break
                 if s.state == "full" and not s.seeded and not s.busy:
                     start(s, seed(client, db, s))
+                    seeding += 1
             now = time.monotonic()
             due = [s for s in sites.values() if s.todo > 0 and not s.busy and s.next <= now]
             full = sorted((s for s in due if s.state == "full"), key=lambda s: s.next)[:MAX_FULL]
@@ -427,4 +442,5 @@ async def main() -> None:
             await asyncio.sleep(PAUSE / 2)
 
 if __name__ == "__main__":
+    POOL = ProcessPoolExecutor(WORKERS)
     asyncio.run(main())
