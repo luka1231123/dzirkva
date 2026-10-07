@@ -60,7 +60,7 @@ class Trickle:
                     url, params = target, None
                     continue
                 data = bytearray()
-                async for chunk in response.aiter_bytes():
+                async for chunk in response.aiter_bytes(chunk_size=65_536):
                     self.bytes += len(chunk)
                     if self.bytes > self.max_bytes:
                         raise BudgetReached
