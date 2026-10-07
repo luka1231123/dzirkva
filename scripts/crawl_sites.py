@@ -35,7 +35,7 @@ import threading
 import sqlite3
 import sys
 import time
-from collections import Counter
+from collections import Counter, deque
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -47,7 +47,7 @@ import trafilatura
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from dzirkva.archive import SKIP_EXT  # noqa: E402
-from dzirkva.crawl import COMMERCIAL, MIN_GEORGIAN, connect, domain_of  # noqa: E402
+from dzirkva.crawl import COMMERCIAL, MIN_GEORGIAN, connect, domain_of, upsert_page  # noqa: E402
 from dzirkva.georgian import georgian_ratio  # noqa: E402
 from dzirkva.sources import SOCIAL_HOSTS, VIDEO_HOSTS, sources  # noqa: E402
 from dzirkva.wiki import cited_on  # noqa: E402
@@ -368,13 +368,13 @@ async def visit(client: httpx.AsyncClient, db, sites: dict[str, Site], site: Sit
             POOL, parse, r.content, r.encoding, str(r.url), site.host)
         ratio = georgian_ratio(text)
         site.signals |= signals
-        if text:
+        if text and not db.execute("SELECT 1 FROM pages_content WHERE c0=? LIMIT 1", (fetch,)).fetchone():
             site.pages += 1
             site.georgian += (ratio - site.georgian) / site.pages  # running mean
         # home pages (depth 0) are link lists: follow their links, do not store them
         status = "done" if ratio >= MIN_GEORGIAN and len(text) >= MIN_TEXT and depth > 0 else "skipped"
         if status == "done":
-            db.execute("INSERT INTO pages VALUES (?, ?, ?, ?)", (fetch, title, date, text))
+            upsert_page(db, fetch, title, date, text, update_domain=False)
         if depth < MAX_DEPTH:
             enqueue(db, site, page_links, depth + 1)
         if status == "done":
@@ -424,25 +424,68 @@ async def main() -> None:
             except Exception as e:  # a broken link on the page (bad IPv6 URL, newline): the page fails, the site goes on
                 db.execute("UPDATE queue SET status='error' WHERE url=?", (url,))
                 print(f"error    {e!r:.60} {url[:100]}", flush=True)
+            if s.state == "full" and not s.seeded and s not in seed_order:
+                seed_order.append(s)
             s.busy, s.next = False, max(s.next, time.monotonic() + s.delay)  # visit may set a later retry
             global LAST_PAGE
             LAST_PAGE = time.monotonic()
 
+        last_ingest = 0.0
+        seed_order = deque(sorted((s for s in sites.values() if s.state == "full"), key=lambda s: (s.pages, s.inbound)))
         while True:
+            # Feeds can queue articles while this process stays running. Consume
+            # changed-host notices rather than scanning millions of queue rows.
+            if time.monotonic() - last_ingest >= 10:
+                for (host,) in db.execute("SELECT host FROM ingest_changes LIMIT 200").fetchall():
+                    site = sites.get(host)
+                    if site is None:
+                        row = db.execute("SELECT source, state, pages, georgian, signals, inbound FROM domains WHERE host=?", (host,)).fetchone()
+                        if row and row[1] in ("full", "probe"):
+                            site = sites[host] = Site(host, *row)
+                            if site.state == "full":
+                                seed_order.append(site)
+                    if site is not None and site.busy:
+                        continue
+                    if site is not None:
+                        site.todo = db.execute("SELECT count(*) FROM queue WHERE host=? AND status='todo'", (host,)).fetchone()[0]
+                        site.pages, site.georgian = db.execute("SELECT pages, georgian FROM domains WHERE host=?", (host,)).fetchone()
+                    db.execute("DELETE FROM ingest_changes WHERE host=?", (host,))
+                last_ingest = time.monotonic()
             seeding = sum(s.busy and not s.seeded for s in sites.values() if s.state == "full")
-            for s in sites.values():
+            for _ in range(len(seed_order)):
                 if seeding >= MAX_SEEDS:
                     break
-                if s.state == "full" and not s.seeded and not s.busy:
+                s = seed_order.popleft()
+                if s.busy:
+                    seed_order.append(s)
+                elif s.state == "full" and not s.seeded:
                     start(s, seed(client, db, s))
                     seeding += 1
             now = time.monotonic()
             due = [s for s in sites.values() if s.todo > 0 and not s.busy and s.next <= now]
-            full = sorted((s for s in due if s.state == "full"), key=lambda s: s.next)[:MAX_FULL]
-            probes = sorted((s for s in due if s.state == "probe"), key=Site.priority)[:MAX_PROBES]
-            for s in (full + probes)[: max(0, MAX_TASKS - len(tasks))]:
+            capacity = max(0, MAX_TASKS - len(tasks))
+            full = sorted((s for s in due if s.state == "full"), key=lambda s: s.next)
+            probes = sorted((s for s in due if s.state == "probe"), key=Site.priority)
+            # Reserve a quarter of available starts for discovering new sites,
+            # and another quarter for underrepresented personal/blog hosts.
+            probe_count = min(MAX_PROBES, len(probes), max(1, capacity // 4)) if capacity else 0
+            chosen = probes[:probe_count]
+            rare = [s for s in full if s.source != "trusted" and s.inbound <= 30 and kind(s.signals) == "blog"]
+            chosen += sorted(rare, key=lambda s: (s.next, s.pages))[: min(MAX_FULL, max(1, capacity // 4))]
+            full_slots = min(MAX_FULL, capacity - probe_count)
+            chosen = chosen[:capacity]
+            selected_full = sum(s.state == "full" for s in chosen)
+            for s in full:
+                if len(chosen) >= capacity or selected_full >= full_slots:
+                    break
+                if s not in chosen:
+                    chosen.append(s)
+                    selected_full += 1
+            # Unused full slots can still probe more hosts.
+            chosen += [s for s in probes[probe_count:MAX_PROBES] if s not in chosen][:max(0, capacity - len(chosen))]
+            for s in chosen:
                 row = db.execute("SELECT url, depth FROM queue WHERE host=? AND status='todo' "
-                                 "ORDER BY cited DESC, depth, rowid LIMIT 1", (s.host,)).fetchone()
+                                 "ORDER BY priority DESC, cited DESC, depth, rowid LIMIT 1", (s.host,)).fetchone()
                 if row is None:
                     s.todo = 0
                 else:

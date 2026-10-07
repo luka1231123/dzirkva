@@ -31,8 +31,18 @@ CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(url UNINDEXED, snapshot 
 
 
 def connect() -> sqlite3.Connection:
-    db = sqlite3.connect(DB, check_same_thread=False)
+    db = sqlite3.connect(DB, check_same_thread=False, timeout=60)
     db.executescript(SCHEMA)
+    db.execute("PRAGMA journal_mode=WAL")
+    columns = {c[1] for c in db.execute("PRAGMA table_info(queue)")}
+    for name, declaration in (("attempts", "INT DEFAULT 0"), ("next_attempt", "REAL DEFAULT 0"),
+                              ("snapshot", "TEXT"), ("digest", "TEXT")):
+        if name not in columns:
+            db.execute(f"ALTER TABLE queue ADD COLUMN {name} {declaration}")
+    db.execute("CREATE INDEX IF NOT EXISTS archive_due ON queue(status, next_attempt, depth)")
+    db.execute("CREATE TABLE IF NOT EXISTS captures (url TEXT PRIMARY KEY, host TEXT, digest TEXT)")
+    db.execute("CREATE INDEX IF NOT EXISTS captures_digest ON captures(host, digest)")
+    db.commit()
     return db
 
 

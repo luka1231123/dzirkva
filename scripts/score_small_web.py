@@ -1,35 +1,46 @@
-"""Voice scores of crawled domains for small-web detection (crawl.small_site) → data/voice.db.
+"""Backfill small-web voice counts without rereading the full crawl each run.
 
-Per 1,000 words of all pages of a domain: first-person words (voice), company words, newsroom words.
-Domains with fewer than 2,000 words stay unscored (NULL = not small web). ~1 min; run again after crawling.
-Run: uv run python scripts/score_small_web.py
+New crawler/feed pages update scores during ingestion. This bounded, resumable
+backfill covers old pages; repeat until caught up. Existing scores remain available.
+Run: uv run python scripts/score_small_web.py --limit 2000
 """
 
-import re
+import argparse
 import sqlite3
-from collections import defaultdict
+import sys
+from pathlib import Path
 
-from dzirkva.crawl import CORPORATE_WORDS, DB, I_WORDS, REPORTING_WORDS, VOICE_DB, domain_of
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from dzirkva.crawl import DB, domain_of  # noqa: E402
+from dzirkva.smallweb import connect, update_voice  # noqa: E402
 
-MIN_WORDS = 2000
 
-db = sqlite3.connect(DB, timeout=60)
-full = {h for (h,) in db.execute("SELECT host FROM domains WHERE state='full'")}
-counts = defaultdict(lambda: [0, 0, 0, 0])  # words, first person, corporate, reporting
-for url, text in db.execute("SELECT url, text FROM pages"):
-    host = domain_of(url)
-    if host not in full:
-        continue
-    c = counts[host]
-    for t in re.findall(r"[ა-ჰ]+|₾", text):
-        c[0] += 1
-        c[1] += t in I_WORDS
-        c[2] += t in CORPORATE_WORDS
-        c[3] += t in REPORTING_WORDS
-rows = [(1000 * i / n, 1000 * c / n, 1000 * r / n, h) for h, (n, i, c, r) in counts.items() if n >= MIN_WORDS]
-out = sqlite3.connect(VOICE_DB)
-out.executescript("DROP TABLE IF EXISTS voice; CREATE TABLE voice (voice REAL, corporate REAL, reporting REAL, "
-                  "host TEXT PRIMARY KEY)")
-out.executemany("INSERT INTO voice VALUES (?, ?, ?, ?)", rows)
-out.commit()
-print(f"{len(rows)} domains scored")
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--limit", type=int, default=2000, help="maximum historical pages per run")
+    args = parser.parse_args()
+    if args.limit < 1:
+        parser.error("--limit must be positive")
+    out = connect()
+    row = out.execute("SELECT value FROM progress WHERE name='crawl_rowid'").fetchone()
+    cursor = row[0] if row else 0
+    crawl = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=60)
+    processed = 0
+    # pages_content avoids involving the FTS index during historical extraction.
+    for rowid, url, text in crawl.execute("SELECT id, c0, c3 FROM pages_content WHERE id>? ORDER BY id LIMIT ?", (cursor, args.limit)):
+        out.execute("BEGIN IMMEDIATE")
+        # An ingestion refresh may already hold newer text: don't overwrite it.
+        if not out.execute("SELECT 1 FROM page_counts WHERE url=?", (url,)).fetchone():
+            update_voice(url, text or "", domain_of(url), db=out)
+        out.execute("INSERT OR REPLACE INTO progress VALUES ('crawl_rowid', ?)", (rowid,))
+        out.commit()
+        cursor = rowid
+        processed += 1
+    scored = out.execute("SELECT count(*) FROM voice").fetchone()[0]
+    print(f"{processed} historical pages processed through row {cursor}; {scored} domains scored")
+    crawl.close()
+    out.close()
+
+
+if __name__ == "__main__":
+    main()
