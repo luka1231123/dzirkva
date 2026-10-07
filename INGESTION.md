@@ -64,7 +64,7 @@ archive bytes, word-index progress and scored hosts.
 To run a named job manually with the same resource limits, stop the timer briefly and run:
 
 ```bash
-systemd-run --user --wait --pipe -p CPUQuota=10% -p MemoryMax=300M -p IOSchedulingClass=idle \
+systemd-run --user --wait --pipe --working-directory="$PWD" -p CPUQuota=10% -p MemoryMax=300M -p IOSchedulingClass=idle \
   nice -n 19 ~/.local/bin/uv run --frozen python scripts/ingest.py --job paper_text
 ```
 
