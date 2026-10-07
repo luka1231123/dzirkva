@@ -219,10 +219,10 @@ def citation(m: dict) -> str:
 
 
 def search(words: list[str], limit: int = 10, kinds: set[str] = frozenset()) -> list[dict]:
-    """Papers with all words (any form) in title, authors, keywords, abstract or journal; titles weigh most.
+    """Fuse metadata and complete PDF text matches; titles weigh most within metadata search.
     kinds: words of KIND_WORDS in the query (დისერტაცია): papers of those types come first."""
     db = _db()
-    if db is None or not words:
+    if db is None or not words or limit <= 0:
         return []
     expr = " AND ".join(any_form(w) for w in words)
     types = sorted({t for k in kinds for t in KIND_WORDS.get(k, ())})
@@ -230,21 +230,27 @@ def search(words: list[str], limit: int = 10, kinds: set[str] = frozenset()) -> 
     rows = db.execute(
         "SELECT url, title, creator, description, year, type, source FROM papers WHERE papers MATCH ? "
         f"ORDER BY {first}bm25(papers, 0, 0, 0, 10, 3, 3, 1, 1) LIMIT ?", (expr, *types, limit)).fetchall()
-    unique, known = [], set()
-    for row in rows:
-        if row[0] not in known:
-            unique.append(row)
-            known.add(row[0])
-    rows = unique
+    text_first = f"lower(p.c9) IN ({','.join('?' * len(types))}) DESC, " if types else ""
     text_rows = db.execute(
         "SELECT p.c1, p.c3, p.c4, snippet(fulltext, 1, '', '', ' … ', 45), p.c8, p.c9, p.c7 "
         "FROM fulltext JOIN papers_content p ON p.rowid=(SELECT rowid FROM papers_content "
         "WHERE c1=fulltext.url LIMIT 1) WHERE fulltext MATCH ? "
-        "ORDER BY bm25(fulltext) LIMIT ?", (expr, limit)).fetchall()
-    for row in text_rows:
-        if row[0] not in known:
-            rows.append(row)
-            known.add(row[0])
+        f"ORDER BY {text_first}bm25(fulltext) LIMIT ?", (expr, *types, limit)).fetchall()
+    # Separate ranked lists need fusion before trimming: metadata must not crowd out PDF-only matches.
+    scores, candidates = {}, {}
+    for ranked in (rows, text_rows):
+        seen = set()
+        rank = 0
+        for row in ranked:
+            url = row[0]
+            if url in seen:
+                continue
+            seen.add(url)
+            rank += 1
+            scores[url] = scores.get(url, 0) + 1 / (60 + rank)
+            candidates[url] = row  # PDF matches overwrite abstract snippets with the matching body passage.
+    rows = sorted(candidates.values(), key=lambda row: (
+        (row[5] or "").lower() in types, scores[row[0]]), reverse=True)
     out = []
     for url, title, creator, desc, year, typ, source in rows[:limit]:
         meta = " · ".join(x for x in (type_name(typ), year, creator[:80], journal(source)) if x)
