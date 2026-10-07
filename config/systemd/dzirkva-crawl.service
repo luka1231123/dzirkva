@@ -1,0 +1,21 @@
+[Unit]
+Description=dzirkva crawler, slow and always on (CRAWL_SLOW=1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=luka
+WorkingDirectory=/home/luka/dzirkva
+Environment=CRAWL_SLOW=1
+ExecStart=/home/luka/.local/bin/uv run --frozen python scripts/crawl_sites.py
+# Queue empty, stalled or crashed: start again in 10 minutes (each start reads the sitemaps again)
+Restart=always
+RestartSec=600
+# Search comes first: lowest CPU and disk priority, a hard cap on both CPU and RAM
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=25%
+MemoryMax=1200M
+
+[Install]
+WantedBy=multi-user.target

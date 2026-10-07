@@ -5,7 +5,7 @@ Georgian sites and the trusted ones. Foreign journals linked from Georgian pages
 and at the OJS paths seen in crawled URLs (/ojs/index.php/…). One endpoint per base URL of Identify
 (hos.openjournals.ge answers as openjournals.ge). Iverieli (dspace.nplg.gov.ge) has its own index.
 Run again after crawling: known endpoints stay, new ones are added.
-Run: uv run python scripts/find_repos.py
+Run: uv run python scripts/archive/find_repos.py
 """
 
 import asyncio
@@ -22,7 +22,7 @@ from dzirkva import iverieli, papers
 from dzirkva.crawl import DB as CRAWL_DB, MIN_GEORGIAN, domain_of
 from dzirkva.sources import sources
 
-WIKI_DUMP = Path(__file__).resolve().parent.parent / "data" / "kawiki.xml.bz2"
+WIKI_DUMP = Path(__file__).resolve().parents[2] / "data" / "kawiki.xml.bz2"
 PATHS = ("/index.php/index/oai", "/oai/request", "/server/oai/request", "/cgi/oai2", "/index/oai", "/oai")
 SOFTWARE = {"/index.php/": "ojs", "/index/oai": "ojs", "/oai/request": "dspace", "/cgi/oai2": "eprints"}
 OJS_PREFIX = re.compile(r"^(https?://[^/?#]+)(/[^?#]*?)/index\.php/")

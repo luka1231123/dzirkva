@@ -4,7 +4,7 @@ Papers with a PDF link (OJS galleys, EPrints files), newest first. A file bigger
 whole book: not read. Text and passages: passages.pdf_chunks (Georgian pages only, AcadNusx converted).
 Each repository is its own task, one request per PAUSE seconds. Resumable: done papers are in papers.db table texts.
 Needs pdftotext (brew install poppler).
-Run in background: nohup uv run python scripts/papers_text.py > data/papers_text.log 2>&1 &
+Run in background: nohup uv run python scripts/archive/papers_text.py > data/papers_text.log 2>&1 &
 """
 
 import asyncio

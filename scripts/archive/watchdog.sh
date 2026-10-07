@@ -1,7 +1,7 @@
 #!/bin/sh
 # Restarts scripts/build_passages.py when data/passages.log has no new line for 10 min (stall).
 # The build is resumable, so a restart loses at most one batch. Stops when the build prints "done".
-# Run: nohup ./scripts/watchdog.sh > data/watchdog.log 2>&1 &
+# Run: nohup ./scripts/archive/watchdog.sh > data/watchdog.log 2>&1 &
 cd "$(dirname "$0")/.." || exit 1
 LOG=data/passages.log
 while ! grep -q "^done" "$LOG"; do

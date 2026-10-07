@@ -1,7 +1,7 @@
 """Georgian research papers: OAI-PMH records of the journals and repositories on Georgian sites (data/papers.db).
 
-Repositories (table repos) are found by scripts/find_repos.py: every Georgian host is asked for an OAI-PMH
-endpoint (OJS journals, DSpace, EPrints). scripts/papers_collect.py harvests their Dublin Core records: title,
+Repositories (table repos) are found by scripts/archive/find_repos.py: every Georgian host is asked for an OAI-PMH
+endpoint (OJS journals, DSpace, EPrints). scripts/archive/papers_collect.py harvests their Dublin Core records: title,
 authors, keywords, abstract, year, type, journal and PDF link. Multilingual journals give a title and an abstract
 in each language: the most Georgian one is kept. Records without Georgian are left out.
 Iverieli, the National Library's DSpace, has its own index (iverieli.py).
@@ -28,7 +28,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS papers USING fts5(oai UNINDEXED, url UNINDEXE
     tokenize='unicode61');
 CREATE TABLE IF NOT EXISTS seen (oai TEXT PRIMARY KEY);  -- a record once: OJS installs answer under several names
 CREATE INDEX IF NOT EXISTS papers_url ON papers_content(c1);  -- a paper by its URL (c1 = url): meta()
-CREATE TABLE IF NOT EXISTS texts (url TEXT PRIMARY KEY, passages INT);  -- PDFs read by scripts/papers_text.py
+CREATE TABLE IF NOT EXISTS texts (url TEXT PRIMARY KEY, passages INT);  -- PDFs read by scripts/archive/papers_text.py
 """
 MIN_GEORGIAN = 0.3   # share of Georgian letters in the title + abstract kept
 CONTROL = re.compile(rb"[\x00-\x08\x0b\x0c\x0e-\x1f]")  # not allowed in XML; abstracts pasted from PDFs have them

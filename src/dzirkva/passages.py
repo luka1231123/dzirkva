@@ -34,7 +34,7 @@ def connect() -> sqlite3.Connection:
     columns = {c[1] for c in db.execute("PRAGMA table_info(passages)")}
     if "site" not in columns:  # wiki.SITES key, or 'iverieli'
         db.execute("ALTER TABLE passages ADD COLUMN site TEXT DEFAULT 'wikipedia'")
-    if "url" not in columns:  # set for pages outside the wikis (scripts/iverieli_text.py)
+    if "url" not in columns:  # set for pages outside the wikis (scripts/archive/iverieli_text.py)
         db.execute("ALTER TABLE passages ADD COLUMN url TEXT")
     return db
 

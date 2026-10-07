@@ -1,10 +1,10 @@
-"""Harvest the repositories found by scripts/find_repos.py into data/papers.db (Dublin Core records). Resumable.
+"""Harvest the repositories found by scripts/archive/find_repos.py into data/papers.db (Dublin Core records). Resumable.
 
 Each repository is its own task: one request at a time, PAUSE seconds apart; the resumption token is saved
 after each page of records. An expired token starts that repository again. A repository that fails RETRIES times
 in a row is marked 'error' and asked again on the next run. Journals on one OJS install under several names
 give the same records: a record is stored once (table seen).
-Run in background: nohup uv run python scripts/papers_collect.py > data/papers.log 2>&1 &
+Run in background: nohup uv run python scripts/archive/papers_collect.py > data/papers.log 2>&1 &
 """
 
 import asyncio

@@ -17,7 +17,10 @@ Each domain runs as its own task, one page at a time; up to MAX_TASKS pages and 
 WORKERS processes parse the pages. New domains
 are probed best first: .ge and blogs, then most linked.
 
-Run in the background:  nohup uv run python scripts/crawl_sites.py > data/crawl.log 2>&1 &
+Server: always on, slow (CRAWL_SLOW=1: few pages in flight, one parser), systemd unit config/systemd/dzirkva-crawl.service.
+It exits when the queue is empty or no page finished for STALL seconds (it used to hang after hours); systemd starts it
+again, and each start reads the sitemaps again, so new pages come in by themselves.
+Fast run on the Mac:    nohup uv run python scripts/crawl_sites.py > data/crawl.log 2>&1 &
 More pages per trusted site: uv run python scripts/crawl_sites.py 10000
 Progress:               sqlite3 data/crawl.db "select state, kind, count(*) from domains group by 1, 2"
 """
@@ -26,7 +29,9 @@ import asyncio
 import bz2
 import gzip
 import html
+import os
 import re
+import threading
 import sqlite3
 import sys
 import time
@@ -57,13 +62,16 @@ ROBOTS_TRIES = 3        # a host that does not answer: tries before it is reject
 RETRY = 600             # seconds between the tries
 MAX_DEPTH = 3
 MAX_SITEMAPS = 30       # sitemap files read per site, newest first
-MAX_FULL = 200          # full domains started per step (least recent first)
-MAX_PROBES = 200        # new domains started per step (best first)
-MAX_TASKS = 400         # pages in flight
-MAX_SEEDS = 40          # full domains reading sitemaps at once (all at once starved the loop: every connect timed out)
-WORKERS = 8             # processes that parse pages (trafilatura is the CPU cost)
+SLOW = os.environ.get("CRAWL_SLOW") == "1"  # home server: small share of CPU, RAM and network
+MAX_FULL = 16 if SLOW else 200     # full domains started per step (least recent first)
+MAX_PROBES = 8 if SLOW else 200    # new domains started per step (best first)
+MAX_TASKS = 16 if SLOW else 400    # pages in flight
+MAX_SEEDS = 2 if SLOW else 40      # full domains reading sitemaps at once (all at once starved the loop: every connect timed out)
+WORKERS = 1 if SLOW else 8         # processes that parse pages (trafilatura is the CPU cost)
+STALL = 1800            # seconds without a finished page: the crawler has hung, exit (systemd starts it again)
 PAUSE = 1.0
 MIN_TEXT = 200
+MAX_BYTES = 2_000_000   # bigger HTML (dumps, endless lists) took one parser to 1 GB and minutes of CPU
 URL = re.compile(r"https?://[^\s\[\]|<>\"'{}]+")
 HOST = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$")
 # dumps, archives, link and file services: not sites to discover
@@ -353,7 +361,9 @@ async def visit(client: httpx.AsyncClient, db, sites: dict[str, Site], site: Sit
     else:
         r = await get(client, fetch)
         status = "error" if r is None else f"http:{r.status_code}"
-    if r is not None and r.status_code == 200 and "html" in r.headers.get("content-type", ""):
+    if r is not None and len(r.content) > MAX_BYTES:
+        status = "too big"
+    elif r is not None and r.status_code == 200 and "html" in r.headers.get("content-type", ""):
         text, title, date, signals, page_links = await asyncio.get_running_loop().run_in_executor(
             POOL, parse, r.content, r.encoding, str(r.url), site.host)
         ratio = georgian_ratio(text)
@@ -415,6 +425,8 @@ async def main() -> None:
                 db.execute("UPDATE queue SET status='error' WHERE url=?", (url,))
                 print(f"error    {e!r:.60} {url[:100]}", flush=True)
             s.busy, s.next = False, max(s.next, time.monotonic() + s.delay)  # visit may set a later retry
+            global LAST_PAGE
+            LAST_PAGE = time.monotonic()
 
         while True:
             seeding = sum(s.busy and not s.seeded for s in sites.values() if s.state == "full")
@@ -441,6 +453,19 @@ async def main() -> None:
                 return
             await asyncio.sleep(PAUSE / 2)
 
+LAST_PAGE = time.monotonic()
+
+
+def stall_check() -> None:
+    """A thread, so it still runs when the event loop is stuck."""
+    while True:
+        time.sleep(60)
+        if time.monotonic() - LAST_PAGE > STALL:
+            print(f"stalled: no page for {STALL} s, exit", flush=True)
+            os._exit(1)
+
+
 if __name__ == "__main__":
     POOL = ProcessPoolExecutor(WORKERS)
+    threading.Thread(target=stall_check, daemon=True).start()
     asyncio.run(main())

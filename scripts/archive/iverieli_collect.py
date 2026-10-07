@@ -1,7 +1,7 @@
 """Collect the Iverieli catalog (601k records) by OAI-PMH into data/iverieli.db. ~6,000 requests, ~3 h.
 
 Resumable: the resumption token is saved after each page of 100 records.
-Run in background: nohup uv run python scripts/iverieli_collect.py > data/iverieli.log 2>&1 &
+Run in background: nohup uv run python scripts/archive/iverieli_collect.py > data/iverieli.log 2>&1 &
 """
 
 import time

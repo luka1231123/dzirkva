@@ -2,7 +2,7 @@
 
 601k records (books, journals, newspapers, theses …), mostly page scans without a text layer. This
 index has only the metadata from OAI-PMH (title, author, subject, description, year, type), so a
-search finds an item by what it is, not by its full text. Filled by scripts/iverieli_collect.py.
+search finds an item by what it is, not by its full text. Filled by scripts/archive/iverieli_collect.py.
 """
 
 import re

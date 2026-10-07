@@ -3,7 +3,7 @@
 A small PDF (≤ MAX_MB) is a Word export with a text layer; a big one is page scans, so it is not downloaded.
 The item page lists each file's size. Text and passages: passages.pdf_chunks.
 Needs pdftotext (brew install poppler). Resumable: done items are in iverieli.db table 'texts'.
-Run in background: nohup uv run python scripts/iverieli_text.py > data/iverieli_text.log 2>&1 &
+Run in background: nohup uv run python scripts/archive/iverieli_text.py > data/iverieli_text.log 2>&1 &
 """
 
 import re
