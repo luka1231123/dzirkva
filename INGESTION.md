@@ -70,6 +70,8 @@ systemd-run --user --wait --pipe --working-directory="$PWD" -p CPUQuota=10% -p M
 
 The runner's lock prevents overlap with a scheduled job. Valid names are listed in `scripts/ingest.py`.
 PDF extraction requires `poppler-utils` on Ubuntu. Expanded extracted text is limited to 8 MiB per PDF.
+The first PDF batch builds a passage URL index under the same resource limits; later replacements use indexed
+lookups instead of scanning the entire passage database. This index is built by ingestion, not web startup.
 
 Old-font PDF detection uses `data/pdf_words.db`, built from the existing vocabulary without loading it into a
 Python dictionary. Refresh it on the Mac after rebuilding the vocabulary, then copy it to the server:
