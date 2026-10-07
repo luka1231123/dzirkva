@@ -33,6 +33,10 @@ URL = re.compile(r"https?://[^\s\[\]|<>\"'{}]+")
 NS = {"oai": "http://www.openarchives.org/OAI/2.0/"}
 
 
+class BudgetExceeded(Exception):
+    pass
+
+
 def _host(url: str) -> str:
     try:
         return (urlparse(url).hostname or "").removeprefix("www.")
@@ -59,21 +63,32 @@ def candidates() -> tuple[set[str], set[str]]:
     return hosts - {""}, extra
 
 
-async def identify(client: httpx.AsyncClient, url: str) -> tuple[str, str] | None | bool:
+async def identify(client: httpx.AsyncClient, url: str, budget=None) -> tuple[str, str] | None | bool:
     """(repository name, base URL) of an endpoint; None: no endpoint here; False: the host does not answer."""
     try:
+        if budget and budget["received"] >= budget["maximum"]:
+            raise BudgetExceeded
         async with client.stream("GET", url, params={"verb": "Identify"}) as response:
             if response.status_code != 200:
                 return None
+            length = int(response.headers.get("content-length") or 0)
+            if length > 256 * 1024:
+                return None
+            if budget and length > budget["maximum"] - budget["received"]:
+                raise BudgetExceeded
             body = bytearray()
-            async for part in response.aiter_bytes():
-                if len(body) + len(part) > 512 * 1024:
+            async for part in response.aiter_bytes(chunk_size=65536):
+                if budget is not None:
+                    budget["received"] += len(part)
+                    if budget["received"] > budget["maximum"]:
+                        raise BudgetExceeded
+                if len(body) + len(part) > 256 * 1024:
                     return None
                 body.extend(part)
         content = bytes(body)
     except (httpx.ConnectError, httpx.ConnectTimeout):
         return False
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ValueError):
         return None
     try:
         root = ET.fromstring(content)
@@ -84,17 +99,17 @@ async def identify(client: httpx.AsyncClient, url: str) -> tuple[str, str] | Non
     return root.findtext(".//oai:repositoryName", "", NS).strip(), root.findtext(".//oai:baseURL", "", NS).strip()
 
 
-async def probe(client: httpx.AsyncClient, urls: list[str]) -> tuple[str, str, str] | None:
+async def probe(client: httpx.AsyncClient, urls: list[str], budget=None) -> tuple[str, str, str] | None:
     """The first endpoint that answers Identify: (url, name, base URL). A host without https is asked by http."""
-    found = await identify(client, urls[0])
+    found = await identify(client, urls[0], budget)
     if found is False and urls[0].startswith("https:"):
         urls = [u.replace("https:", "http:", 1) for u in urls]
-        found = await identify(client, urls[0])
+        found = await identify(client, urls[0], budget)
     if found is False:
         return None
     for url in urls:
         if url != urls[0]:
-            found = await identify(client, url)
+            found = await identify(client, url, budget)
         if found:
             return (url, *found)
     return None
@@ -126,9 +141,10 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Slow, bounded discovery of new academic OAI-PMH repositories")
     parser.add_argument("--limit", type=int, default=20, help="candidate hosts/endpoints per batch")
     parser.add_argument("--pause", type=float, default=5, help="seconds before every request")
+    parser.add_argument("--max-bytes", type=int, default=5*1024*1024, help="Identify batch body budget (+ <=64KiB boundary)")
     parser.add_argument("--wide", action="store_true", help="include all legacy web/wiki candidates")
     args = parser.parse_args()
-    if args.limit <= 0 or args.pause < 0:
+    if args.limit <= 0 or args.pause < 0 or args.max_bytes <= 0:
         parser.error("limit must be positive and pause nonnegative")
     db = papers.connect()
     db.execute("CREATE TABLE IF NOT EXISTS repo_probes(candidate TEXT PRIMARY KEY, checked TEXT, found INT)")
@@ -141,14 +157,19 @@ async def main() -> None:
     jobs += [(host, [f"https://{host}{path}" for path in PATHS]) for host in sorted(hosts - known - recent)]
     jobs = jobs[:args.limit]
     print(f"{len(hosts):,} academic hosts, {len(extra)} OJS paths, {len(jobs)} candidates this batch", flush=True)
+    budget = {"maximum": args.max_bytes, "received": 0}
     async def throttle(request):
         await asyncio.sleep(args.pause)
         await wait_for_host(str(request.url), pause=args.pause, background=True)
 
     async with httpx.AsyncClient(event_hooks={"request": [throttle]}, follow_redirects=True, timeout=httpx.Timeout(20, connect=6), verify=False,
-                                 headers={"User-Agent": papers.AGENT}) as client:
+                                 headers={"User-Agent": papers.AGENT, "Accept-Encoding": "identity"}) as client:
         for candidate, urls in jobs:
-            found = await probe(client, urls)
+            try:
+                found = await probe(client, urls, budget)
+            except BudgetExceeded:
+                print(f"Identify budget stop: {budget['received']:,} body bytes", flush=True)
+                break
             db.execute("INSERT OR REPLACE INTO repo_probes VALUES (?, ?, ?)",
                        (candidate, datetime.now(timezone.utc).isoformat(), int(bool(found))))
             if found:

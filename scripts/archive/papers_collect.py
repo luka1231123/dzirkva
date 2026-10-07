@@ -1,6 +1,6 @@
 """Sequential, resumable OAI-PMH harvest; completed repositories refresh incrementally.
 
-Save the start date of a successful run as its next watermark, with a one-day overlap. Default batch: one repository, up to 20 XML pages (8 MiB each).
+Save the start date of a successful run as its next watermark, with a one-day overlap. Default batch: one repository, up to 20 XML pages (8 MiB each), within a 10 MiB total body budget.
 Expired resumption tokens restart the same window without discarding existing records.
 Use --limit to cap repositories and --pause for the global request trickle.
 """
@@ -17,6 +17,10 @@ from dzirkva.ingest import wait_for_host
 RETRIES = 4
 
 
+class BudgetExceeded(Exception):
+    pass
+
+
 def retire(db, urls):
     # Durable outbox: a crash between the two databases must not retain deleted PDF passages.
     db.executemany("INSERT OR IGNORE INTO retired_text VALUES (?)", [(url,) for url in urls])
@@ -24,7 +28,9 @@ def retire(db, urls):
 
 drain_retired = papers.drain_retired
 
-async def harvest(client, db, base, pause, max_pages=20):
+async def harvest(client, db, base, pause, max_pages=20, budget=None):
+    if budget is None:
+        budget = {"maximum": 10 * 1024 * 1024, "received": 0}
     token, last, start, since = db.execute(
         "SELECT token, last_sync, sync_started, sync_from FROM repos WHERE base = ?", (base,)).fetchone()
     if not start:
@@ -41,10 +47,17 @@ async def harvest(client, db, base, pause, max_pages=20):
     while params and pages_read < max_pages:
         for attempt in range(RETRIES):
             try:
+                if budget["received"] >= budget["maximum"]:
+                    raise BudgetExceeded
                 async with client.stream("GET", base, params=params) as response:
                     response.raise_for_status()
+                    if int(response.headers.get("content-length") or 0) > budget["maximum"] - budget["received"]:
+                        raise BudgetExceeded
                     body = bytearray()
-                    async for part in response.aiter_bytes():
+                    async for part in response.aiter_bytes(chunk_size=65536):
+                        budget["received"] += len(part)
+                        if budget["received"] > budget["maximum"]:
+                            raise BudgetExceeded
                         if len(body) + len(part) > 8 * 1024 * 1024:
                             raise ValueError("OAI response exceeds 8 MiB")
                         body.extend(part)
@@ -52,6 +65,9 @@ async def harvest(client, db, base, pause, max_pages=20):
                 observed, deleted = papers.page_changes(bytes(body))
                 stamps = papers.page_stamps(bytes(body))
                 break
+            except BudgetExceeded:
+                print(f"metadata budget stop: {budget['received']:,} body bytes; checkpoint retained", flush=True)
+                return False
             except (httpx.HTTPError, SyntaxError, ValueError) as exc:
                 print(f"! {base}: {type(exc).__name__}, retry {attempt + 1}", flush=True)
                 if attempt + 1 < RETRIES:
@@ -111,9 +127,10 @@ async def main():
     parser.add_argument("--limit", "--repo-limit", type=int, default=1, help="repository limit; 0 means all")
     parser.add_argument("--pause", type=float, default=5.0, help="seconds between requests across all repositories")
     parser.add_argument("--max-pages", type=int, default=20, help="ListRecords pages per repository per batch")
+    parser.add_argument("--max-bytes", type=int, default=10*1024*1024, help="total XML body budget across repositories/retries (+ <=64KiB boundary)")
     parser.add_argument("--base", help="harvest one known endpoint")
     args = parser.parse_args()
-    if args.limit < 0 or args.pause < 0 or args.max_pages <= 0:
+    if args.limit < 0 or args.pause < 0 or args.max_pages <= 0 or args.max_bytes <= 0:
         parser.error("limit and pause must be nonnegative")
     db = papers.connect()
     drain_retired(db)
@@ -124,15 +141,18 @@ async def main():
         todo = db.execute("SELECT base FROM repos WHERE base=?", (args.base,)).fetchall()
     if args.limit:
         todo = todo[:args.limit]
+    budget = {"maximum": args.max_bytes, "received": 0}
     print(f"{len(todo)} repositories (one request at a time)", flush=True)
     async def throttle(request):
         await asyncio.sleep(args.pause)
         await wait_for_host(str(request.url), pause=args.pause, background=True)
 
     async with httpx.AsyncClient(event_hooks={"request": [throttle]}, follow_redirects=True, timeout=httpx.Timeout(120, connect=10), verify=False,
-                                 headers={"User-Agent": papers.AGENT}) as client:
+                                 headers={"User-Agent": papers.AGENT, "Accept-Encoding": "identity"}) as client:
         for (base,) in todo:
-            await harvest(client, db, base, args.pause, args.max_pages)
+            if await harvest(client, db, base, args.pause, args.max_pages, budget) is False:
+                break
+    print(f"metadata batch: {budget['received']:,} XML body bytes", flush=True)
     db.close()
 
 
