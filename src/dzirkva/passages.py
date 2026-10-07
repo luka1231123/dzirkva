@@ -24,6 +24,7 @@ DIM = 1024
 NAMES = {"iverieli": "ივერიელი", "papers": "სამეცნიერო ნაშრომი"}  # sites outside the wikis (passages with a url)
 PDF_PAGE_GEORGIAN = 0.5  # a PDF page with less Georgian (English summary, tables) is skipped
 LATIN_WORD = re.compile(r"[A-Za-z]{3,}")
+RESCORE = 1000  # candidates from the 1-bit scan that get their exact fp16 score
 LEADER = re.compile(r"(\.\s?){4,}|…{2,}")  # table of contents: "თავი I ........ 28"
 
 
@@ -86,18 +87,20 @@ def embed_text(title: str, text: str) -> str:
 
 @cache
 def _index():
-    """All vectors in memory (fp16, ~1.8 GB), on the CPU: a torch fp16 dot product with all 872k takes ~20 ms, as fast
-    as the GPU, and the GPU memory stays free. Loaded once per process; passages built later need a restart."""
-    import torch
-
+    """A 1-bit copy of every vector in memory: the sign of each dimension, 128 bytes (~110 MB for 870k). The fp16
+    vectors (~1.8 GB) stay on disk; search reads only the RESCORE nearest by bits. Read in chunks, so the full
+    vectors are never all in memory (the home server has 7 GB). Passages built later need a restart."""
     if not DB.exists():
         return None
-    rows = _db().execute("SELECT id, v FROM passages WHERE v IS NOT NULL").fetchall()
-    if not rows:
+    ids, bits = [], []
+    rows = _db().execute("SELECT id, v FROM passages WHERE v IS NOT NULL")
+    while chunk := rows.fetchmany(50_000):
+        ids.append(np.array([i for i, _ in chunk]))
+        vecs = np.frombuffer(b"".join(v for _, v in chunk), dtype=np.float16).reshape(-1, DIM)
+        bits.append(np.packbits(vecs > 0, axis=1).view(np.uint64))
+    if not ids:
         return None
-    ids = np.array([i for i, _ in rows])
-    vecs = np.frombuffer(b"".join(v for _, v in rows), dtype=np.float16).reshape(-1, DIM)
-    return ids, torch.from_numpy(vecs.copy())
+    return np.concatenate(ids), np.concatenate(bits)
 
 
 def best(title: str, qv, site: str = "wikipedia") -> tuple[str, np.ndarray] | None:
@@ -115,22 +118,26 @@ def best(title: str, qv, site: str = "wikipedia") -> tuple[str, np.ndarray] | No
 def search(query: str, limit: int = 20, qv=None) -> list[dict]:
     """The paragraphs nearest to the question in meaning, best one per article (Wikipedia, Wikisource, Iverieli,
     papers). qv: the question vector, when the caller has it already."""
-    import torch
-
     from dzirkva.meaning import vectors
     from dzirkva.wiki import SITES
 
     index = _index()
     if index is None:
         return []
-    ids, vecs = index
-    q = torch.as_tensor(vectors([query])[0] if qv is None else qv).to(vecs)
-    scores, top = (vecs @ q).topk(min(limit * 4, len(ids)))
+    ids, bits = index
+    q = np.asarray(vectors([query])[0] if qv is None else qv, dtype=np.float32)
+    dist = np.bitwise_count(bits ^ np.packbits(q > 0).view(np.uint64)).sum(axis=1, dtype=np.uint16)
+    n = min(RESCORE, len(ids))
+    near = ids[np.argpartition(dist, n - 1)[:n]].tolist()
     db = _db()
+    rows = db.execute(f"SELECT title, text, site, url, v FROM passages WHERE id IN ({','.join('?' * n)})",
+                      near).fetchall()
+    vecs = np.frombuffer(b"".join(r[4] for r in rows), dtype=np.float16).reshape(-1, DIM).astype(np.float32)
+    scores = vecs @ q
     out, seen = [], set()
-    for score, i in zip(scores.tolist(), top.tolist()):
-        title, text, site, url = db.execute("SELECT title, text, site, url FROM passages WHERE id = ?",
-                                            (int(ids[i]),)).fetchone()
+    for i in np.argsort(-scores)[:limit * 4]:
+        title, text, site, url, _ = rows[i]
+        score = float(scores[i])
         if (site, url or title) in seen:
             continue
         seen.add((site, url or title))
@@ -140,7 +147,7 @@ def search(query: str, limit: int = 20, qv=None) -> list[dict]:
             _, prefix, name = SITES[site]
             url = prefix + quote(title.replace(" ", "_"))
         out.append({"url": url, "title": f"{title} · {name}",
-                    "snippet": text, "engine": "passages", "score": score, "vector": vecs[i].float().numpy()})
+                    "snippet": text, "engine": "passages", "score": score, "vector": vecs[i]})
         if len(out) == limit:
             break
     return out

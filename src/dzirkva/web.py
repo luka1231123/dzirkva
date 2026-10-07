@@ -1101,7 +1101,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     similarity("გამარჯობა", ["გამარჯობა"])  # load the meaning model once, before the first search
-    passages._index()  # ~35 s: load the 743k paragraph vectors before the first search, not during it
+    passages._index()  # load the 1-bit paragraph vectors before the first search, not during it
     home_page()  # ~10 s: index sizes and the newest posts, counted before the first visitor
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     server.daemon_threads = True
