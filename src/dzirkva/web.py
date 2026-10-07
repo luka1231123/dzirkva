@@ -32,6 +32,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse, urlsplit, urlunsplit
 
 import yaml
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")  # before search/morph read their settings
 
 from dzirkva.georgian import normalize
 from dzirkva import (archive, clicks, crawl, dictionary, discover, iverieli, papers, passages, telemetry, wiki,
