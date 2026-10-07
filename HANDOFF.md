@@ -13,6 +13,12 @@ Read `CLAUDE.md` first (rules, commands, layout). This file holds the state and 
   coverage + clicks) → group copies. Code: `src/dzirkva/search.py`.
 - `confirm_fixes` now uses `crawl.count` (typed word next to the other query words vs the fix, 20× rule).
 
+- **Embedding worker and cache:** BGE-M3 loads lazily in a spawned process and exits after 300 seconds without
+  embedding requests (`MODEL_IDLE_SECONDS`). Manual unload and web cache clear:
+  `ssh rexvopc 'cd ~/dzirkva && uv run python -m dzirkva.meaning --idle'`.
+  The web result cache is an LRU capped at 32 searches (`SEARCH_CACHE_SIZE`, 0 disables).
+  The next uncached search reloads the model; language tables and the 1-bit passage index stay in the web process.
+
 ### Data (Mac copies, 2026-10-02; the live `crawl.db` is on the server and bigger)
 
 | Index | Size |

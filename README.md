@@ -110,6 +110,20 @@ Cloudflare Tunnel-ით უკავშირდება. systemd-ის ფ�
 - `dzirkva-crawl`: გვერდების შემგროვებელი. გამუდმებით მუშაობს, მაგრამ ნელა: იყენებს პროცესორის ერთი ბირთვის
   მეოთხედს და 1,2 GB მეხსიერებას. ახალ გვერდებს თავისით ამატებს.
 
+The embedding model runs in a separate process, loaded on the first search. It exits after
+five minutes without embedding requests; the next search reloads it. Set `MODEL_IDLE_SECONDS`
+to change the delay. The in-memory search cache keeps the 32 most recently used searches;
+`SEARCH_CACHE_SIZE=0` disables it. These settings are environment variables.
+
+To unload the model manually and clear the search cache on the running server:
+
+```bash
+ssh rexvopc 'cd ~/dzirkva && uv run python -m dzirkva.meaning --idle'
+```
+
+This waits for queued searches to finish. New searches wake the model again. The control
+endpoint accepts only local requests with the control header, excluding tunnel requests.
+
 კოდის განახლება: `git ls-files -z | rsync -t --files-from=- --from0 . rexvopc:dzirkva/`. ამის შემდეგ
 გადატვირთეთ `dzirkva-web` სერვისი.
 

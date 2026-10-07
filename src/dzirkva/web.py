@@ -24,6 +24,7 @@ import secrets
 import sqlite3
 import threading
 import time
+from collections import OrderedDict
 from functools import cache
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,7 +36,7 @@ import yaml
 from dzirkva.georgian import normalize
 from dzirkva import (archive, clicks, crawl, dictionary, discover, iverieli, papers, passages, telemetry, wiki,
                      wordgraph)
-from dzirkva.meaning import similarity
+from dzirkva.meaning import idle as idle_model
 from dzirkva.morph import analyze, families
 from dzirkva.georgian import KEEP_RATIO
 from dzirkva.search import COPY_SIMILARITY, MIN_GEORGIAN, ROUND1_GOOD, canonical_url, intents, search
@@ -81,7 +82,32 @@ FORWARDED = ("X-Forwarded-For", "Forwarded", "Cf-Connecting-Ip", "X-Real-Ip")  #
 MAX_SEARCHES = int(os.environ.get("MAX_SEARCHES", "3"))  # new searches running or waiting at a time
 PORT = int(os.environ.get("PORT", "8000"))
 BUSY_SECONDS = 10  # the busy page reloads itself after this
-_cache: dict[str, tuple[dict, list, dict]] = {}
+SEARCH_CACHE_SIZE = max(0, int(os.environ.get("SEARCH_CACHE_SIZE", "32")))
+_cache: OrderedDict[str, tuple[dict, list, dict]] = OrderedDict()
+_cache_lock = threading.Lock()
+
+
+def _cached(key):
+    with _cache_lock:
+        value = _cache.get(key)
+        if value is not None:
+            _cache.move_to_end(key)
+        return value
+
+
+def _remember(key, value):
+    with _cache_lock:
+        if SEARCH_CACHE_SIZE:
+            _cache[key] = value
+            _cache.move_to_end(key)
+            while len(_cache) > SEARCH_CACHE_SIZE:
+                _cache.popitem(last=False)
+
+
+def _clear_cache():
+    with _cache_lock:
+        _cache.clear()
+
 DEEP_KEY = "\x00deep"  # _cache key of a deep search: the question + this
 _last_view: dict[str, float] = {}  # session → time of its last results page (time to click)
 _jobs: queue.Queue = queue.Queue()  # searches for the worker: (job, done event)
@@ -967,7 +993,7 @@ class Handler(BaseHTTPRequestHandler):
         route, params = self._begin()
         q = params.get("q", [""])[0].strip()
         deep = params.get("deep", [""])[0] == "1"
-        new_search = route == "/" and bool(q) and (q + DEEP_KEY if deep else q) not in _cache
+        new_search = route == "/" and bool(q) and _cached(q + DEEP_KEY if deep else q) is None
         if new_search and not _searches.acquire(blocking=False):
             self._log("busy", q)
             return self._send(_page("", busy_page(self.path), BUSY_SECONDS), 503)
@@ -986,7 +1012,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # navigator.sendBeacon posts
         route, params = self._begin()
-        if route == "/t":
+        if route == "/idle":
+            if not (self.local and self.client_address[0] == "127.0.0.1"
+                    and self.headers.get("X-Dzirkva-Control") == "idle"):
+                return self.send_error(404)
+            def unload():
+                idle_model()
+                _clear_cache()
+            _on_worker(unload)  # finish searches already queued before unloading
+            self._send("Embedding worker idle; search cache cleared.\n", content_type="text/plain")
+        elif route == "/t":
             self._beacon(params)
         else:
             self.send_error(405)
@@ -1039,13 +1074,18 @@ class Handler(BaseHTTPRequestHandler):
         chosen = {f for f in params.get("f", [])[:1] if f in FILTERS}  # one filter at a time
         deep = p("deep") == "1"
         key = q + DEEP_KEY if deep else q
-        fresh = key not in _cache
+        value = _cached(key)
+        fresh = value is None
         if fresh:
             t = time.time()
-            qs, results, debug = _on_worker(lambda: search(q, deep))  # the meaning model runs on the worker only
-            debug["seconds"]["total"] = round(time.time() - t, 1)  # with the wait for searches before it
-            _cache[key] = (qs, results, debug)
-        qs, results, debug = _cache[key]
+            def run_search():
+                qs, results, debug = search(q, deep)
+                debug["seconds"]["total"] = round(time.time() - t, 1)  # include time in the queue
+                value = (qs, results, debug)
+                _remember(key, value)
+                return value
+            value = _on_worker(run_search)
+        qs, results, debug = value
         body = render(q, tab, chosen, qs, results, debug)
         if self.session:
             _last_view[self.session] = time.time()
@@ -1068,11 +1108,12 @@ class Handler(BaseHTTPRequestHandler):
         info = {}
         if p("k") and rank:
             clicks.log(p("k"), canonical_url(url), rank)
-            hit = next((r for r in _cache[q][1] if r.rank == rank), None) if q in _cache else None
+            value = _cached(q)
+            hit = next((r for r in value[1] if r.rank == rank), None) if value else None
             if hit:
                 info = {"result_kind": hit.kind, "tags": sorted(hit.tags), "tier": hit.tier,
                         "paper": "papers" in hit.queries}
-            _cache.clear()  # the next search of the question ranks with this click
+            _clear_cache()  # the next search of the question ranks with this click
         since = _last_view.get(self.session)
         self._log("click", q, where=p("w"), rank=rank, host=_host(url), site=p("s"),
                   after_ms=int((time.time() - since) * 1000) if since else None, **info)
@@ -1106,7 +1147,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    similarity("გამარჯობა", ["გამარჯობა"])  # load the meaning model once, before the first search
     passages._index()  # load the 1-bit paragraph vectors before the first search, not during it
     home_page()  # ~10 s: index sizes and the newest posts, counted before the first visitor
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
