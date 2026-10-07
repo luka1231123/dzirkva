@@ -22,6 +22,7 @@ from lxml import etree, html
 
 from dzirkva import crawl
 from dzirkva.georgian import georgian_ratio
+from dzirkva.ingest import wait_for_host
 from dzirkva.sources import sources
 
 FEEDS_DB = crawl.DB.with_name("feeds.db")
@@ -49,14 +50,17 @@ class Post:
     date: str
     text: str = ""
     complete: bool = False
+    indexable: bool = True
 
 
 def _date(text: str) -> str:
     text = (text or "").strip()
     try:
         if re.match(r"\d{4}-\d{2}-\d{2}", text):
-            return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%Y-%m-%d")
-        return parsedate_to_datetime(text).strftime("%Y-%m-%d")
+            day = datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%Y-%m-%d")
+        else:
+            day = parsedate_to_datetime(text).strftime("%Y-%m-%d")
+        return day if day <= datetime.now(timezone.utc).strftime("%Y-%m-%d") else ""
     except (TypeError, ValueError, OverflowError):
         return ""
 
@@ -108,29 +112,46 @@ def parse(xml: bytes, base: str = "") -> list[Post]:
             markup = "".join(etree.tostring(e, encoding="unicode") for e in content)
         else:
             markup = value(content_key) if content_key else value("description") or value("summary")
-        complete = bool(content_key) and content is not None and not content.get("src")
+        content_type = content.get("type", "text").lower() if content is not None else ""
+        complete = bool(content_key) and content is not None and not content.get("src") and (
+            name != "entry" or content_type in {"text", "html", "xhtml", "text/plain", "text/html", "application/xhtml+xml"})
         text = plain(markup)
         if re.search(r"read more|continue reading|ვრცლად|სრულად ნახვა", text[-160:], re.I):
             complete = False
+        indexable = True
+        try:
+            body_tree = html.fromstring(markup)
+            indexable = not any(re.search(r"\b(?:noindex|none)\b", e.get("content", ""), re.I) for e in body_tree.xpath(
+                "//meta[translate(@name,'ROBOTS','robots')='robots']"))
+        except (ValueError, etree.ParserError):
+            pass
         u = clean_url(link, base)
         if u:
             posts.append(Post(u, plain(value("title")), _date(value("pubDate") or value("published")
-                              or value("updated") or value("date")), text, complete))
+                              or value("updated") or value("date")), text, complete, indexable))
         if len(posts) >= MAX_ITEMS:
             break
     return posts
 
 
+class BudgetExhausted(Exception):
+    """Leave remaining due feeds untouched for the next bounded run."""
+
+
 class Fetcher:
     """Sequential requests with host delay and robots checks, including feed/home redirects."""
-    def __init__(self, client, pause):
+    def __init__(self, client, pause, max_bytes=10 * 1024 * 1024):
         self.client, self.pause = client, pause
+        self.max_bytes, self.bytes_read = max_bytes, 0
         self.next = {}
         self.robots = {}
         self.delays = {}
 
     async def request(self, url, headers=None):
+        if self.bytes_read >= self.max_bytes:
+            raise BudgetExhausted()
         host = urlsplit(url).netloc
+        await wait_for_host(url, pause=self.delays.get(host, self.pause), background=True)
         await asyncio.sleep(max(0, self.next.get(host, 0) - time.monotonic()))
         self.next[host] = time.monotonic() + self.delays.get(host, self.pause)
         async with self.client.stream("GET", url, headers=headers, follow_redirects=False) as response:
@@ -138,8 +159,17 @@ class Fetcher:
                 return response.status_code, response.headers, b""
             if response.status_code != 304:
                 response.raise_for_status()
+            try:
+                advertised = int(response.headers.get("content-length", "0"))
+            except ValueError:
+                advertised = 0
+            if advertised > self.max_bytes - self.bytes_read:
+                raise BudgetExhausted()
             body = bytearray()
-            async for chunk in response.aiter_bytes():
+            async for chunk in response.aiter_bytes(chunk_size=16384):
+                self.bytes_read += len(chunk)
+                if self.bytes_read > self.max_bytes:
+                    raise BudgetExhausted()
                 body.extend(chunk)
                 if len(body) > MAX_BYTES:
                     raise ValueError("response too large")
@@ -192,6 +222,7 @@ def seed(db, crawler, limit):
     for host, (category, _) in sources().items():
         interval = 7200 if category == "news" else 86400
         db.execute("INSERT OR IGNORE INTO feeds(host,interval) VALUES (?,?)", (host, interval))
+    db.commit()
     # Indexed lookup into the registry avoids repeatedly trying the same accepted domains.
     crawler.execute("ATTACH DATABASE ? AS rss_registry", (str(FEEDS_DB),))
     rows = crawler.execute("SELECT d.host, d.kind FROM domains d LEFT JOIN rss_registry.feeds f ON f.host=d.host "
@@ -230,23 +261,23 @@ async def poll(fetcher, db, crawler, row):
         root = etree.fromstring(body, etree.XMLParser(resolve_entities=False, no_network=True))
         if etree.QName(root).localname not in {"rss", "RDF", "feed"}:
             raise ValueError("not a feed")
+        feed_indexable = not re.search(r"\b(?:noindex|none)\b", response_headers.get("x-robots-tag", ""), re.I)
         for post in posts:
-            if crawl.domain_of(post.url) != host:
+            if crawl.domain_of(post.url) != host or georgian_ratio(post.title + " " + post.text) < crawl.MIN_GEORGIAN:
                 continue
             existing = db.execute("SELECT digest,indexed FROM items WHERE url=?", (post.url,)).fetchone()
             digest = hashlib.sha256(post.text.encode()).hexdigest()
-            if georgian_ratio(post.title + " " + post.text) >= crawl.MIN_GEORGIAN:
-                db.execute("INSERT INTO posts VALUES (?,?,?,?) ON CONFLICT(url) DO UPDATE SET title=excluded.title, "
-                           "date=CASE WHEN excluded.date='' THEN posts.date ELSE excluded.date END",
-                           (post.url, host, post.title, post.date))
+            db.execute("INSERT INTO posts VALUES (?,?,?,?) ON CONFLICT(url) DO UPDATE SET title=excluded.title, "
+                       "date=CASE WHEN excluded.date='' THEN posts.date ELSE excluded.date END",
+                       (post.url, host, post.title, post.date))
             new += existing is None
-            if existing and existing[0] == digest:
+            complete = post.complete and post.indexable and feed_indexable and len(post.text) >= MIN_FULL_TEXT and georgian_ratio(post.text) >= crawl.MIN_GEORGIAN
+            if existing and existing[0] == digest and (existing[1] or not complete):
                 continue
-            complete = post.complete and len(post.text) >= MIN_FULL_TEXT and georgian_ratio(post.text) >= crawl.MIN_GEORGIAN
             duplicate = db.execute("SELECT 1 FROM items WHERE digest=? AND indexed=1 AND url<>?", (digest, post.url)).fetchone()
             stored = False
             if complete and not duplicate and await fetcher.allowed(post.url):
-                crawl.upsert_page(crawler, post.url, post.title, post.date, post.text)
+                crawl.upsert_page(crawler, post.url, post.title, post.date, post.text, prefer_existing_longer=True)
                 indexed += 1
                 stored = True
             elif not duplicate:
@@ -277,7 +308,7 @@ async def main(args):
     counts = [0, 0, 0]
     now = int(time.time())
     async with httpx.AsyncClient(timeout=30, headers={"User-Agent": AGENT}) as client:
-        fetcher = Fetcher(client, args.pause)
+        fetcher = Fetcher(client, args.pause, args.max_bytes)
         rows = db.execute("SELECT host FROM feeds WHERE url='' AND next_check<=? "
                           "ORDER BY next_check,host LIMIT ?", (now, args.discover_limit)).fetchall()
         for (host,) in rows:
@@ -285,6 +316,9 @@ async def main(args):
                 url = await discover(fetcher, host)
                 db.execute("UPDATE feeds SET url=?,last_check=?,next_check=?,failures=0 WHERE host=?",
                            (url, now, now if url else now + 30 * 86400, host))
+            except BudgetExhausted:
+                print("RSS download budget reached during discovery; remaining hosts stay due", flush=True)
+                break
             except (httpx.HTTPError, ValueError, etree.LxmlError) as e:
                 fail(db, host, e)
             db.commit()
@@ -295,6 +329,11 @@ async def main(args):
                 result = await poll(fetcher, db, crawler, row)
                 counts = [a + b for a, b in zip(counts, result)]
                 print(f"{row[0]}: {result[0]} new, {result[1]} indexed, {result[2]} queued", flush=True)
+            except BudgetExhausted:
+                crawler.rollback()
+                db.rollback()
+                print("RSS download budget reached; remaining feeds stay due", flush=True)
+                break
             except (httpx.HTTPError, ValueError, etree.LxmlError) as e:
                 crawler.rollback()
                 db.rollback()
@@ -302,7 +341,7 @@ async def main(args):
                 db.commit()
     crawler.close()
     db.close()
-    print(f"new={counts[0]} indexed={counts[1]} queued={counts[2]}", flush=True)
+    print(f"new={counts[0]} indexed={counts[1]} queued={counts[2]} bytes={fetcher.bytes_read}", flush=True)
 
 
 def fail(db, host, error):
@@ -317,8 +356,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--discover-limit", type=int, default=10)
     parser.add_argument("--poll-limit", type=int, default=30)
+    parser.add_argument("--max-bytes", type=int, default=10 * 1024 * 1024, help="total response body budget per run (default 10 MiB)")
     parser.add_argument("--pause", type=float, default=2.0, help="minimum seconds between requests to a host")
     args = parser.parse_args()
-    if min(args.discover_limit, args.poll_limit) < 0 or args.pause < 1:
+    if min(args.discover_limit, args.poll_limit, args.max_bytes) < 0 or args.pause < 1:
         parser.error("limits must be nonnegative and pause at least 1 second")
     asyncio.run(main(args))
