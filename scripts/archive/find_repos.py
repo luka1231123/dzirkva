@@ -1,6 +1,6 @@
-"""Find the OAI-PMH endpoints of Georgian journals and repositories → data/papers.db table repos. ~10 min.
+"""Find OAI-PMH endpoints in bounded sequential batches (20 academic hosts by default).
 
-Hosts: every .ge host the crawl knows (queue and domains), .ge hosts cited in Georgian Wikipedia, and the crawled
+Legacy --wide hosts: every .ge host the crawl knows (queue and domains), .ge hosts cited in Georgian Wikipedia, and the crawled
 Georgian sites and the trusted ones. Foreign journals linked from Georgian pages are not asked. Each host is asked for Identify at the usual paths (OJS, DSpace 6 and 7, EPrints)
 and at the OJS paths seen in crawled URLs (/ojs/index.php/…). One endpoint per base URL of Identify
 (hos.openjournals.ge answers as openjournals.ge). Iverieli (dspace.nplg.gov.ge) has its own index.
@@ -8,10 +8,12 @@ Run again after crawling: known endpoints stay, new ones are added.
 Run: uv run python scripts/archive/find_repos.py
 """
 
+import argparse
 import asyncio
 import bz2
 import re
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from xml.etree import ElementTree as ET
@@ -19,6 +21,7 @@ from xml.etree import ElementTree as ET
 import httpx
 
 from dzirkva import iverieli, papers
+from dzirkva.ingest import wait_for_host
 from dzirkva.crawl import DB as CRAWL_DB, MIN_GEORGIAN, domain_of
 from dzirkva.sources import sources
 
@@ -27,7 +30,7 @@ PATHS = ("/index.php/index/oai", "/oai/request", "/server/oai/request", "/cgi/oa
 SOFTWARE = {"/index.php/": "ojs", "/index/oai": "ojs", "/oai/request": "dspace", "/cgi/oai2": "eprints"}
 OJS_PREFIX = re.compile(r"^(https?://[^/?#]+)(/[^?#]*?)/index\.php/")
 URL = re.compile(r"https?://[^\s\[\]|<>\"'{}]+")
-TASKS = 100
+PAUSE = 5.0
 NS = {"oai": "http://www.openarchives.org/OAI/2.0/"}
 
 
@@ -60,16 +63,24 @@ def candidates() -> tuple[set[str], set[str]]:
 async def identify(client: httpx.AsyncClient, url: str) -> tuple[str, str] | None | bool:
     """(repository name, base URL) of an endpoint; None: no endpoint here; False: the host does not answer."""
     try:
-        r = await client.get(url, params={"verb": "Identify"})
+        async with client.stream("GET", url, params={"verb": "Identify"}) as response:
+            if response.status_code != 200:
+                return None
+            body = bytearray()
+            async for part in response.aiter_bytes():
+                if len(body) + len(part) > 512 * 1024:
+                    return None
+                body.extend(part)
+        content = bytes(body)
     except (httpx.ConnectError, httpx.ConnectTimeout):
         return False
     except httpx.HTTPError:
         return None
-    if r.status_code != 200 or b"<Identify" not in r.content:
-        return None
     try:
-        root = ET.fromstring(r.content)
+        root = ET.fromstring(content)
     except ET.ParseError:
+        return None
+    if root.find("oai:Identify", NS) is None:
         return None
     return root.findtext(".//oai:repositoryName", "", NS).strip(), root.findtext(".//oai:baseURL", "", NS).strip()
 
@@ -94,37 +105,67 @@ def _ident(base: str) -> str:
     return re.sub(r"^https?://(www\.)?", "", base).rstrip("/")
 
 
+def academic_candidates() -> tuple[set[str], set[str]]:
+    """Accepted academic hosts and trusted science sources, without rescanning the entire web/dump."""
+    hosts = {host for host, (category, _) in sources().items() if category == "science"}
+    extra = set()
+    if not CRAWL_DB.exists():
+        return hosts, extra
+    with sqlite3.connect(f"file:{CRAWL_DB}?mode=ro", uri=True) as crawl:
+        hosts.update(host for (host,) in crawl.execute(
+            "SELECT host FROM domains WHERE state='full' AND (kind='academic' OR "
+            "signals LIKE '%academic%' OR signals LIKE '%ojs%' OR signals LIKE '%dspace%' OR signals LIKE '%eprints%')"))
+        for host in sorted(hosts):
+            for (url,) in crawl.execute("SELECT url FROM queue WHERE status='todo' AND host=? "
+                                        "AND url LIKE '%/index.php/%' LIMIT 100", (host,)):
+                if match := OJS_PREFIX.match(url):
+                    extra.add(f"{match[1]}{match[2]}/index.php/index/oai")
+    return hosts, extra
+
+
 async def main() -> None:
+    global PAUSE
+    parser = argparse.ArgumentParser(description="Slow, bounded discovery of new academic OAI-PMH repositories")
+    parser.add_argument("--limit", type=int, default=20, help="candidate hosts/endpoints per batch")
+    parser.add_argument("--pause", type=float, default=5, help="seconds before every request")
+    parser.add_argument("--wide", action="store_true", help="include all legacy web/wiki candidates")
+    args = parser.parse_args()
+    if args.limit <= 0 or args.pause < 0:
+        parser.error("limit must be positive and pause nonnegative")
+    PAUSE = args.pause
     db = papers.connect()
+    db.execute("CREATE TABLE IF NOT EXISTS repo_probes(candidate TEXT PRIMARY KEY, checked TEXT, found INT)")
     known = {h for (h,) in db.execute("SELECT host FROM repos")}
     idents = {i for (i,) in db.execute("SELECT ident FROM repos")} | {_ident(iverieli.OAI)}
-    hosts, extra = candidates()
-    jobs = [[f"https://{h}{p}" for p in PATHS] for h in sorted(hosts - known)] + [[u] for u in sorted(extra)]
-    print(f"{len(hosts):,} hosts, {len(extra)} OJS paths, {len(jobs):,} to ask", flush=True)
-    limit = asyncio.Semaphore(TASKS)
-    timeout = httpx.Timeout(20, connect=6)
+    hosts, extra = candidates() if args.wide else academic_candidates()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    recent = {candidate for (candidate,) in db.execute("SELECT candidate FROM repo_probes WHERE checked > ?", (cutoff,))}
+    jobs = [(url, [url]) for url in sorted(extra) if url not in recent and _ident(url) not in idents]
+    jobs += [(host, [f"https://{host}{path}" for path in PATHS]) for host in sorted(hosts - known - recent)]
+    jobs = jobs[:args.limit]
+    print(f"{len(hosts):,} academic hosts, {len(extra)} OJS paths, {len(jobs)} candidates this batch", flush=True)
+    async def throttle(request):
+        await asyncio.sleep(args.pause)
+        await wait_for_host(str(request.url), pause=args.pause, background=True)
 
-    async def one(client: httpx.AsyncClient, urls: list[str]) -> None:
-        async with limit:
-            found = await probe(client, urls)
-        if not found:
-            return
-        url, name, base = found
-        ident = _ident(base or url)
-        if ident in idents:
-            return
-        idents.add(ident)
-        software = next((s for p, s in SOFTWARE.items() if p in url), "other")
-        db.execute("INSERT OR IGNORE INTO repos (base, ident, host, name, software) VALUES (?, ?, ?, ?, ?)",
-                   (url, ident, _host(url), name, software))
-        db.commit()
-        print(f"{software:<8} {url}  {name[:60]}", flush=True)
-
-    # verify=False: university sites often have expired certificates; only public metadata is read
-    async with httpx.AsyncClient(follow_redirects=True, timeout=timeout, verify=False,
+    async with httpx.AsyncClient(event_hooks={"request": [throttle]}, follow_redirects=True, timeout=httpx.Timeout(20, connect=6), verify=False,
                                  headers={"User-Agent": papers.AGENT}) as client:
-        await asyncio.gather(*(one(client, urls) for urls in jobs))
+        for candidate, urls in jobs:
+            found = await probe(client, urls)
+            db.execute("INSERT OR REPLACE INTO repo_probes VALUES (?, ?, ?)",
+                       (candidate, datetime.now(timezone.utc).isoformat(), int(bool(found))))
+            if found:
+                url, name, base = found
+                ident = _ident(base or url)
+                if ident not in idents:
+                    idents.add(ident)
+                    software = next((software for path, software in SOFTWARE.items() if path in url), "other")
+                    db.execute("INSERT OR IGNORE INTO repos (base,ident,host,name,software) VALUES (?,?,?,?,?)",
+                               (url, ident, _host(url), name, software))
+                    print(f"{software:<8} {url} {name[:60]}", flush=True)
+            db.commit()
     print(f"{db.execute('SELECT count(*) FROM repos').fetchone()[0]} repositories", flush=True)
+    db.close()
 
 
 if __name__ == "__main__":

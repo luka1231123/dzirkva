@@ -27,7 +27,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS papers USING fts5(oai UNINDEXED, url UNINDEXE
     subject, description, source, year UNINDEXED, type UNINDEXED, language UNINDEXED, repo UNINDEXED,
     tokenize='unicode61');
 CREATE TABLE IF NOT EXISTS seen (oai TEXT PRIMARY KEY);  -- a record once: OJS installs answer under several names
+CREATE INDEX IF NOT EXISTS papers_oai ON papers_content(c0);
+CREATE TABLE IF NOT EXISTS record_stamps(oai TEXT PRIMARY KEY, stamp TEXT);
 CREATE INDEX IF NOT EXISTS papers_url ON papers_content(c1);  -- a paper by its URL (c1 = url): meta()
+CREATE VIRTUAL TABLE IF NOT EXISTS fulltext USING fts5(url UNINDEXED, text, tokenize='unicode61');
 CREATE TABLE IF NOT EXISTS texts (url TEXT PRIMARY KEY, passages INT);  -- PDFs read by scripts/archive/papers_text.py
 """
 MIN_GEORGIAN = 0.3   # share of Georgian letters in the title + abstract kept
@@ -48,6 +51,19 @@ TYPE_NAMES = {"article": "სტატია", "doctoralthesis": "დისე�
 def connect() -> sqlite3.Connection:
     db = sqlite3.connect(DB, check_same_thread=False, timeout=60)  # the web page reads while scripts write
     db.executescript(SCHEMA)
+    additions = {
+        "repos": {"last_sync": "TEXT", "sync_from": "TEXT", "sync_started": "TEXT", "next_sync": "TEXT"},
+        "texts": {"status": "TEXT", "attempts": "INT DEFAULT 0", "retry_after": "TEXT",
+                  "error": "TEXT", "bytes": "INT DEFAULT 0", "updated": "TEXT"},
+    }
+    for table, fields in additions.items():
+        columns = {c[1] for c in db.execute(f"PRAGMA table_info({table})")}
+        for name, kind in fields.items():
+            if name not in columns:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+    db.execute("UPDATE texts SET status = CASE WHEN passages > 0 THEN 'ok' ELSE 'legacy_empty' END "
+               "WHERE status IS NULL")
+    db.commit()
     return db
 
 
@@ -70,7 +86,7 @@ def parse(xml: bytes, base: str) -> tuple[list[tuple], str | None, int, str | No
     rows = []
     for rec in root.iterfind(".//oai:record", NS):
         header = rec.find("oai:header", NS)
-        if header.get("status") == "deleted":
+        if header is None or header.get("status") == "deleted":
             continue
         dc = lambda f: [(e.text or "").strip() for e in rec.iterfind(f".//dc:{f}", NS) if (e.text or "").strip()]
         title, description = _most_georgian(dc("title")), _most_georgian(dc("description"))
@@ -91,6 +107,40 @@ def parse(xml: bytes, base: str) -> tuple[list[tuple], str | None, int, str | No
     token = root.find(".//oai:resumptionToken", NS)
     total = int(token.get("completeListSize") or 0) if token is not None else 0
     return rows, (token.text.strip() if token is not None and token.text else None), total, None
+
+
+def page_changes(xml: bytes) -> tuple[list[str], list[str]]:
+    """All identifiers observed and explicit tombstones (including non-Georgian changed records)."""
+    root = ET.fromstring(CONTROL.sub(b"", xml))
+    observed, deleted = [], []
+    for header in root.iterfind(".//oai:record/oai:header", NS):
+        ident = header.findtext("oai:identifier", "", NS)
+        if ident:
+            observed.append(ident)
+            if header.get("status") == "deleted":
+                deleted.append(ident)
+    return observed, deleted
+
+
+def page_stamps(xml: bytes) -> dict[str, str]:
+    root = ET.fromstring(CONTROL.sub(b"", xml))
+    return {header.findtext("oai:identifier", "", NS): header.findtext("oai:datestamp", "", NS)
+            for header in root.iterfind(".//oai:record/oai:header", NS)}
+
+
+def discard(db: sqlite3.Connection, identifiers: list[str]) -> list[str]:
+    """Remove obsolete metadata and extracted text; return URLs whose passages must be retired."""
+    urls = []
+    for ident in identifiers:
+        rows = db.execute("SELECT rowid, c1 FROM papers_content WHERE c0 = ?", (ident,)).fetchall()
+        urls.extend(url for _, url in rows)
+        db.executemany("DELETE FROM papers WHERE rowid = ?", [(rid,) for rid, _ in rows])
+        db.execute("DELETE FROM record_stamps WHERE oai = ?", (ident,))
+        db.execute("DELETE FROM seen WHERE oai = ?", (ident,))
+    for url in urls:
+        db.execute("DELETE FROM texts WHERE url = ?", (url,))
+        db.execute("DELETE FROM fulltext WHERE url = ?", (url,))
+    return urls
 
 
 @cache
@@ -158,8 +208,14 @@ def search(words: list[str], limit: int = 10, kinds: set[str] = frozenset()) -> 
     rows = db.execute(
         "SELECT url, title, creator, description, year, type, source FROM papers WHERE papers MATCH ? "
         f"ORDER BY {first}bm25(papers, 0, 0, 0, 10, 3, 3, 1, 1) LIMIT ?", (expr, *types, limit)).fetchall()
+    known = {row[0] for row in rows}
+    text_rows = db.execute(
+        "SELECT p.url, p.title, p.creator, snippet(fulltext, 1, '', '', ' … ', 45), p.year, p.type, p.source "
+        "FROM fulltext JOIN papers p ON p.url = fulltext.url WHERE fulltext MATCH ? "
+        "ORDER BY bm25(fulltext) LIMIT ?", (expr, limit)).fetchall()
+    rows.extend(row for row in text_rows if row[0] not in known)
     out = []
-    for url, title, creator, desc, year, typ, source in rows:
+    for url, title, creator, desc, year, typ, source in rows[:limit]:
         meta = " · ".join(x for x in (type_name(typ), year, creator[:80], journal(source)) if x)
         out.append({"url": url, "title": title, "snippet": f"{meta}. {desc[:250]}".strip(" ."), "engine": "papers"})
     return out
