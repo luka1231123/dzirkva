@@ -8,9 +8,9 @@ no LLM: only code and one local embedding model, BGE-M3. Live at https://dzirkva
 
 ## What it does
 
-- **Search.** One Brave Search API call per query, merged with dzirkva's own indexes. Results are ranked by engine
-  position, meaning (BGE-M3), source trust and how many query words the text contains; each result says why it
-  ranks where it does.
+- **Search.** Only dzirkva's own indexes, no outside search engine. Results are ranked by index position,
+  meaning (BGE-M3), source trust and how many query words the text contains; each result says why it ranks where
+  it does.
 - **Georgian language layer.** Latin-to-Georgian (`kartuli` → `ქართული`), spelling correction, and word forms
   reduced to their lemma (a grammar and a 1.65M-form table from the ka-lemma project).
 - **Word map** (`/words`). Type a word and see its forms, related words and the words closest in meaning
@@ -31,8 +31,8 @@ no LLM: only code and one local embedding model, BGE-M3. Live at https://dzirkva
 
 ## Stack
 
-Python 3.12, uv, SQLite, BGE-M3, Brave Search API. It runs on a home server (7 GB RAM, no GPU) behind a
-Cloudflare Tunnel. SearXNG support is kept but switched off. Licensed under AGPL-3.0.
+Python 3.12, uv, SQLite, BGE-M3. It runs on a home server (7 GB RAM, no GPU) behind a Cloudflare Tunnel.
+Licensed under AGPL-3.0.
 
 Setup and data building are described in Georgian below.
 
@@ -51,8 +51,8 @@ Setup and data building are described in Georgian below.
 
 1. ჯერ შეკითხვას ამუშავებს: ლათინურით აკრეფილ ტექსტს ქართულად აქცევს (`kartuli` → `ქართული`), ასწორებს
    შეცდომებს და სიტყვებს საწყის ფორმამდე დაჰყავს (`morph.py`, `data/families.db`).
-2. შემდეგ ერთდროულად ეძებს Brave-ში (თითო ძიებაზე ერთი ფასიანი მოთხოვნა) და საკუთარ ბაზებში.
-3. ბოლოს შედეგებს ალაგებს. ითვალისწინებს, რომელ ადგილზე იყო გვერდი Brave-ში, რამდენად ახლოსაა მისი შინაარსი
+2. შემდეგ ეძებს საკუთარ ბაზებში. გარე საძიებო სისტემებს არ იყენებს.
+3. ბოლოს შედეგებს ალაგებს. ითვალისწინებს, რომელ ადგილზე იყო გვერდი ბაზაში, რამდენად ახლოსაა მისი შინაარსი
    შეკითხვასთან (BGE-M3), რამდენად სანდოა წყარო და შეკითხვის რამდენი სიტყვა გვხვდება ტექსტში. თითოეული შედეგის
    ქვეშ წერია, რატომ დადგა ამ ადგილას.
 
@@ -89,18 +89,16 @@ uv sync
 uv run python -m dzirkva.web
 ```
 
-გვერდი გაიხსნება მისამართზე http://127.0.0.1:8000. `.env` ფაილში უნდა მიუთითოთ `BRAVE_API_KEY` და
-`SEARXNG_SECRET`. მეორე ნებისმიერი გრძელი სტრიქონია, რომელიც `/go` ბმულებს იცავს. პირველი გაშვებისას BGE-M3
+გვერდი გაიხსნება მისამართზე http://127.0.0.1:8000. `.env` ფაილში უნდა მიუთითოთ `GO_SECRET`:
+ნებისმიერი გრძელი სტრიქონი, რომელიც `/go` ბმულებს იცავს. პირველი გაშვებისას BGE-M3
 მოდელი დაახლოებით 2 GB-ს ჩამოტვირთავს.
 
 `.env` ფაილის სხვა ცვლადები:
 
 | ცვლადი | ნაგულისხმევად | რას აკეთებს |
 |---|---|---|
-| `BRAVE_DAILY_LIMIT`, `BRAVE_MONTHLY_LIMIT` | 20, 300 | Brave-ის მოთხოვნების დღიური და თვიური ლიმიტი; `0` თიშავს Brave-ს |
 | `MAX_SEARCHES` | 3 | რამდენი ძიება შეიძლება მიმდინარეობდეს ერთდროულად |
 | `MEANING_WEB` | 1 | `0`: ნელ პროცესორზე ახალი ვექტორები აღარ ითვლება |
-| `SEARXNG` | 0 | `1` რთავს Yandex-სა და Yahoo-ს SearXNG-ის მეშვეობით |
 | `STATS_KEY` | | `/stats` გვერდის გახსნა სხვა კომპიუტერიდან |
 
 ## სერვერი
@@ -111,7 +109,6 @@ Cloudflare Tunnel-ით უკავშირდება. systemd-ის ფ�
 - `dzirkva-web`: საძიებო გვერდი.
 - `dzirkva-crawl`: გვერდების შემგროვებელი. გამუდმებით მუშაობს, მაგრამ ნელა: იყენებს პროცესორის ერთი ბირთვის
   მეოთხედს და 1,2 GB მეხსიერებას. ახალ გვერდებს თავისით ამატებს.
-- `searxng`: გამორთულია.
 
 კოდის განახლება: `git ls-files -z | rsync -t --files-from=- --from0 . rexvopc:dzirkva/`. ამის შემდეგ
 გადატვირთეთ `dzirkva-web` სერვისი.

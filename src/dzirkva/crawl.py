@@ -126,3 +126,12 @@ def search(words: list[str], limit: int = 20, urls: list[str] = ()) -> list[dict
             break
     return [{"url": url, "title": title or url, "snippet": f"{date} · {snip}" if date else snip, "engine": "crawl"}
             for url, title, date, snip in rows]
+
+
+def count(word: str, context: list[str] = (), limit: int = 1000) -> int:
+    """Crawled pages with this exact word form and every context word (any form), counted up to limit."""
+    db = _db()
+    if db is None:
+        return 0
+    expr = " AND ".join(['"' + word.replace('"', '""') + '"', *map(any_form, context)])
+    return db.execute("SELECT count(*) FROM (SELECT 1 FROM pages WHERE pages MATCH ? LIMIT ?)", (expr, limit)).fetchone()[0]

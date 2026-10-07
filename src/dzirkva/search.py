@@ -1,15 +1,15 @@
-"""Question -> simple queries -> wide retrieval -> feedback round -> rank by meaning.
+"""Question -> local indexes -> feedback round -> rank by meaning. No outside search engine: Brave and SearXNG
+are archived in scripts/archive/engines/.
 
-1. Round 1: a few simple queries (as typed, corrected, dictionary forms or verb forms with OR, trusted sites).
-   A spelling fix is used only when few round-1 pages use the typed word; else the page asks "did you mean"
-   (confirm_fixes).
-   Their job is recall (collect candidate pages), not precision.
-   Search by meaning (passages.py) adds the Wikipedia paragraphs nearest to the question:
+1. Round 1: the query words (any form, wiki.any_form) in every local index: Wikipedia, Wikisource, the own crawl,
+   the old web, the Iverieli catalog, papers. A spelling fix is used only when the crawl has the typed word
+   with the other query words much less often than the fix; else the page asks "did you mean" (confirm_fixes).
+   Search by meaning (passages.py) adds the paragraphs nearest to the question:
    they find answers that use other words than the question.
 2. Feedback (only when round 1 is bad: fewer than ROUND1_GOOD of its top 10 contain every query word):
    read the paragraphs nearest in meaning (else the top snippets that contain every
    query word) and find the words and names that repeat there but are rare in Georgian overall
-   (ბოლტი). This is the word the answer pages use. Round 2 searches the query with it, one query.
+   (ბოლტი). This is the word the answer pages use. Round 2 searches the crawl for the query with it.
 3. Rank: combine the engine ranking (RRF over all lists + trust tier + word-family match; a Wikipedia page
    counts once, with its best rank, though engines, the local index and passages all return it)
    with the meaning ranking (BGE-M3 similarity between the question and each result),
@@ -22,7 +22,6 @@
 Only results that are mostly Georgian are kept. `kind` decides the tab (sources.kind), `tags` the filters.
 """
 
-import asyncio
 import math
 import os
 import re
@@ -33,14 +32,12 @@ from functools import cache
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlunparse
 
-import httpx
 import numpy as np
 import yaml
 
-from dzirkva import engines
 from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, typo_weight, words
 from dzirkva.meaning import cached_vectors, vectors
-from dzirkva.morph import OTHER_FORMS, analyze, families, family_members, genitive, other_forms
+from dzirkva.morph import analyze, families, family_members
 from dzirkva import archive, clicks, crawl, dictionary, iverieli, papers, passages, wiki
 from dzirkva.sources import by_category, georgian_hosts, host, kind, lookup, named_sites, tags
 
@@ -56,9 +53,7 @@ STOPWORDS = set(
 )
 CLITICS = ("აა", "ა", "ც", "ღა", "ვე")  # ვინაა = ვინ + (ა)ა "is", რაც, ესეც
 INTENTS_FILE = Path(__file__).resolve().parents[2] / "config" / "intents.yaml"  # what a query wants → its sites
-DEFAULT_CATEGORY = "reference"
 INTENT_BONUS = 0.25     # page on a site made for what the query wants (intents.yaml): like a tier-2 source
-SITES_PER_QUERY = 6
 MIN_GEORGIAN = 0.3      # share of Georgian letters in title + snippet to keep a result
 RRF_K = 60
 TIER_BONUS = {1: 0.5, 2: 0.25, 3: 0.0}
@@ -102,11 +97,10 @@ SHAPE_BONUS = 0.3
 ANSWER_TYPES = ("why", "how")  # explanation questions
 ANSWER_VECTOR = 3       # why/how: results are also compared with the mean of the 3 nearest paragraphs
 RELATED = 8             # related searches under the results
-BRAVE_QUERY = ("corrected", "original")  # Brave API is paid per call: one per search, the corrected query if any
-TYPED_USES = 3          # round-1 pages that use a typed word: a real word, so a fix is only "did you mean"
-SEARXNG_SPACING = 0.3   # seconds between SearXNG requests: engines block fast bursts
-DEEP = 3                # deep search (button): × pages, site queries, word forms, local results and results read
-                        # by meaning; feedback stays as in a normal search; Brave stays one call (paid)
+TYPED_USES = 3          # crawled pages with the typed word and the other query words: maybe a real word …
+TYPO_RATIO = 20         # … unless the fix is 20× more common with them (as the vocabulary test, georgian.py)
+COUNT_MAX = 1000        # pages counted at most for that test
+DEEP = 3                # deep search (button): × local results and results read by meaning
 TRACKING = re.compile(r"^(utm_|fbclid|gclid|yclid|mc_|ref$|ref_|locale$)")  # locale: DSpace UI language, same record
 
 
@@ -223,92 +217,31 @@ def intent(content: list[str], text: str) -> str | None:
     return best if score[best] else None
 
 
-def forms_query(content: list[str], how: bool, limit: int = OTHER_FORMS) -> str | None:
-    """The question as a text says it (morph.other_forms); None when nothing changes.
-
-    A verbal noun joins its verb forms with OR, stories tell the action: ჩამოლაბორანტება →
-    (ჩამოლაბორანტება OR ჩამომალაბორანტეს OR ჩამოლაბორანტებული OR ჩამოალაბორანტა).
-    A "how" question names the action: its verb becomes the verbal noun after the rest, and the last word in the
-    nominative goes to the genitive. როგორ გავაკეთოთ ღვინო → ღვინის გაკეთება.
-    Only these two: an engine (Yandex) mixes OR groups of every word into noise, and a verb outside a "how"
-    question is often a quote (კაცი გზაზე მიდიოდა)."""
-    forms = {w: other_forms(w, limit) for w in content}
-    verbs = [w for w in content if forms[w][0] == "noun" and forms[w][1]]
-    if how and len(verbs) == 1 and (rest := [w for w in content if w != verbs[0]]):
-        nominative = [i for i, w in enumerate(rest) if w == _lemma(w) and not _is_verb(w)]
-        if nominative:  # წითელი ღვინო სახლში → წითელი ღვინის სახლში
-            rest[nominative[-1]] = genitive(rest[nominative[-1]])
-        return " ".join(rest + forms[verbs[0]][1][:1])
-    groups = [f"({' OR '.join([w, *fs])})" if kind == "verb" and fs else w for w, (kind, fs) in forms.items()]
-    return " ".join(groups) if any(kind == "verb" and fs for kind, fs in forms.values()) else None
-
-
-def variants_query(content: list[str], limit: int) -> str | None:
-    """Deep search: every word in its forms, joined by OR (verbs: other_forms; nouns: dictionary form, genitive).
-    Noisy on Yandex, so only when the visitor asks for more."""
-    groups = []
-    for w in content:
-        forms = [w, *other_forms(w, limit)[1]] if _is_verb(w) else [w, _lemma(w), genitive(_lemma(w))]
-        forms = list(dict.fromkeys(forms))
-        groups.append(forms[0] if len(forms) == 1 else f"({' OR '.join(forms)})")
-    return " ".join(groups) if any(g.startswith("(") for g in groups) else None
-
-
 def _on(url: str, hosts: set[str]) -> bool:
     h = host(url)
     return h in hosts or any(h.endswith("." + x) for x in hosts)
 
 
-def round1_queries(query: str, deep: int = 1) -> tuple[dict[str, str], list[str], dict[str, str], list[tuple[str, float, str]]]:
-    """Simple recall queries, the content words as typed, the spelling fixes to check, and the sites the query names.
-    deep (DEEP for deep search): × site queries and word forms; dictionary forms, forms and variants all go.
-
-    The query is always searched as typed (Latin letters turned into Georgian) and with its dictionary forms.
-    Words that look like typos are also searched corrected; confirm_fixes decides after round 1."""
+def understand(query: str) -> tuple[list[str], list[str], dict[str, str], list[tuple[str, float, str]]]:
+    """All words (Latin letters turned into Georgian), the content words, the spelling fixes to check
+    (confirm_fixes), and the sites the query names."""
     typed = [_fix_word(w) for w in query.split()]
     content = [w for w in typed if not is_stop(w)] or typed
     fixes = spelling_fixes(content)
     fixed = [fixes.get(w, w) for w in content]
-    lemmas, fixed_lemmas = (" ".join(_lemma(w) for w in ws) for ws in (content, fixed))
-    want = intent(fixed, " ".join(fixes.get(w, w) for w in typed))
-    hosts = intents()[want]["sites"] if want else by_category(DEFAULT_CATEGORY)
-    forms = forms_query(fixed, question_type(query) == "how", OTHER_FORMS * deep)
-    qs = {"original": query, "corrected": " ".join(fixes.get(w, w) for w in typed)}
-    if not forms or deep > 1:  # else forms replace the dictionary forms: აკეთებს ღვინო is no text people write
-        qs |= {"lemmas": lemmas, "lemmas:corrected": fixed_lemmas}
-    if forms:
-        qs["forms"] = forms
-    if deep > 1 and (variants := variants_query(fixed, OTHER_FORMS * deep)):
-        qs["variants"] = variants
-    for i in range(deep):
-        if chunk := hosts[i * SITES_PER_QUERY:(i + 1) * SITES_PER_QUERY]:
-            sites = " OR ".join(f"site:{d}" for d in chunk)
-            qs[f"site:{want or DEFAULT_CATEGORY}" + (f":{i + 1}" if i else "")] = f"{fixed_lemmas} ({sites})"
-    named = named_sites(query.split(), fixed, fixed_lemmas.split())
-    for h, share, name in named[:1]:
-        if share >= NAVIGATIONAL:  # ფეისბუქი შესვლა → შესვლა site:facebook.com
-            rest = [w for w in fixed if w not in name.split() and _lemma(w) not in name.split()]
-            qs[f"named:{h}"] = " ".join(rest + [f"site:{h}"])
-    unique: dict[str, str] = {}
-    for name, q in qs.items():
-        if q not in unique.values():
-            unique[name] = q
-    return unique, content, fixes, named
+    return typed, content, fixes, named_sites(query.split(), fixed, [_lemma(w) for w in fixed])
 
 
-def _uses(word: str, texts: list[str]) -> int:
-    """Texts that contain the word in some form (the stem without its last letter starts a token)."""
-    stem = word[:-1] if len(word) > 4 else word
-    return sum(any(t.startswith(stem) for t in re.findall(r"[ა-ჰ]+", text)) for text in texts)
-
-
-def confirm_fixes(fixes: dict[str, str], lists: list[tuple[str, list[dict]]]) -> tuple[dict[str, str], dict[str, str]]:
-    """Spelling fixes → (used, only suggested). A typed word that TYPED_USES round-1 pages of the typed query
-    use is a real word: the ranking keeps it and the page only asks "did you mean". Engines that correct
-    silently return pages without the typed word, so a real typo finds few uses."""
-    texts = list({canonical_url(r["url"]): normalize(f"{r['title']} {r['snippet']}")
-                  for name, res in lists if name in ("original", "lemmas") for r in res}.values())
-    used = {w: f for w, f in fixes.items() if _uses(w, texts) < TYPED_USES}
+def confirm_fixes(fixes: dict[str, str], content: list[str]) -> tuple[dict[str, str], dict[str, str]]:
+    """Spelling fixes → (used, only suggested). A typed word that TYPED_USES crawled pages use with the other
+    query words, and not TYPO_RATIO × less often than the fix, is a real word: the ranking keeps it and the page
+    only asks "did you mean"."""
+    used = {}
+    for w, f in fixes.items():
+        context = [c for c in content if c != w]
+        n = crawl.count(w, context, COUNT_MAX)
+        if n < TYPED_USES or n * TYPO_RATIO < crawl.count(f, context, COUNT_MAX):
+            used[w] = f
     return used, {w: f for w, f in fixes.items() if w not in used}
 
 
@@ -355,34 +288,7 @@ def feedback_terms(content: list[str], texts: list[str], n: int = FEEDBACK_TERMS
     return best
 
 
-# ---- fan-out and merge --------------------------------------------------
-
-async def _run(client: httpx.AsyncClient, name: str, q: str, engine: str, delay: float,
-               pages: int = 1) -> tuple[str, list[dict]]:
-    """One query; SearXNG pages 2, 3 … (deep search) join the same list, one after another (Google blocks bursts)."""
-    await asyncio.sleep(delay)
-    try:
-        if engine == "brave-api":
-            return name, await engines.brave(client, q)
-        out = []
-        for page in range(1, pages + 1):
-            out += await engines.searxng(client, q, page)
-            await asyncio.sleep(SEARXNG_SPACING if page < pages else 0)
-        return name, out
-    except (httpx.HTTPError, KeyError) as e:
-        print(f"  ! {engine} failed for {name}: {type(e).__name__}")
-        return name, []
-
-
-async def fan_out(qs: dict[str, str], brave: tuple[str, ...] = (),
-                  pages: dict[str, int] | None = None) -> list[tuple[str, list[dict]]]:
-    pages = pages or {}
-    async with httpx.AsyncClient() as client:
-        jobs = [_run(client, n, q, "searxng", i * SEARXNG_SPACING, pages.get(n, 1))
-                for i, (n, q) in enumerate(qs.items())] if engines.SEARXNG else []
-        jobs += [_run(client, n, qs[n], "brave-api", 0) for n in brave if n in qs]
-        return await asyncio.gather(*jobs)
-
+# ---- merge --------------------------------------------------------------
 
 def canonical_url(url: str) -> str:
     """Same page, one key: https, no www, one percent-encoding, no tracking parameters, no fragment, no trailing slash."""
@@ -595,19 +501,18 @@ def click_key(content: list[str]) -> str:
 
 
 def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result], dict]:
-    """Returns the queries sent, the ranked results, and debug information (with the answer box).
-    deep: DEEP × more pages, queries, forms and local results; slower."""
+    """Returns the words searched in each list, the ranked results, and debug information (with the answer box).
+    deep: DEEP × more local results and results read by meaning; slower."""
     t0 = time.time()
     m = DEEP if deep else 1
-    qs, typed, fixes, named = round1_queries(query, m)
-    pages = {n: m for n in ("original", "corrected")}
-    lists = asyncio.run(fan_out(qs, (next(n for n in BRAVE_QUERY if n in qs),), pages))
+    typed, content, fixes, named = understand(query)
+    fixes, suggested = confirm_fixes(fixes, content)
+    read_as = " ".join(fixes.get(w, w) for w in typed)
+    content = [fixes.get(w, w) for w in content]
     named_hosts = {h for h, _, _ in named}
-    lists.append(("named", [{"url": f"https://{h}/", "title": name, "snippet": "", "engine": "named"}
-                            for h, share, name in named if share >= NAVIGATIONAL]))
-    fixes, suggested = confirm_fixes(fixes, lists)
-    content = [fixes.get(w, w) for w in typed]
-    want = intent(content, " ".join(fixes.get(w, w) for w in map(_fix_word, query.split())))
+    lists = [("named", [{"url": f"https://{h}/", "title": name, "snippet": "", "engine": "named"}
+                        for h, share, name in named if share >= NAVIGATIONAL])]
+    want = intent(content, read_as)
     wanted = set(intents()[want]["sites"]) if want else set()
     lists.append(("wikipedia", wiki.search(content, 20 * m)))   # local Georgian Wikipedia, every search
     lists.append(("wikisource", wiki.search(content, 10 * m, "wikisource")))  # classic texts: poems, prose, laws
@@ -633,6 +538,8 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     key = click_key(content)
     clicked = clicks.good(key)
     lists.append(("cited", crawl.search(content, 10 * m, cites) if cites else []))  # crawled pages the articles cite
+    qs = {name: query if name == "passages" else " ".join(topic if name == "papers" else content)
+          for name, _ in lists if name != "named"}
     # explanations (why/how): answer vector and feedback from the nearest paragraphs; names and facts: from
     # the covered snippets (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
     explain = question_type(query) in ANSWER_TYPES and bool(near)
@@ -646,13 +553,12 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
     # verbs stay out: ბნელდება would bring back the eclipse pages (დაბნელება)
     base = " ".join(_lemma(w) for w in content if not _is_verb(w)) or " ".join(_lemma(w) for w in content)
-    more = {}
     bad = sum(r.coverage >= FEEDBACK_MIN_COVERAGE for r in first[:10]) < ROUND1_GOOD
-    if terms and bad:
-        more[f"feedback:{terms[0]}"] = f"{base} {terms[0]}"
-    if more:
-        qs.update(more)
-        lists += asyncio.run(fan_out(more))
+    more = terms and bad
+    if more:  # the web pages that use the answer word: the crawl
+        name = f"feedback:{terms[0]}"
+        qs[name] = f"{base} {terms[0]}"
+        lists.append((name, crawl.search(qs[name].split(), 20 * m)))
         merged = merge(lists, content, cited, clicked, named_hosts, wanted)
         first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia, topic,
                                 MEANING_TOP * m)
@@ -660,9 +566,9 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     for i, r in enumerate(results, 1):
         r.rank = i
     debug = {
-        "content": content, "deep": deep, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "named": [h for h, _, _ in named], "intent": want, "read_as": " ".join(fixes.get(w, w) for w in map(_fix_word, query.split())), "feedback": terms if more else [], "answer": answer,
+        "content": content, "deep": deep, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "named": [h for h, _, _ in named], "intent": want, "read_as": read_as, "feedback": terms if more else [], "answer": answer,
         "related": related(content, base, terms, wiki_hits, near, answer),
-        "definition": dictionary.define(qs.get("corrected", query)),  # "სახლი რას ნიშნავს"
+        "definition": dictionary.define(read_as),  # "სახლი რას ნიშნავს"
         "counts": {name: len(res) for name, res in lists}, "cites": len(cites),
         "seconds": {"round1": round(t1 - t0, 1), "round2+rank": round(time.time() - t1, 1)},
     }

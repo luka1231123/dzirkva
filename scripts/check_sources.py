@@ -1,9 +1,8 @@
 """Check each trusted source has Georgian pages.
 
 1. Home page: online and its text is mostly Georgian.
-2. If not (bot block, JavaScript page, English home page, geo-block): ask the Brave API
-   "site:domain" and check that it returns Georgian results. (Brave API, not SearXNG:
-   Google blocks SearXNG with a CAPTCHA after a few dozen site: queries.)
+2. If not (bot block, JavaScript page, English home page, geo-block): the share of Georgian letters
+   in its crawled pages (crawl.db table domains).
 
 Run: uv run python scripts/check_sources.py
 """
@@ -13,12 +12,11 @@ import re
 
 import httpx
 
-from dzirkva.engines import brave
+from dzirkva import crawl
 from dzirkva.georgian import georgian_ratio
 from dzirkva.sources import sources
 
 MIN_GEORGIAN = 0.3
-MIX_MARK = 0.001  # real site, but the engines hold mostly its non-Georgian pages
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Safari/605.1.15",
            "Accept-Language": "ka,en;q=0.5"}
 
@@ -42,27 +40,21 @@ async def check(client: httpx.AsyncClient, sem: asyncio.Semaphore, domain: str) 
         return domain, last, 0.0
 
 
-async def check_engines(client: httpx.AsyncClient, domain: str) -> tuple[str, str, float]:
-    """Georgian share of titles + snippets that the engines return for site:domain."""
-    try:
-        results = await brave(client, f"site:{domain}")
-    except httpx.HTTPError as e:
-        return domain, f"engines: {type(e).__name__}", 0.0
-    on_site = [r for r in results if domain in r["url"]]
-    text = " ".join(r["title"] + " " + r["snippet"] for r in on_site)
-    ratio = georgian_ratio(text) if len(on_site) >= 3 else 0.0
-    return domain, f"engines: {len(on_site)} results", max(ratio, MIX_MARK if len(on_site) >= 3 else 0.0)
+def check_crawl(domain: str) -> tuple[str, float]:
+    """Pages and mean Georgian share of the domain in the crawl."""
+    db = crawl._db()
+    row = db and db.execute("SELECT pages, georgian FROM domains WHERE host = ?", (domain,)).fetchone()
+    return (f"crawl: {row[0]} pages", row[1]) if row and row[0] else ("crawl: no pages", 0.0)
 
 
 async def main() -> None:
     sem = asyncio.Semaphore(12)
     async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=15) as client:
         results = await asyncio.gather(*(check(client, sem, d) for d in sources()))
-        # Slow and gentle: one engine query at a time, only for sources the home page check failed.
-        for i, (domain, status, ratio) in enumerate(results):
-            if ratio < MIN_GEORGIAN:
-                d, s2, r2 = await check_engines(client, domain)
-                results[i] = (d, f"{status} | {s2}", r2)
+    for i, (domain, status, ratio) in enumerate(results):
+        if ratio < MIN_GEORGIAN:  # the home page check failed
+            s2, r2 = check_crawl(domain)
+            results[i] = (domain, f"{status} | {s2}", r2)
     for domain, status, ratio in sorted(results, key=lambda r: r[2]):
         mark = "OK " if ratio >= MIN_GEORGIAN else "MIX" if ratio > 0 else "BAD"
         print(f"{mark} {ratio:4.0%}  {domain:<28} {status}")

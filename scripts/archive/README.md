@@ -11,4 +11,5 @@ site `iverieli` or `papers` in `data/passages.db`. Run from the project root, fo
 | `papers_text.py` | paper PDFs → passages | stopped, resumable |
 | `iverieli_collect.py` | National Library catalog → `data/iverieli.db` | done |
 | `iverieli_text.py` | Iverieli PDFs → passages | paused at 1,820 of 90,804 items |
+| `engines/` | Brave API and SearXNG clients, SearXNG config, start script and systemd unit | archived 2026-10-07: search uses only the own indexes |
 | `watchdog.sh` | restart `scripts/build_passages.py` when it stalls (Mac `stat`) | paused at 11,028 of 17,124 papers |

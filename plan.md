@@ -1,11 +1,11 @@
 # dzirkva plan
 
-Georgian-only search engine. Meta-search (SearXNG + Brave API) + Georgian language layer + trusted source list.
+Georgian-only search engine. Own indexes + Georgian language layer + trusted source list.
+Until 2026-10-07 it was a meta-search (SearXNG + Brave API); both are archived in `scripts/archive/engines/`.
 
 Budget rules:
 - Search time uses no LLM and no paid tokens: only code and free local models.
 - Claude Code tokens pay only for writing code. Keep the code small (~1,000 lines).
-- Brave API: 1–2 query variants per search. Cache everything.
 
 ## Session 1: Setup
 - [x] git repo, `uv` project (Python 3.12), `CLAUDE.md`

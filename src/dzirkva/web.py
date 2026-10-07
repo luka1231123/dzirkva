@@ -33,7 +33,7 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse, urlsplit
 import yaml
 
 from dzirkva.georgian import normalize
-from dzirkva import (archive, clicks, crawl, dictionary, discover, engines, iverieli, papers, passages, telemetry, wiki,
+from dzirkva import (archive, clicks, crawl, dictionary, discover, iverieli, papers, passages, telemetry, wiki,
                      wordgraph)
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families
@@ -52,13 +52,10 @@ BLOCKS = {3: "video", 5: "people", 10: "old"}  # All tab: block after the n-th m
 PER_SITE = 2
 SITE_LIMIT = {"ka.wikipedia.org": 2, "ka.wikisource.org": 1}  # local indexes must not fill the list
 MAX_SOCIAL = 3  # social posts in the main list (all social sites together)
-ENGINE_NAMES = {"google": "გუგლი", "yandex": "იანდექსი", "yahoo": "იაჰუ", "brave-api": "ბრეივი",
-                "wikipedia": "ვიკიპედია", "passages": "ვიკიპედია (აზრით)", "archive": "ძველი ვები", "crawl": "ჩვენი ინდექსი", "iverieli": "ივერიელი", "wikisource": "ვიკიწყარო", "papers": "სამეცნიერო ჟურნალები",
+ENGINE_NAMES = {"wikipedia": "ვიკიპედია", "passages": "ვიკიპედია (აზრით)", "archive": "ძველი ვები", "crawl": "ჩვენი ინდექსი", "iverieli": "ივერიელი", "wikisource": "ვიკიწყარო", "papers": "სამეცნიერო ჟურნალები",
                 "cited": "ვიკიპედიის წყაროები", "named": "დასახელებული საიტი"}
 KIND_NAMES = {"knowledge": "ცოდნა", "news": "სიახლე", "web": "ვები", "forum": "ფორუმი", "social": "სოციალური ქსელი",
               "video": "ვიდეო", "film": "ფილმი"}
-CATEGORY_NAMES = {"reference": "ცნობარი", "law": "სამართალი", "history": "ისტორია", "religion": "რელიგია",
-                  "education": "განათლება", "government": "სახელმწიფო", "culture": "კულტურა"}
 # Signs that a person wrote or chose a page: key → (label, CSS class, meaning). Results show the meaning on hover;
 # the home page lists them in this order.
 SIGNS = {
@@ -78,7 +75,8 @@ WAYBACK = re.compile(r"^https?://web\.archive\.org/web/[^/]+/")
 DATE_FIRST = re.compile(r"^(\d{4}-\d{2}-\d{2})\S* · ")  # crawl snippets start with the page date
 EGGS_FILE = Path(__file__).resolve().parents[2] / "config" / "easter_eggs.yaml"
 LEXICON = Path(__file__).resolve().parents[2] / "data" / "lexicon.tsv"  # word forms → dictionary form (morph.py)
-GO_KEY = hashlib.sha256(b"go" + (os.environ.get("SEARXNG_SECRET") or secrets.token_hex(16)).encode()).digest()
+GO_KEY = hashlib.sha256(b"go" + (os.environ.get("GO_SECRET") or os.environ.get("SEARXNG_SECRET")  # old name: old links stay valid
+                                       or secrets.token_hex(16)).encode()).digest()
 FORWARDED = ("X-Forwarded-For", "Forwarded", "Cf-Connecting-Ip", "X-Real-Ip")  # the visit came through a tunnel
 MAX_SEARCHES = int(os.environ.get("MAX_SEARCHES", "3"))  # new searches running or waiting at a time
 PORT = int(os.environ.get("PORT", "8000"))
@@ -183,7 +181,7 @@ th{font-size:11px;color:var(--muted);text-align:left;font-weight:600;padding:2px
 
 
 def _page(q: str, body: str, refresh: int = 0, extra_css: str = "", script: str = "") -> str:
-    """ამოძირკვა (deep search): the second button sends deep=1 (search.DEEP × more queries, pages, forms; slower)."""
+    """ამოძირკვა (deep search): the second button sends deep=1 (search.DEEP × more local results; slower)."""
     return (f"<!doctype html><html lang=ka><meta charset=utf-8>"
             + (f"<meta http-equiv=refresh content={refresh}>" if refresh else "") +
             f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{escape(q) + ' · ' if q else ''}ძირკვა</title>"
@@ -191,7 +189,7 @@ def _page(q: str, body: str, refresh: int = 0, extra_css: str = "", script: str 
             "'https://fonts.googleapis.com/css2?family=Noto+Serif+Georgian:wght@400..600&display=swap'>"
             f"<style>{CSS}{extra_css}</style><header><div><a class=logo href=/>{cap('ძირკვა')}</a>"
             f"<form action=/><input name=q value='{escape(q)}' autofocus><button>{cap('ძებნა')}</button>"
-            f"<button class=deep name=deep value=1 title='სამჯერ მეტი მოთხოვნა, სიტყვის ფორმა და შედეგი, უფრო ნელა'>"
+            f"<button class=deep name=deep value=1 title='სამჯერ მეტი შედეგი, უფრო ნელა'>"
             f"{cap('ამოძირკვა')}</button></form><a class=nav href=/words>{ICON_MAP}{cap('სიტყვების რუკა')}</a></div></header>"
             f"<main>{body}</main>" + (f"<script>{script}</script>" if script else ""))
 
@@ -238,17 +236,9 @@ def _found_by(r) -> str:
 def _query_name(name: str) -> str:
     """Query names from search.py (original, lemmas, site:law, feedback:…) in Georgian."""
     kind, _, arg = name.partition(":")
-    fixed = {"original": "როგორც დაიწერა", "corrected": "გასწორებული", "lemmas": "ლექსიკონის ფორმები",
-             "lemmas:corrected": "გასწორებულის ლექსიკონის ფორმები", "forms": "სიტყვის ფორმები",
-             "variants": "ყველა ფორმა"}
-    if kind == "site":  # deep search: site:reference:2 = the next sites of the list
-        arg = arg.partition(":")[0]
-        return f"საიტები: {intents()[arg]['ka'] if arg in intents() else CATEGORY_NAMES.get(arg, arg)}"
-    if kind == "named":
-        return f"დასახელებული საიტი: {arg}"
     if kind == "feedback":
         return f"პასუხის სიტყვა: {arg}"
-    return fixed.get(name) or ENGINE_NAMES.get(name, name)
+    return ENGINE_NAMES.get(name, name)
 
 
 def _sign(key: str, extra: str = "") -> str:
@@ -300,15 +290,11 @@ def _out(url: str, where: str, **params) -> str:
     return "/go?" + urlencode({"u": url, "h": _sig(url), "w": where, **extra})
 
 
-def _understood(q: str, qs: dict[str, str], debug: dict) -> str:
+def _understood(q: str, debug: dict) -> str:
     """One line: how the query was read (spelling, Latin → Georgian, dictionary forms, question, extra words)."""
     parts = []
     if debug["read_as"] != normalize(q) and not debug["spelling"]:  # Latin → Georgian; spelling has its own line
         parts.append(f"<b>{escape(debug['read_as'])}</b> <span class=m>(დაწერილი: {escape(q)})</span>")
-    if "lemmas" in qs and qs["lemmas"] != " ".join(debug["content"]):
-        parts.append(f"ლექსიკონის ფორმა: <b>{escape(qs['lemmas'])}</b>")
-    if "forms" in qs:  # (გავაკეთოთ OR გაკეთება) ღვინო → გავაკეთოთ / გაკეთება ღვინო
-        parts.append(f"ფორმები: <b>{escape(qs['forms'].replace(' OR ', ' / ').replace('(', '').replace(')', ''))}</b>")
     dropped = [w for w in debug["read_as"].split() if w not in debug["content"]]
     if dropped:
         parts.append(f"გამოტოვებული: {escape(' '.join(dropped))}")
@@ -335,8 +321,8 @@ def _eggs() -> dict[str, str]:
     return {normalize(w): e["say"] for e in yaml.safe_load(EGGS_FILE.read_text(encoding="utf-8")) for w in e["when"]}
 
 
-def _egg(q: str, qs: dict[str, str]) -> str:
-    for text in (q, qs.get("corrected", q)):
+def _egg(q: str, read_as: str) -> str:
+    for text in (q, read_as):
         key = normalize(re.sub(r"[^\w\s%.]", " ", text)).strip(". ")  # keep the dot in mail.ru
         lemmas = [a.lemma for a in analyze(key)] if key and " " not in key else []
         if say := next((_eggs()[k] for k in [key] + lemmas if k in _eggs()), None):
@@ -467,7 +453,7 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
     if debug.get("did_you_mean"):
         maybe = " ".join(debug["did_you_mean"].get(normalize(w), w) for w in q.split())
         body += f"<p class=fix>ხომ არ გულისხმობდით: <a href='{_link(maybe, 'all', set(), 'dym')}'><b>{escape(maybe)}</b></a></p>"
-    body += _egg(q, qs) + _understood(q, qs, debug) + _sources(results)
+    body += _egg(q, debug["read_as"]) + _understood(q, debug) + _sources(results)
     d = debug.get("definition")
     if d and tab == "all" and not chosen and (d["asked"] or not debug.get("answer")):
         body += _definition(d, q)
@@ -571,8 +557,8 @@ def _finds(rng: random.Random) -> list[str]:
 STEPS = [
     "ძირკვა ჯერ შეკითხვას კითხულობს: ასწორებს მართლწერას, ლათინური ასოებით ნაწერს ქართულად კითხულობს, პოულობს "
     "სიტყვების ლექსიკონის ფორმებს და ხვდება, რა გჭირდებათ, მაგალითად ამინდი, კანონი ან კვლევა.",
-    "მერე ერთდროულად ეკითხება რამდენიმე საძიებო სისტემას და ჩვენს ინდექსებს: ვიკიპედიას, ივერიელს, სამეცნიერო "
-    "ჟურნალებს, ჩვენ მიერ შეგროვებულ გვერდებს და ძველ ვებს.",
+    "მერე ეძებს ჩვენს ინდექსებში: ვიკიპედიაში, ივერიელში, სამეცნიერო ჟურნალებში, ჩვენ მიერ შეგროვებულ "
+    "გვერდებში და ძველ ვებში.",
     "შედეგებს აზრის მიხედვით ალაგებს: ადგილობრივი ენის მოდელი ადარებს შეკითხვასა და გვერდის ტექსტს. სანდო წყაროები "
     "და პატარა საიტები წინ იწევს, ერთ საიტს კი სიაში მხოლოდ ორი ადგილი აქვს.",
     "ყოველ შედეგთან ჩანს, რომელმა წყარომ იპოვა, რა სიტყვები დაემთხვა და რატომ დგას ამ ადგილზე.",
@@ -589,7 +575,7 @@ QUERY_TIPS = [
 ]
 GROW = [
     "სრული ქრაული. ახლა ქრაულერი ერთი საიტიდან რამდენიმე ათას გვერდს აგროვებს. თუ ყველა ქართულ საიტს ბოლომდე "
-    "წაიკითხავს, ძიებას გარე საძიებო სისტემები ნაკლებად დასჭირდება.",
+    "წაიკითხავს, ძიება გაცილებით სრული იქნება.",
     "ახალი გვერდები ყოველდღე: საიტების RSS არხები და საიტის რუკები (sitemap) ყოველ დილით, რომ ახალი სტატია "
     "იმავე დღეს იძებნებოდეს.",
     "ბიბლიოთეკისა და ჟურნალების სრული ტექსტი: ივერიელის და ქართული ჟურნალების PDF ფაილები, სკანირებული "
@@ -646,7 +632,7 @@ def home_page() -> str:
             "იმ ფორმას პოულობს, რომლითაც სიტყვა დაწერეთ.</p>"
             "<p class=lead>ძირკვა მხოლოდ ქართულ გვერდებს ეძებს. შეკითხვას ქართული გრამატიკით კითხულობს, ამიტომ "
             "პოულობს სიტყვის სხვა ფორმებსაც და იმ სიტყვებსაც, რომლებითაც პასუხი ჩვეულებრივ იწერება. შედეგებს "
-            "რამდენიმე საძიებო სისტემიდან და საკუთარი ინდექსებიდან აგროვებს და წინ იმ გვერდებს აყენებს, რომლებიც "
+            "საკუთარი ინდექსებიდან აგროვებს და წინ იმ გვერდებს აყენებს, რომლებიც "
             "ადამიანებმა დაწერეს. რეკლამა არ არის და პასუხს ხელოვნური ინტელექტი არ წერს.</p>"
             f"<p class=facts>{index}</p></div>"
             + _block("სიტყვების რუკა",
@@ -657,8 +643,8 @@ def home_page() -> str:
                      "<ul class=list>" + "".join(f"<li>{escape(x)}</li>" for x in QUERY_TIPS) + "</ul>"
                      "<p>ამინდს, რუკას ან საყიდელს დიდ საძიებო სისტემებში უფრო სწრაფად იპოვით.</p>")
             + _block("როდის გამოვიყენოთ ამოძირკვა",
-                     "<p>ამოძირკვა საძიებო სისტემებში მეტ გვერდს ათვალიერებს, სიტყვის მეტ ფორმას ცდის, "
-                     "ჩვენი ინდექსებიდან კი სამჯერ მეტ შედეგს იღებს. ამას მეტი დრო სჭირდება, ამიტომ "
+                     "<p>ამოძირკვა ჩვენი ინდექსებიდან სამჯერ მეტ შედეგს იღებს და სამჯერ მეტს "
+                     "ადარებს შეკითხვას აზრით. ამას მეტი დრო სჭირდება, ამიტომ "
                      "ჯერ ჩვეულებრივი ძებნა სცადეთ. ამოძირკვა მაშინ გამოგადგებათ, როცა შედეგი ცოტაა ან ის არ არის, "
                      "რასაც ეძებდით, ან როცა თემას სწავლობთ და გინდათ ნახოთ ყველაფერი, რაც მასზე ქართულად დაწერილა. "
                      "იშვიათ სიტყვებსაც ამოძირკვით უკეთ იპოვით.</p>")
@@ -699,13 +685,12 @@ def _details() -> list[tuple[str, str, list[str]]]:
          "ქუთაისის და ქუთაისი ერთ სიტყვად ითვლება, შედეგში კი ყველა ფორმა ყვითლად ინიშნება.", ["ქუთაისის ისტორია"]),
         ("რა გჭირდებათ",
          f"ძირკვას {len(intents())} საჭიროების სია აქვს: ამინდი, კანონი, სკოლა, კვლევა, წიგნები, რელიგია და სხვა. "
-         "თითოეულს თავისი საიტები აქვს, და ძირკვა ამ საიტებზე ცალკეც ეძებს. თუ შეკითხვაში „დისერტაცია“ ან "
+         "თითოეულს თავისი საიტები აქვს, და ძირკვა მათ გვერდებს წინ აყენებს. თუ შეკითხვაში „დისერტაცია“ ან "
          "„სტატია“ წერია, ნაშრომები წინ დგას და ამ ტიპის ნაშრომები პირველია.", ["ვეფხისტყაოსანი დისერტაცია"]),
         ("სად ეძებს",
-         "ერთდროულად ეკითხება რამდენიმე საძიებო სისტემას და საკუთარ ინდექსებს: ქართულ ვიკიპედიას "
-         f"({k(n['wiki'])} სტატია), ვიკიწყაროს, ჩვენ მიერ შეგროვებულ {kd(n['crawl'])} გვერდს {n['sites']:,} საიტიდან, "
-         f"„ივერიელის“ {kd(n['iverieli'])} ჩანაწერს, {kd(n['papers'])} სამეცნიერო ნაშრომს და ძველი ვების ასლებს. "
-         "საძიებო სისტემების პასუხები ერთი დღე ინახება, ამიტომ იგივე ძიება მეორედ ბევრად სწრაფად ჩნდება.", []),
+         "ეძებს საკუთარ ინდექსებში: ქართულ ვიკიპედიაში "
+         f"({k(n['wiki'])} სტატია), ვიკიწყაროში, ჩვენ მიერ შეგროვებულ {kd(n['crawl'])} გვერდში {n['sites']:,} საიტიდან, "
+         f"„ივერიელის“ {kd(n['iverieli'])} ჩანაწერში, {kd(n['papers'])} სამეცნიერო ნაშრომში და ძველი ვების ასლებში.", []),
         ("აზრით ძიება",
          f"ადგილობრივი ენის მოდელი (BGE-M3) {kd(n['passages'])} აბზაცს ინახავს რიცხვების სახით: ვიკიპედიის, "
          "ვიკიწყაროს, ნაშრომებისა და ბიბლიოთეკის ტექსტებს. შეკითხვაც ასეთ რიცხვებად იქცევა, და ძირკვა პოულობს "
@@ -726,7 +711,7 @@ def _details() -> list[tuple[str, str, list[str]]]:
          "ავტორი, წელი, ჟურნალი, PDF და მზა ციტირება.", ["სიყვარული რას ნიშნავს"]),
         ("ყველაფერი ჩანს",
          "ყოველი შედეგის ქვეშ წერია, რომელმა წყარომ იპოვა და რომელ ადგილზე, რა სიტყვები დაემთხვა და რა ქულა მიიღო. "
-         "„როგორ ვიპოვეთ“ ველში ჩანს ყველა შეკითხვა, რაც ძირკვამ გაგზავნა, და თითოეულის დრო.", []),
+         "„როგორ ვიპოვეთ“ ველში ჩანს ყველა წყარო, სადაც ძირკვამ ეძება, და რამდენი შედეგი იპოვა თითოეულში.", []),
     ]
 
 
@@ -734,8 +719,6 @@ def about_page() -> str:
     """How dzirkva works in detail: the signs of a person's text and their rules, what it pushes away, how it can grow,
     sources and their licenses, what telemetry stores."""
     origins = [
-        ("საძიებო სისტემები: იანდექსი, იაჰუ და ბრეივი. მათ შედეგებს ვინახავთ ერთი დღით (ბრეივისას ერთი კვირით)."
-         if engines.SEARXNG else "საძიებო სისტემა: ბრეივი. მის შედეგებს ვინახავთ ერთი კვირით."),
         "ვიკიპედია, ვიკიწყარო და ვიქსიკონი: ტექსტები CC BY-SA 4.0 ლიცენზიით; ყოველ ამონარიდს ახლავს ბმული სტატიაზე.",
         "ივერიელი: ეროვნული ბიბლიოთეკის ციფრული ბიბლიოთეკის კატალოგი.",
         "სამეცნიერო ჟურნალები და უნივერსიტეტების რეპოზიტორიები: ნაშრომების აღწერები მათი OAI-PMH არხებიდან; "
@@ -899,11 +882,9 @@ def stats_page(days: int, local: bool, key: str) -> str:
     nums = "".join((f"<div><b>{v:.0%}</b>" if k.endswith("_share") else f"<div><b>{v}</b>")
                    + f"<span>{STAT_NAMES[k]}</span></div>" for k, v in s["numbers"].items())
     intent_name = lambda i: intents()[i]["ka"] if i in intents() else "ზოგადი" if i == "none" else i
-    today, month = engines.brave_used()
-    brave = (f"ბრეივის API (ფასიანი): დღეს {today} / {engines.BRAVE_DAILY_LIMIT}, ამ თვეში {month} / "
-             f"{engines.BRAVE_MONTHLY_LIMIT} · ერთდროულად {MAX_SEARCHES} ძიება")
+    at_once = f"ერთდროულად {MAX_SEARCHES} ძიება"
     body = (f"<div class='ans hero'><div class=cap>{cap('ტელემეტრია')}</div><span class=t>როგორ იყენებენ ძირკვას</span>"
-            f"<p class=facts>{nav}</p><p class=facts>{brave}</p><div class=nums>{nums}</div></div>")
+            f"<p class=facts>{nav}</p><p class=facts>{at_once}</p><div class=nums>{nums}</div></div>")
     body += _block("ძიება დღეების მიხედვით", _bars(s["days"], s["click_days"]))
     body += _block("ხშირი ძიებები", _table(s["top_queries"], ["ძიება", "რამდენჯერ", "დაწკაპება"]))
     body += _block("ძიება შედეგის გარეშე", _table(s["zero"], ["ძიება", "რამდენჯერ"]))
