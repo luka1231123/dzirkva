@@ -104,7 +104,7 @@ ANSWER_VECTOR = 3       # why/how: results are also compared with the mean of th
 RELATED = 8             # related searches under the results
 BRAVE_QUERY = ("corrected", "original")  # Brave API is paid per call: one per search, the corrected query if any
 TYPED_USES = 3          # round-1 pages that use a typed word: a real word, so a fix is only "did you mean"
-SEARXNG_SPACING = 0.3   # seconds between SearXNG requests: Google blocks fast bursts
+SEARXNG_SPACING = 0.3   # seconds between SearXNG requests: engines block fast bursts
 DEEP = 3                # deep search (button): × pages, site queries, word forms, local results and results read
                         # by meaning; feedback stays as in a normal search; Brave stays one call (paid)
 TRACKING = re.compile(r"^(utm_|fbclid|gclid|yclid|mc_|ref$|ref_|locale$)")  # locale: DSpace UI language, same record
@@ -378,7 +378,8 @@ async def fan_out(qs: dict[str, str], brave: tuple[str, ...] = (),
                   pages: dict[str, int] | None = None) -> list[tuple[str, list[dict]]]:
     pages = pages or {}
     async with httpx.AsyncClient() as client:
-        jobs = [_run(client, n, q, "searxng", i * SEARXNG_SPACING, pages.get(n, 1)) for i, (n, q) in enumerate(qs.items())]
+        jobs = [_run(client, n, q, "searxng", i * SEARXNG_SPACING, pages.get(n, 1))
+                for i, (n, q) in enumerate(qs.items())] if engines.SEARXNG else []
         jobs += [_run(client, n, qs[n], "brave-api", 0) for n in brave if n in qs]
         return await asyncio.gather(*jobs)
 

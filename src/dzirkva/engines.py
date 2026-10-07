@@ -1,8 +1,10 @@
-"""Clients for the outside search engines: local SearXNG and the Brave Search API.
+"""Clients for the outside search engines: the Brave Search API and local SearXNG.
 
 Every answer is cached in data/cache.db (repeat searches and eval runs cost no engine calls).
-Google back-off: when SearXNG reports a Google CAPTCHA, Google is left out for 1 h, then 2, 4, 8, 24 h
-if it blocks again. SearXNG's own pause is a fixed 1 h, and hitting Google again right away extends the block.
+SearXNG is paused: SEARXNG=1 in .env turns it on again (start it with scripts/searxng.sh or the systemd unit).
+Engine list: SEARXNG_ENGINES here and keep_only in config/searxng.yml; to add one, test it with Georgian queries
+first and put the reason in config/searxng.yml. Google was removed: CAPTCHA on the Mac, HTTP 403 from the server.
+Back-off: an engine that reports a CAPTCHA or a block is left out for 1 h, then 2, 4, 8, 24 h if it blocks again.
 """
 
 import asyncio
@@ -20,8 +22,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+SEARXNG = os.environ.get("SEARXNG", "0") == "1"  # paused by default
 SEARXNG_URL = "http://127.0.0.1:8888/search"
-SEARXNG_ENGINES = ("google", "yandex", "yahoo")  # same as config/searxng.yml
+SEARXNG_ENGINES = ("yandex", "yahoo")  # same as config/searxng.yml
 BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
 CACHE_DB = Path(__file__).resolve().parents[2] / "data" / "cache.db"
 CACHE_HOURS = {"searxng": 24, "brave": 24 * 7}  # Brave: paid per call, keep longer
@@ -29,7 +32,7 @@ CACHE_HOURS = {"searxng": 24, "brave": 24 * 7}  # Brave: paid per call, keep lon
 # the other engines and our own indexes still answer.
 BRAVE_DAILY_LIMIT = int(os.environ.get("BRAVE_DAILY_LIMIT", "20"))
 BRAVE_MONTHLY_LIMIT = int(os.environ.get("BRAVE_MONTHLY_LIMIT", "300"))
-BLOCK_HOURS = (1, 2, 4, 8, 24)                   # Google pause after the 1st, 2nd, ... block in a row
+BLOCK_HOURS = (1, 2, 4, 8, 24)                   # engine pause after the 1st, 2nd, ... block in a row
 BLOCKING = re.compile(r"CAPTCHA|too many|denied", re.I)
 
 
@@ -80,8 +83,11 @@ def _block(engine: str) -> None:
 # ---- engines ------------------------------------------------------------
 
 async def searxng(client: httpx.AsyncClient, query: str, page: int = 1) -> list[dict]:
-    """Google + Yandex + Yahoo through the local SearXNG (without Google while it is paused). page: 2, 3 … for deep search."""
+    """Yandex + Yahoo through the local SearXNG (without a blocked engine). page: 2, 3 … for deep search.
+    [] while SearXNG is paused."""
     use = [e for e in SEARXNG_ENGINES if not blocked(e)]
+    if not SEARXNG or not use:
+        return []
     key = f"searxng|{','.join(use)}|{query}" + (f"|{page}" if page > 1 else "")
     if (hit := _cached("searxng", key)) is not None:
         return hit

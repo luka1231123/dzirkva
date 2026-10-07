@@ -1,5 +1,5 @@
 [Unit]
-Description=SearXNG for dzirkva (127.0.0.1:8888)
+Description=SearXNG for dzirkva (127.0.0.1:8888), paused: enable with SEARXNG=1 in .env
 After=network-online.target
 Wants=network-online.target
 
