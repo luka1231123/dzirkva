@@ -1,0 +1,14 @@
+[Unit]
+Description=SearXNG for dzirkva (127.0.0.1:8888)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=luka
+WorkingDirectory=/home/luka/dzirkva
+ExecStart=/home/luka/dzirkva/scripts/searxng.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

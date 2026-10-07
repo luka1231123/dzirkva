@@ -1,0 +1,18 @@
+[Unit]
+Description=dzirkva web (127.0.0.1:8000)
+After=searxng.service
+Wants=searxng.service
+
+[Service]
+User=luka
+WorkingDirectory=/home/luka/dzirkva
+Environment=HF_HUB_OFFLINE=1
+ExecStart=/home/luka/.local/bin/uv run --frozen python -m dzirkva.web
+Restart=always
+RestartSec=5
+# The server has 7 GB and no screen: the web app dies before SSH does
+MemoryMax=5800M
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
