@@ -975,6 +975,29 @@ def _on_worker(fn):
     return box["value"]
 
 
+def _mcp_search(q: str, deep: bool = False):
+    """Optional MCP listener shares the website's model, cache and search admission limit."""
+    key = q + DEEP_KEY if deep else q
+    value = _cached(key)
+    if value is not None:
+        return value
+    if not _searches.acquire(blocking=False):
+        raise ValueError("Dzirkva is busy. Retry after the current searches finish.")
+    try:
+        def run_search():
+            value = _cached(key)
+            if value is None:
+                t = time.time()
+                qs, results, debug = search(q, deep)
+                debug["seconds"]["total"] = round(time.time() - t, 1)
+                value = (qs, results, debug)
+                _remember(key, value)
+            return value
+        return _on_worker(run_search)
+    finally:
+        _searches.release()
+
+
 class Handler(BaseHTTPRequestHandler):
     """Request threads; pages are built one at a time on the worker. Every request is a telemetry event."""
 
@@ -1163,6 +1186,16 @@ if __name__ == "__main__":
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f"http://127.0.0.1:{PORT}", flush=True)
+    if os.environ.get("MCP_PORT"):
+        from dzirkva.mcp import create_server, run_http
+
+        mcp_port = int(os.environ["MCP_PORT"])
+        if not 1 <= mcp_port <= 65535 or mcp_port == PORT:
+            raise ValueError("MCP_PORT must be a valid port different from PORT")
+        mcp_server = create_server(port=mcp_port, public_url=os.environ.get("MCP_PUBLIC_URL"),
+                                   search_backend=_mcp_search)
+        threading.Thread(target=run_http, args=(mcp_server,), daemon=True).start()
+        print(f"MCP: http://127.0.0.1:{mcp_port}/mcp", flush=True)
     # The worker: every new search runs here, one at a time. The meaning model on the Mac GPU hangs when called
     # from other threads; the request threads build the pages and wait only for their search.
     while True:

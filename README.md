@@ -38,10 +38,13 @@ Setup and data building are described in Georgian below.
 
 ## AI access (MCP)
 
-AI assistants can search Georgian sources, read indexed text and inspect the trusted-source
-list through Dzirkva's MCP server. Run `uv run --extra mcp dzirkva-mcp` for stdio, or add
+AI assistants can search Georgian sources, read source text and document passages, inspect
+word families and definitions, and discover related sites through Dzirkva's MCP server.
+Normal search is the default; `deep: true` enables ამოძირკვა.
+Run `uv run --extra mcp dzirkva-mcp` for stdio, or add
 `--transport streamable-http` for `http://127.0.0.1:8001/mcp`.
 See [MCP.md](MCP.md) for client configuration, tools and hosting.
+Set `MCP_PORT=8001` when running the website with the `mcp` extra to share its search backend.
 
 ---
 
