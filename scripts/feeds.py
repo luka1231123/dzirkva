@@ -29,6 +29,8 @@ FEEDS_DB = crawl.DB.with_name("feeds.db")
 AGENT = "dzirkva-crawler/0.1 (Georgian search research; 1 req/s)"
 MAX_BYTES = 2_000_000
 MAX_ITEMS = 200
+REQUEST_SECONDS = 45
+MAX_ROBOTS_DELAY = 60
 MIN_FULL_TEXT = 500
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -155,6 +157,12 @@ class Fetcher:
         await wait_for_host(url, pause=self.delays.get(host, self.pause), background=True)
         await asyncio.sleep(max(0, self.next.get(host, 0) - time.monotonic()))
         self.next[host] = time.monotonic() + self.delays.get(host, self.pause)
+        try:
+            return await asyncio.wait_for(self._request_body(url, headers), REQUEST_SECONDS)
+        except TimeoutError as e:
+            raise httpx.ReadTimeout(f"response exceeded {REQUEST_SECONDS} seconds") from e
+
+    async def _request_body(self, url, headers):
         async with self.client.stream("GET", url, headers=headers, follow_redirects=False) as response:
             if response.is_redirect:
                 return response.status_code, response.headers, b""
@@ -199,8 +207,11 @@ class Fetcher:
                 if e.response.status_code not in {404, 410}:
                     return False
                 robot.parse([])
+            delay = max(self.pause, float(robot.crawl_delay(AGENT) or 0))
+            if delay > MAX_ROBOTS_DELAY:
+                raise ValueError(f"robots crawl-delay {delay:g}s exceeds bounded feed job; skipping host")
             self.robots[origin] = robot
-            self.delays[u.netloc] = max(self.pause, float(robot.crawl_delay(AGENT) or 0))
+            self.delays[u.netloc] = delay
             self.next[u.netloc] = max(self.next.get(u.netloc, 0), time.monotonic() + self.delays[u.netloc])
         return self.robots[origin].can_fetch(AGENT, url)
 
@@ -321,11 +332,14 @@ async def main(args):
         fetcher = Fetcher(client, args.pause, args.max_bytes)
         rows = db.execute("SELECT host FROM feeds WHERE url='' AND next_check<=? "
                           "ORDER BY next_check,host LIMIT ?", (now, args.discover_limit)).fetchall()
-        for (host,) in rows:
+        for number, (host,) in enumerate(rows, 1):
+            started = time.monotonic()
+            print(f"RSS discovery {number}/{len(rows)}: {host}", flush=True)
             try:
                 url = await discover(fetcher, host)
                 db.execute("UPDATE feeds SET url=?,last_check=?,next_check=?,failures=0 WHERE host=?",
                            (url, now, now if url else now + 30 * 86400, host))
+                print(f"{host}: {'feed found' if url else 'no feed'} ({time.monotonic()-started:.1f}s)", flush=True)
             except BudgetExhausted:
                 print("RSS download budget reached during discovery; remaining hosts stay due", flush=True)
                 break
@@ -334,7 +348,8 @@ async def main(args):
             db.commit()
         rows = db.execute("SELECT * FROM feeds WHERE url<>'' AND next_check<=? "
                           "ORDER BY next_check,host LIMIT ?", (now, args.poll_limit)).fetchall()
-        for row in rows:
+        for number, row in enumerate(rows, 1):
+            print(f"RSS poll {number}/{len(rows)}: {row[0]}", flush=True)
             try:
                 result = await poll(fetcher, db, crawler, row)
                 counts = [a + b for a, b in zip(counts, result)]
