@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "pyyaml>=6.0.3",
     "sentence-transformers>=6.1.0",
+    "torch>=2.8",
     "trafilatura>=2.2.0",
 ]
 
@@ -21,3 +22,12 @@ dzirkva = "dzirkva:main"
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
 build-backend = "uv_build"
+
+# Linux server has no GPU: CPU-only torch, without the CUDA libraries
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
