@@ -97,7 +97,7 @@ def search(words: list[str], limit: int = 20, site: str = "wikipedia") -> list[d
         expr = op.join(any_form(w) for w in words)
         rows = db.execute(
             "SELECT title, snippet(wiki, 1, '', '', '…', 30) FROM wiki WHERE wiki MATCH ? "
-            "ORDER BY bm25(wiki, 10, 1) LIMIT ?", (expr, limit)).fetchall()
+            "AND rank MATCH 'bm25(10,1)' ORDER BY rank LIMIT ?", (expr, limit)).fetchall()
         if len(rows) >= 5 or len(words) == 1:
             break
     return [{"url": prefix + quote(title.replace(" ", "_")), "title": f"{title} · {name}",

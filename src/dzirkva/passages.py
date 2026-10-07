@@ -172,10 +172,17 @@ def word_search(words: list[str], limit: int = 20) -> list[dict]:
     rows = []
     for op in (" AND ", " OR "):
         expr = op.join(any_form(w) for w in words)
-        rows = db.execute("SELECT p.title,p.site,p.url,snippet(passages_fts,1,'','','…',35),p.v "
-                          "FROM passages_fts JOIN passages p ON p.id=passages_fts.rowid "
-                          "WHERE passages_fts MATCH ? ORDER BY bm25(passages_fts,5,1) LIMIT ?",
-                          (expr, limit * 4)).fetchall()
+        ids = [r[0] for r in db.execute("SELECT rowid FROM passages_fts WHERE passages_fts MATCH ? "
+                                      "AND rank MATCH 'bm25(5,1)' ORDER BY rank LIMIT ?",
+                                      (expr, limit * 4))]
+        # Rank before joining: otherwise SQLite loads text and vectors for every matching passage
+        # into a temporary sort, even though search needs only a small candidate list.
+        found = db.execute("SELECT p.id,p.title,p.site,p.url,snippet(passages_fts,1,'','','…',35),p.v "
+                           "FROM passages_fts JOIN passages p ON p.id=passages_fts.rowid "
+                           f"WHERE passages_fts MATCH ? AND passages_fts.rowid IN ({','.join('?' for _ in ids)})",
+                           (expr, *ids)).fetchall() if ids else []
+        by_id = {r[0]: r[1:] for r in found}
+        rows = [by_id[i] for i in ids if i in by_id]
         if len(rows) >= 5 or len(words) == 1:
             break
     out, seen = [], set()

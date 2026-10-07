@@ -189,7 +189,7 @@ def search(words: list[str], limit: int = 20, urls: list[str] = (), hosts: list[
         expr = op.join(any_form(w) for w in words)
         rows = db.execute(
             f"SELECT url, title, date, snippet(pages, 3, '', '', '…', 30) FROM pages "
-            f"WHERE pages MATCH ?{only} ORDER BY bm25(pages, 0, 5, 0, 1) LIMIT ?",
+            f"WHERE pages MATCH ?{only} AND rank MATCH 'bm25(0,5,0,1)' ORDER BY rank LIMIT ?",
             (expr, *urls, *sites, limit)).fetchall()
         if len(rows) >= 5 or len(words) == 1:
             break
