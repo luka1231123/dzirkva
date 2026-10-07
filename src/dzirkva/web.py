@@ -53,7 +53,7 @@ PER_SITE = 2
 SITE_LIMIT = {"ka.wikipedia.org": 2, "ka.wikisource.org": 1}  # local indexes must not fill the list
 MAX_SOCIAL = 3  # social posts in the main list (all social sites together)
 ENGINE_NAMES = {"wikipedia": "ვიკიპედია", "passages": "ვიკიპედია (აზრით)", "archive": "ძველი ვები", "crawl": "ჩვენი ინდექსი", "iverieli": "ივერიელი", "wikisource": "ვიკიწყარო", "papers": "სამეცნიერო ჟურნალები",
-                "cited": "ვიკიპედიის წყაროები", "named": "დასახელებული საიტი"}
+                "cited": "ვიკიპედიის წყაროები", "named": "დასახელებული საიტი", "intent": "საჭიროების საიტები"}
 KIND_NAMES = {"knowledge": "ცოდნა", "news": "სიახლე", "web": "ვები", "forum": "ფორუმი", "social": "სოციალური ქსელი",
               "video": "ვიდეო", "film": "ფილმი"}
 # Signs that a person wrote or chose a page: key → (label, CSS class, meaning). Results show the meaning on hover;
@@ -234,10 +234,14 @@ def _found_by(r) -> str:
 
 
 def _query_name(name: str) -> str:
-    """Query names from search.py (original, lemmas, site:law, feedback:…) in Georgian."""
+    """Query names from search.py (crawl, intent:law, named:host, feedback:…) in Georgian."""
     kind, _, arg = name.partition(":")
     if kind == "feedback":
         return f"პასუხის სიტყვა: {arg}"
+    if kind == "intent":
+        return f"{ENGINE_NAMES[kind]}: {intents()[arg]['ka']}"
+    if kind == "named":
+        return f"{ENGINE_NAMES[kind]}: {arg}"
     return ENGINE_NAMES.get(name, name)
 
 

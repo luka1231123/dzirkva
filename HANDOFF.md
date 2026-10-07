@@ -57,7 +57,7 @@ weather, train, Tamar, photosynthesis fine; police fines, "ქართული
    ბიტკოინის get 0 forms, so `any_form` searches only 2. Add: no Wiktionary forms → ka-lemma forms
    (`SELECT form FROM f WHERE lemma=? AND level>=4 ORDER BY count DESC`). Not for verbs (ka gives forms without
    the preverb: ჩავწერე → წერს).
-3. **Intent and named sites as a host filter.** The `site:` queries went with SearXNG; now an intent only gives a
+3. **Done (code, not yet checked with the eval; measure the time of intents with many sites).** **Intent and named sites as a host filter.** The `site:` queries went with SearXNG; now an intent only gives a
    bonus. Add a host filter to `crawl.search` and search the intent's sites and a named site with it.
 4. **Coverage floor vs meaning answers.** why/how answers use other words, so `COVERAGE_FLOOR` (0.2) pushes them
    down. Check with the eval after step 1.

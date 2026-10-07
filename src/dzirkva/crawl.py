@@ -107,21 +107,28 @@ def domain_signals(url: str) -> set[str]:
     return {row[0], *row[1].split(",")} - {"", "other"} if row else set()
 
 
-def search(words: list[str], limit: int = 20, urls: list[str] = ()) -> list[dict]:
+def search(words: list[str], limit: int = 20, urls: list[str] = (), hosts: list[str] = ()) -> list[dict]:
     """Crawled pages with all words (any form); if too few, with any of them. The date starts the snippet.
 
-    urls: only these pages (http and https both), for the pages Wikipedia articles cite."""
+    urls: only these pages (http and https both), for the pages Wikipedia articles cite.
+    hosts: only pages on these sites (http and https, with and without www.; not their other subdomains)."""
     db = _db()
     if db is None or not words:
         return []
     urls = sorted({re.sub(r"^https?:", s, u) for u in urls for s in ("http:", "https:")})
     only = f" AND rowid IN (SELECT id FROM pages_content WHERE c0 IN ({','.join('?' * len(urls))}))" if urls else ""
+    # a site's pages: URL ranges on the pages_url index ("/" + 1 = "0" ends the range)
+    starts = [f"{s}://{w}{h}/" for h in hosts for s in ("http", "https") for w in ("", "www.")]
+    if starts:
+        only += f" AND rowid IN (SELECT id FROM pages_content WHERE {' OR '.join(['(c0 >= ? AND c0 < ?)'] * len(starts))})"
+    sites = [x for p in starts for x in (p, p[:-1] + "0")]
     rows = []
     for op in (" AND ", " OR "):
         expr = op.join(any_form(w) for w in words)
         rows = db.execute(
             f"SELECT url, title, date, snippet(pages, 3, '', '', '…', 30) FROM pages "
-            f"WHERE pages MATCH ?{only} ORDER BY bm25(pages, 0, 5, 0, 1) LIMIT ?", (expr, *urls, limit)).fetchall()
+            f"WHERE pages MATCH ?{only} ORDER BY bm25(pages, 0, 5, 0, 1) LIMIT ?",
+            (expr, *urls, *sites, limit)).fetchall()
         if len(rows) >= 5 or len(words) == 1:
             break
     return [{"url": url, "title": title or url, "snippet": f"{date} · {snip}" if date else snip, "engine": "crawl"}

@@ -2,7 +2,8 @@
 are archived in scripts/archive/engines/.
 
 1. Round 1: the query words (any form, wiki.any_form) in every local index: Wikipedia, Wikisource, the own crawl,
-   the old web, the Iverieli catalog, papers. A spelling fix is used only when the crawl has the typed word
+   the old web, the Iverieli catalog, papers; the crawl again on the sites of the query's intent (intents.yaml) and
+   on a site the query names (ფეისბუქი შესვლა → შესვლა on facebook.com). A spelling fix is used only when the crawl has the typed word
    with the other query words much less often than the fix; else the page asks "did you mean" (confirm_fixes).
    Search by meaning (passages.py) adds the paragraphs nearest to the question:
    they find answers that use other words than the question.
@@ -518,6 +519,15 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     lists.append(("wikisource", wiki.search(content, 10 * m, "wikisource")))  # classic texts: poems, prose, laws
     lists.append(("archive", archive.search(content, 20 * m)))  # old Georgian web, local index
     lists.append(("crawl", crawl.search(content, 20 * m)))  # trusted sites, own crawl
+    qs = {}
+    if wanted:  # the same words on the sites made for what the query wants
+        qs[f"intent:{want}"] = f"{' '.join(content)} ({len(wanted)} საიტი)"
+        lists.append((f"intent:{want}", crawl.search(content, 10 * m, hosts=sorted(wanted))))
+    for h, share, name in named[:1]:
+        rest = [w for w in content if w not in name.split() and _lemma(w) not in name.split()]
+        if share >= NAVIGATIONAL and rest:  # ფეისბუქი შესვლა → შესვლა on facebook.com
+            qs[f"named:{h}"] = f"{' '.join(rest)} site:{h}"
+            lists.append((f"named:{h}", crawl.search(rest, 10 * m, hosts=[h])))
     lists.append(("iverieli", iverieli.search(content, 10 * m)))  # National Library catalog: books, journals, press
     # Georgian journals and university repositories; research words (დისერტაცია, სტატია) name the kind of text,
     # not its topic: an abstract seldom says them. დისერტაცია puts theses first.
@@ -538,7 +548,7 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     key = click_key(content)
     clicked = clicks.good(key)
     lists.append(("cited", crawl.search(content, 10 * m, cites) if cites else []))  # crawled pages the articles cite
-    qs = {name: query if name == "passages" else " ".join(topic if name == "papers" else content)
+    qs = {name: qs.get(name) or (query if name == "passages" else " ".join(topic if name == "papers" else content))
           for name, _ in lists if name != "named"}
     # explanations (why/how): answer vector and feedback from the nearest paragraphs; names and facts: from
     # the covered snippets (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
