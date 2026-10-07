@@ -178,11 +178,12 @@ def search(words: list[str], limit: int = 20, urls: list[str] = (), hosts: list[
     if db is None or not words:
         return []
     urls = sorted({re.sub(r"^https?:", s, u) for u in urls for s in ("http:", "https:")})
-    only = f" AND rowid IN (SELECT id FROM pages_content WHERE c0 IN ({','.join('?' * len(urls))}))" if urls else ""
+    # Keep FTS driving the query: rowid IN otherwise repeats MATCH for every site's page.
+    only = f" AND +rowid IN (SELECT id FROM pages_content WHERE c0 IN ({','.join('?' * len(urls))}))" if urls else ""
     # a site's pages: URL ranges on the pages_url index ("/" + 1 = "0" ends the range)
     starts = [f"{s}://{w}{h}/" for h in hosts for s in ("http", "https") for w in ("", "www.")]
     if starts:
-        only += f" AND rowid IN (SELECT id FROM pages_content WHERE {' OR '.join(['(c0 >= ? AND c0 < ?)'] * len(starts))})"
+        only += f" AND +rowid IN (SELECT id FROM pages_content WHERE {' OR '.join(['(c0 >= ? AND c0 < ?)'] * len(starts))})"
     sites = [x for p in starts for x in (p, p[:-1] + "0")]
     rows = []
     for op in (" AND ", " OR "):
