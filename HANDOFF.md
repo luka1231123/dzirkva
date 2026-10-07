@@ -53,7 +53,7 @@ weather, train, Tamar, photosynthesis fine; police fines, "ქართული
    Fix: vectors for crawl pages (title + first ~600 characters), built on the Mac GPU (1.4M pages, ~3–4 h,
    resumable like `build_passages.py`), stored like `passages.db`; search reads the stored vector by URL.
    1-bit copy in RAM ≈ 180 MB. Then the same pages can also be found by meaning.
-2. **Names find all their forms.** `morph.forms_of` reads only Wiktionary tables: მამარდაშვილის, ტრამპის,
+2. **Done (code, not yet checked with the eval).** **Names find all their forms.** `morph.forms_of` reads only Wiktionary tables: მამარდაშვილის, ტრამპის,
    ბიტკოინის get 0 forms, so `any_form` searches only 2. Add: no Wiktionary forms → ka-lemma forms
    (`SELECT form FROM f WHERE lemma=? AND level>=4 ORDER BY count DESC`). Not for verbs (ka gives forms without
    the preverb: ჩავწერე → წერს).
@@ -69,7 +69,7 @@ Check each step alone with `uv run python scripts/run_stress.py eval/<name>.json
 
 ## 2. Simplicity
 
-1. **Dead code in `morph.py` (~80 of 374 lines):** `other_forms`, `EBA_FORMS`, `OTHER_FORMS`, `genitive`,
+1. **Done.** **Dead code in `morph.py` (~80 of 374 lines):** `other_forms`, `EBA_FORMS`, `OTHER_FORMS`, `genitive`,
    `synonyms` + `synonyms.tsv` loading, `lemmas()`, the `KA_LEMMA` switch. Nothing calls them since the engine
    queries went (`git grep` before deleting).
 2. **Noun rules (~60 lines):** they keep only lemmas the word list confirms, and the ka-lemma table covers every

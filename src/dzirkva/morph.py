@@ -10,22 +10,20 @@
    The root is accepted only if it leads to a known word of a verb family (რბენა, გაქცევა).
 
 A rule result is kept only if the lexicon or the ka.wikipedia word list confirms it.
-Search uses `families()` for matching and `lemmas()` for query variants.
+Search uses `families()` for matching and `forms_of()` for word forms.
 """
 
-import os
 import sqlite3
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
-from dzirkva.georgian import freq, vocab
+from dzirkva.georgian import freq
 
 LEXICON_FILE = Path(__file__).resolve().parents[2] / "data" / "lexicon.tsv"
-SYNONYMS_FILE = LEXICON_FILE.with_name("synonyms.tsv")
 KA_FILE = LEXICON_FILE.with_name("families.db")  # ka-lemma: form, lemma, level, preverb, pos, count
 KA_LEVEL = 4  # 5 same form, 4 inflection, 3 aspect preverb / verbal noun, 2 other preverb, 1 derived word
-KA = os.environ.get("KA_LEMMA", "1") != "0"
+KA_FORMS = 100  # forms_of: at most this many forms from the ka-lemma table
 VOWELS = set("აეიოუ")
 SYNCOPE_BEFORE = set("ლრნმვ")  # წყალ-ი -> წყლ-ის, ფანჯარ-ა -> ფანჯრ-ის, სოფელ-ი -> სოფლ-ის
 
@@ -72,9 +70,6 @@ PRESENT = ("ს", "ებს", "ობს", "ავს", "ამს", "ის", 
 MIN_ROOT = 2
 MIN_VERB_FREQ = 5  # verb forms not in Wiktionary are accepted from the word list above this count
 PARTICIPLE_SHAPE = (("მ", "მა", "მე", "მო", "ნა", "სა"), ("ელი", "ალი", "არი", "ული", "ილი", "ე"))
-OTHER_FORMS = 3  # other_forms: at most this many forms of a verb
-# Verbs with a preverb and an -ება verbal noun (the productive kind): the forms people write most. {} = root.
-EBA_FORMS = ("ა{}ა", "ა{}ეს", "მა{}ეს", "ვა{}ე", "ა{}ებს", "ა{}ებენ", "{}ებული", "ი{}ა", "ი{}ება")
 
 
 @dataclass(frozen=True)
@@ -105,8 +100,14 @@ def _lexicon() -> tuple[dict[str, list[tuple[str, str]]], dict[str, str], frozen
 
 @cache
 def _ka_db() -> sqlite3.Connection | None:
-    if not KA or not KA_FILE.exists():
+    if not KA_FILE.exists():
         return None
+    try:  # forms of a lemma (forms_of): built once, a few seconds
+        db = sqlite3.connect(KA_FILE)
+        db.execute("CREATE INDEX IF NOT EXISTS f_lemma ON f(lemma)")
+        db.close()
+    except sqlite3.OperationalError:  # read-only copy or busy: forms_of scans the table instead
+        pass
     return sqlite3.connect(f"file:{KA_FILE}?mode=ro", uri=True, check_same_thread=False)
 
 
@@ -266,92 +267,20 @@ def _forms_by_lemma() -> dict[str, list[str]]:
     return out
 
 
-def forms_of(lemma: str) -> list[str]:
-    """All known inflected forms of a lemma (from Wiktionary tables)."""
-    return _forms_by_lemma().get(lemma, [])
+@cache
+def forms_of(lemma: str) -> tuple[str, ...]:
+    """All known inflected forms of a lemma: Wiktionary tables, else the ka-lemma table (names: ტრამპი →
+    ტრამპის, ტრამპმა …). Not for verbs: ka-lemma gives their forms without the preverb (ჩავწერე → წერს)."""
+    if forms := _forms_by_lemma().get(lemma):
+        return tuple(forms)
+    db = _ka_db()
+    rows = db.execute("SELECT form FROM f WHERE lemma = ? AND level >= ? AND pos != 'verb' ORDER BY count DESC "
+                      "LIMIT ?", (lemma, KA_LEVEL, KA_FORMS)).fetchall() if db else []
+    return tuple(f for (f,) in rows)
 
 
 def family_members(family: str) -> list[str]:
     return _members().get(family, [])
-
-
-@cache
-def _synonyms() -> dict[str, list[str]]:
-    out: dict[str, list[str]] = {}
-    if SYNONYMS_FILE.exists():
-        with open(SYNONYMS_FILE, encoding="utf-8") as f:
-            for line in f:
-                a, b = line.rstrip("\n").split("\t")
-                out.setdefault(a, []).append(b)
-    return out
-
-
-def synonyms(lemma: str) -> list[str]:
-    """Wiktionary synonyms of a lemma, most frequent first."""
-    return sorted(_synonyms().get(lemma, []), key=freq, reverse=True)
-
-
-def _preverb(word: str) -> str:
-    """The preverb a verb form starts with (not ა: it is also the version vowel of ააშენა)."""
-    return next((p for p in PREVERBS if p not in ("", "ა") and word.startswith(p) and len(word) - len(p) > MIN_ROOT), "")
-
-
-@cache
-def other_forms(word: str, limit: int = OTHER_FORMS) -> tuple[str, list[str]]:
-    """Other forms of a verb that people write (vocab), most common first, and their kind ("noun" or "verb").
-
-    A verb form → its verbal nouns (გავაკეთოთ → გაკეთება, კეთება): the text that answers "how" names the action.
-    A verbal noun with a preverb → its verb forms (დაბადება → დაიბადა, დაიბადნენ): people tell what happened.
-    The lexicon family gives the forms, with the same preverb (გავიგო → გაგება, not მოგება). A word the lexicon
-    does not know: EBA_FORMS (ჩამოლაბორანტება ↔ ჩამომალაბორანტეს, ჩამოლაბორანტებული, ჩამოალაბორანტა).
-    """
-    found = analyze(word)
-    if found[0].pos != "verb":
-        return "", []
-    lex = _lexicon()[0]
-    pv = _preverb(word)
-    nouns = {m for a in found for m in family_members(a.family) if (m, "noun") in lex.get(m, [])
-             and m.endswith(MASDAR) and not m.endswith("ილი")}  # -ილი: a participle (დაწერილი)
-    # კეთება (the end of გაკეთება, not აღწერა: აღ- is a preverb too); with the preverb: შე + ტანა → შეტანა
-    bare = {m for m in nouns if not _preverb(m) and any(n != m and n.endswith(m) for n in nouns)}
-    nouns = {m for m in nouns if _preverb(m) == pv and m.startswith(pv)} | ({pv + m for m in bare} | bare if pv else set())
-    if nouns:
-        if word not in nouns:
-            kind, forms = "noun", nouns
-        elif pv:  # bare verbal nouns are mostly plain nouns (ცხოვრება, მთავრობა)
-            kind, forms = "verb", {f for a in found if a.pos == "verb" for f in forms_of(a.lemma)
-                                   if _preverb(f) == pv and f.startswith(pv)} - nouns
-        else:
-            return "", []
-    elif pv:
-        rest = word[len(pv):]
-        if rest.endswith("ება"):
-            kind, forms = "verb", {pv + t.format(rest[:-3]) for t in EBA_FORMS}
-        else:
-            shapes = [t.split("{}") for t in EBA_FORMS]
-            kind, forms = "noun", {pv + rest[len(a): len(rest) - len(b)] + "ება" for a, b in shapes
-                                   if rest.startswith(a) and rest.endswith(b) and len(rest) - len(a + b) >= MIN_ROOT}
-        forms = {f for f in forms if f not in lex}  # a known word is no form of an unknown verb
-    else:
-        return "", []
-    count = lambda w: vocab().get(w, 0)
-    return kind, sorted((f for f in forms - {word} if count(f)), key=count, reverse=True)[:limit]
-
-
-def genitive(lemma: str) -> str:
-    """Genitive of a noun, the shape people write most (ღვინო → ღვინის, წყალი → წყლის, რადიო → რადიოს).
-    ო/უ/ე stems keep the vowel in loanwords; the dative has that shape too, but it is less common."""
-    stem = lemma[:-1] if lemma[-1] in VOWELS else lemma
-    syncope = [stem[:-2] + stem[-1]] if len(stem) > 3 and stem[-1] in SYNCOPE_BEFORE and stem[-2] in "აეო" else []
-    cands = [s + "ის" for s in [stem, *syncope]] + ([lemma + "ს"] if lemma[-1] in "ოუე" else [])  # რეზიუმეს
-    if known := set(forms_of(lemma)):  # the lexicon table decides: მეტრის is "metre", not მეტრო
-        cands = [c for c in cands if c in known] or [lemma]
-    best = max(cands, key=lambda c: vocab().get(c, 0))
-    return best if vocab().get(best) else lemma
-
-
-def lemmas(word: str) -> list[str]:
-    return [a.lemma for a in analyze(word)]
 
 
 def families(word: str) -> set[str]:
