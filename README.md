@@ -2,34 +2,39 @@
 
 **[ქართული ვერსია ქვემოთაა / Georgian version below](#ძირკვა-dzirkva)**
 
-dzirkva is a Georgian-language search engine for learning and for discovering the Georgian web. It shows only Georgian results and favors text written by people: personal blogs, academic papers, sources cited by Wikipedia, archived copies of Georgian sites that no longer exist, and a hand-picked list of trusted sites. Search runs without an LLM or paid tokens. It uses code plus one free local embedding model (BGE-M3).
+dzirkva is a search engine for the Georgian web. It shows only Georgian pages and puts text written by people
+first: blogs, academic papers, sources cited by Wikipedia, old copies of Georgian sites that are gone. Search uses
+no LLM: only code and one local embedding model, BGE-M3. Live at https://dzirkva.ge.
 
 ## What it does
 
-- **Metasearch plus its own indexes.** Queries Google, Yandex and Yahoo through a local SearXNG instance and the Brave Search API, and merges them with dzirkva's own indexes.
-- **A Georgian language layer.** Context-aware spelling correction, Latin-to-Georgian transliteration (`kartuli` to `ქართული`), morphological analysis (7 noun cases, postpositions, verb preverbs, person, version and screeve), synonyms, and dictionary answers.
-- **Transparent ranking.** Score = engine rank (reciprocal rank fusion) + semantic similarity (BGE-M3) + source trust tier + query term coverage + human-text signals + past clicks. Every result shows why it scored the way it did, and a "how we found this" panel shows each step.
-- **Research search.** Papers come with authors, year, journal, abstract, PDF link and a citation line.
-- **Privacy.** No IP addresses stored, a 30-minute random session cookie, Do Not Track and GPC respected, records deleted after 180 days, outbound links signed with HMAC.
+- **Search.** One Brave Search API call per query, merged with dzirkva's own indexes. Results are ranked by engine
+  position, meaning (BGE-M3), source trust and how many query words the text contains; each result says why it
+  ranks where it does.
+- **Georgian language layer.** Latin-to-Georgian (`kartuli` → `ქართული`), spelling correction, and word forms
+  reduced to their lemma (a grammar and a 1.65M-form table from the ka-lemma project).
+- **Word map** (`/words`). Type a word and see its forms, related words and the words closest in meaning
+  (word2vec trained on our own corpus). Click any word to open its map.
+- **Research.** Papers come with authors, year, journal, PDF link and a citation line.
+- **Privacy.** No IP addresses, a 30-minute random session cookie, Do Not Track and GPC respected, records
+  deleted after 180 days.
 
 ## Indexes
 
 | Source | Size |
 |---|---|
-| Georgian Wikipedia (SQLite FTS5) | 174k articles |
-| Own crawler | 360k pages across 864 sites |
-| Iverieli (National Library of Georgia) | 601k records |
-| Academic papers (OAI-PMH) | 29k papers from 29 journals and repositories |
-| Passage embeddings (BGE-M3) | about 872k passages |
-| Wikisource, Wiktionary, Internet Archive, RSS feeds | smaller indexes |
-
-Morphological analyzer accuracy measured against UniMorph: nouns 100%, adjectives 96%, verbs 88%.
+| Georgian Wikipedia and Wikisource (SQLite FTS5) | 174k articles |
+| Own crawler (runs all the time, slowly) | pages from trusted and small Georgian sites |
+| Passage embeddings (BGE-M3) | about 870k passages |
+| Academic papers (OAI-PMH) and the National Library catalog | 29k papers, 601k records |
+| Word forms and word map | 1.65M forms, 75k words |
 
 ## Stack
 
-Python 3.12, uv, SQLite (FTS5), BGE-M3, SearXNG, Brave Search API. Licensed under AGPL-3.0.
+Python 3.12, uv, SQLite, BGE-M3, Brave Search API. It runs on a home server (7 GB RAM, no GPU) behind a
+Cloudflare Tunnel. SearXNG support is kept but switched off. Licensed under AGPL-3.0.
 
-Setup, data building and configuration are documented in Georgian below.
+Setup and data building are described in Georgian below.
 
 ---
 
