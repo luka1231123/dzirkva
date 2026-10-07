@@ -33,6 +33,7 @@ MIN_FULL_TEXT = 500
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS posts (url TEXT PRIMARY KEY, host TEXT, title TEXT, date TEXT);
+CREATE INDEX IF NOT EXISTS posts_host ON posts(host);
 CREATE TABLE IF NOT EXISTS feeds (
  host TEXT PRIMARY KEY, url TEXT DEFAULT '', etag TEXT DEFAULT '', modified TEXT DEFAULT '',
  last_check INTEGER DEFAULT 0, next_check INTEGER DEFAULT 0, failures INTEGER DEFAULT 0,
@@ -163,6 +164,8 @@ class Fetcher:
                 advertised = int(response.headers.get("content-length", "0"))
             except ValueError:
                 advertised = 0
+            if advertised > MAX_BYTES:
+                raise ValueError("response too large")
             if advertised > self.max_bytes - self.bytes_read:
                 raise BudgetExhausted()
             body = bytearray()
@@ -225,11 +228,15 @@ def seed(db, crawler, limit):
     db.commit()
     # Indexed lookup into the registry avoids repeatedly trying the same accepted domains.
     crawler.execute("ATTACH DATABASE ? AS rss_registry", (str(FEEDS_DB),))
+    # Preserve legacy personal-feed hosts even if their old RSS signal wasn't retained.
+    legacy = crawler.execute("SELECT DISTINCT p.host FROM rss_registry.posts p JOIN domains d ON d.host=p.host "
+                             "LEFT JOIN rss_registry.feeds f ON f.host=p.host "
+                             "WHERE d.state='full' AND f.host IS NULL LIMIT ?", (limit,)).fetchall()
     rows = crawler.execute("SELECT d.host, d.kind FROM domains d LEFT JOIN rss_registry.feeds f ON f.host=d.host "
                            "WHERE f.host IS NULL AND d.state='full' AND "
                            "(d.signals LIKE '%rss%' OR d.kind='academic') LIMIT ?", (limit,)).fetchall()
     crawler.execute("DETACH DATABASE rss_registry")
-    db.executemany("INSERT OR IGNORE INTO feeds(host) VALUES (?)", [(h,) for h, _ in rows])
+    db.executemany("INSERT OR IGNORE INTO feeds(host) VALUES (?)", [*legacy, *((h,) for h, _ in rows)])
     db.commit()
 
 
@@ -248,6 +255,9 @@ async def discover(fetcher, host):
 
 async def poll(fetcher, db, crawler, row):
     host, url, etag, modified, _, _, failures, interval, _, _ = row
+    domain = crawler.execute("SELECT state FROM domains WHERE host=?", (host,)).fetchone()
+    if (domain and domain[0] != "full") or (domain is None and host not in sources()):
+        raise ValueError("feed host is no longer an accepted domain")
     headers = {}
     if etag:
         headers["If-None-Match"] = etag
