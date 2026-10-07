@@ -1,3 +1,38 @@
+# dzirkva (ძირკვა)
+
+**[ქართული ვერსია ქვემოთაა / Georgian version below](#ძირკვა-dzirkva)**
+
+dzirkva is a Georgian-language search engine for learning and for discovering the Georgian web. It shows only Georgian results and favors text written by people: personal blogs, academic papers, sources cited by Wikipedia, archived copies of Georgian sites that no longer exist, and a hand-picked list of trusted sites. Search runs without an LLM or paid tokens. It uses code plus one free local embedding model (BGE-M3).
+
+## What it does
+
+- **Metasearch plus its own indexes.** Queries Google, Yandex and Yahoo through a local SearXNG instance and the Brave Search API, and merges them with dzirkva's own indexes.
+- **A Georgian language layer.** Context-aware spelling correction, Latin-to-Georgian transliteration (`kartuli` to `ქართული`), morphological analysis (7 noun cases, postpositions, verb preverbs, person, version and screeve), synonyms, and dictionary answers.
+- **Transparent ranking.** Score = engine rank (reciprocal rank fusion) + semantic similarity (BGE-M3) + source trust tier + query term coverage + human-text signals + past clicks. Every result shows why it scored the way it did, and a "how we found this" panel shows each step.
+- **Research search.** Papers come with authors, year, journal, abstract, PDF link and a citation line.
+- **Privacy.** No IP addresses stored, a 30-minute random session cookie, Do Not Track and GPC respected, records deleted after 180 days, outbound links signed with HMAC.
+
+## Indexes
+
+| Source | Size |
+|---|---|
+| Georgian Wikipedia (SQLite FTS5) | 174k articles |
+| Own crawler | 360k pages across 864 sites |
+| Iverieli (National Library of Georgia) | 601k records |
+| Academic papers (OAI-PMH) | 29k papers from 29 journals and repositories |
+| Passage embeddings (BGE-M3) | about 872k passages |
+| Wikisource, Wiktionary, Internet Archive, RSS feeds | smaller indexes |
+
+Morphological analyzer accuracy measured against UniMorph: nouns 100%, adjectives 96%, verbs 88%.
+
+## Stack
+
+Python 3.12, uv, SQLite (FTS5), BGE-M3, SearXNG, Brave Search API. Licensed under AGPL-3.0.
+
+Setup, data building and configuration are documented in Georgian below.
+
+---
+
 # ძირკვა (dzirkva)
 
 ძირკვა ქართული საძიებო სისტემაა. ის მხოლოდ ქართულ გვერდებს აჩვენებს და პირველ რიგში ადამიანის დაწერილ ტექსტებს
