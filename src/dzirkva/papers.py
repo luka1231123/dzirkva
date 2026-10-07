@@ -28,6 +28,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS papers USING fts5(oai UNINDEXED, url UNINDEXE
     tokenize='unicode61');
 CREATE TABLE IF NOT EXISTS seen (oai TEXT PRIMARY KEY);  -- a record once: OJS installs answer under several names
 CREATE INDEX IF NOT EXISTS papers_oai ON papers_content(c0);
+CREATE TABLE IF NOT EXISTS retired_text(url TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS record_stamps(oai TEXT PRIMARY KEY, stamp TEXT);
 CREATE INDEX IF NOT EXISTS papers_url ON papers_content(c1);  -- a paper by its URL (c1 = url): meta()
 CREATE VIRTUAL TABLE IF NOT EXISTS fulltext USING fts5(url UNINDEXED, text, tokenize='unicode61');
@@ -143,6 +144,27 @@ def discard(db: sqlite3.Connection, identifiers: list[str]) -> list[str]:
     return urls
 
 
+def drain_retired(db: sqlite3.Connection) -> None:
+    """Finish pending cross-database deletes before harvesting or replacing PDF text."""
+    from dzirkva import passages
+
+    if not passages.DB.exists():
+        return
+    rows = db.execute("SELECT url FROM retired_text")
+    pdb = None
+    try:
+        while batch := rows.fetchmany(100):
+            if pdb is None:
+                pdb = passages.connect()
+            pdb.executemany("DELETE FROM passages WHERE site='papers' AND url=?", batch)
+            pdb.commit()
+            db.executemany("DELETE FROM retired_text WHERE url=?", batch)
+        db.commit()
+    finally:
+        if pdb is not None:
+            pdb.close()
+
+
 @cache
 def hosts() -> frozenset[str]:
     """Hosts of the repositories (www. removed)."""
@@ -208,12 +230,21 @@ def search(words: list[str], limit: int = 10, kinds: set[str] = frozenset()) -> 
     rows = db.execute(
         "SELECT url, title, creator, description, year, type, source FROM papers WHERE papers MATCH ? "
         f"ORDER BY {first}bm25(papers, 0, 0, 0, 10, 3, 3, 1, 1) LIMIT ?", (expr, *types, limit)).fetchall()
-    known = {row[0] for row in rows}
+    unique, known = [], set()
+    for row in rows:
+        if row[0] not in known:
+            unique.append(row)
+            known.add(row[0])
+    rows = unique
     text_rows = db.execute(
-        "SELECT p.url, p.title, p.creator, snippet(fulltext, 1, '', '', ' … ', 45), p.year, p.type, p.source "
-        "FROM fulltext JOIN papers p ON p.url = fulltext.url WHERE fulltext MATCH ? "
+        "SELECT p.c1, p.c3, p.c4, snippet(fulltext, 1, '', '', ' … ', 45), p.c8, p.c9, p.c7 "
+        "FROM fulltext JOIN papers_content p ON p.rowid=(SELECT rowid FROM papers_content "
+        "WHERE c1=fulltext.url LIMIT 1) WHERE fulltext MATCH ? "
         "ORDER BY bm25(fulltext) LIMIT ?", (expr, limit)).fetchall()
-    rows.extend(row for row in text_rows if row[0] not in known)
+    for row in text_rows:
+        if row[0] not in known:
+            rows.append(row)
+            known.add(row[0])
     out = []
     for url, title, creator, desc, year, typ, source in rows[:limit]:
         meta = " · ".join(x for x in (type_name(typ), year, creator[:80], journal(source)) if x)

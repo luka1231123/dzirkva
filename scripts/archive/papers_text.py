@@ -115,24 +115,30 @@ async def main():
         parser.error("limits must be positive and pause nonnegative")
     if not shutil.which("pdftotext"):
         parser.error("pdftotext is required; install poppler before downloading")
-    db, pdb = papers.connect(), passages.connect()
+    db = papers.connect()
+    papers.drain_retired(db)
+    pdb = passages.connect()
     now = datetime.now(timezone.utc).isoformat()
-    rows = db.execute(
+    candidates = db.execute(
         "SELECT p.url, p.pdf, p.title, p.repo FROM papers p LEFT JOIN texts t ON t.url=p.url "
         "WHERE (p.pdf != '' OR ?) AND (t.url IS NULL OR "
         "(t.status IN ('retry','unavailable','no_pdf','extract_error') AND t.attempts < 3 AND t.retry_after <= ?) "
         "OR (t.status='legacy_empty' AND ?)) ORDER BY p.year DESC",
-        (args.discover_missing, now, args.retry_legacy)).fetchall()
+        (args.discover_missing, now, args.retry_legacy))
     by_repo = defaultdict(deque)
-    for row in rows:
-        by_repo[row[3]].append(row[:3])
+    count, queued_urls = 0, set()
+    for row in candidates:
+        count += 1
+        if len(by_repo[row[3]]) < args.limit and row[0] not in queued_urls:
+            by_repo[row[3]].append(row[:3])
+            queued_urls.add(row[0])
     # Prefer productive repositories while sampling across every repository before going deeper.
     yields = dict(db.execute("SELECT p.repo, avg(t.passages > 0) FROM papers p JOIN texts t ON t.url=p.url "
                              "GROUP BY p.repo"))
-    repos = deque(sorted(by_repo, key=lambda repo: -(yields.get(repo) or 0)))
+    repos = deque(sorted((repo for repo in by_repo if by_repo[repo]), key=lambda repo: -(yields.get(repo) or 0)))
     budget = Budget(args.max_bytes, pause=args.pause)
     attempted = useful = 0
-    print(f"batch: <= {args.limit} papers, {args.max_bytes:,} body-byte budget (+ <=64KiB stream boundary); {len(rows):,} candidates", flush=True)
+    print(f"batch: <= {args.limit} papers, {args.max_bytes:,} body-byte budget (+ <=64KiB stream boundary); {count:,} candidate records", flush=True)
     async def throttle(request):
         await asyncio.sleep(args.pause)
         await wait_for_host(str(request.url), pause=args.pause, background=True)
@@ -145,6 +151,7 @@ async def main():
             if by_repo[repo]:
                 repos.append(repo)
             before = budget.received
+            picks, status, error = [], "retry", ""
             if not pdf:
                 pdf, status, error = await discover_pdf(client, url, budget)
                 if pdf:

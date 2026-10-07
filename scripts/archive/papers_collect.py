@@ -22,19 +22,7 @@ def retire(db, urls):
     db.executemany("INSERT OR IGNORE INTO retired_text VALUES (?)", [(url,) for url in urls])
 
 
-def drain_retired(db):
-    urls = db.execute("SELECT url FROM retired_text").fetchall()
-    if not urls or not passages.DB.exists():
-        return
-    pdb = passages.connect()
-    try:
-        pdb.executemany("DELETE FROM passages WHERE site = 'papers' AND url = ?", urls)
-        pdb.commit()
-        db.execute("DELETE FROM retired_text")
-        db.commit()
-    finally:
-        pdb.close()
-
+drain_retired = papers.drain_retired
 
 async def harvest(client, db, base, pause, max_pages=20):
     token, last, start, since = db.execute(
@@ -128,8 +116,6 @@ async def main():
     if args.limit < 0 or args.pause < 0 or args.max_pages <= 0:
         parser.error("limit and pause must be nonnegative")
     db = papers.connect()
-    db.execute("CREATE TABLE IF NOT EXISTS retired_text(url TEXT PRIMARY KEY)")
-    db.commit()
     drain_retired(db)
     todo = db.execute("SELECT base FROM repos WHERE next_sync IS NULL OR next_sync <= ? "
                       "ORDER BY state='done', coalesce(last_sync,''), base",
