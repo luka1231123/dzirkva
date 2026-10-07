@@ -49,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from dzirkva.archive import SKIP_EXT  # noqa: E402
 from dzirkva.crawl import COMMERCIAL, MIN_GEORGIAN, connect, domain_of, upsert_page  # noqa: E402
 from dzirkva.georgian import georgian_ratio  # noqa: E402
+from dzirkva.ingest import wait_for_host  # noqa: E402
 from dzirkva.sources import SOCIAL_HOSTS, VIDEO_HOSTS, sources  # noqa: E402
 from dzirkva.wiki import cited_on  # noqa: E402
 
@@ -132,6 +133,7 @@ class Site:
                  signals: str = "", inbound: int = 0) -> None:
         self.host, self.source, self.state = host, source, state
         self.pages, self.georgian, self.inbound = pages, georgian, inbound
+        self.saved_pages, self.saved_georgian = pages, georgian
         self.signals = set(filter(None, signals.split(",")))
         self.base = f"https://{host}"
         self.robots: RobotFileParser | None = None
@@ -158,9 +160,18 @@ class Site:
 
 
 def save(db, s: Site) -> None:
+    # RSS may add text while a crawl HTTP request is in flight. Merge its
+    # contribution before replacing this process's in-memory domain record.
+    current = db.execute("SELECT pages,georgian FROM domains WHERE host=?", (s.host,)).fetchone()
+    if current and current[0] > s.saved_pages:
+        extra = current[0] - s.saved_pages
+        total = s.pages + extra
+        s.georgian = (s.georgian * s.pages + current[1] * current[0] - s.saved_georgian * s.saved_pages) / total
+        s.pages = total
     db.execute("INSERT OR REPLACE INTO domains VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                (s.host, s.source, s.state, s.pages, s.georgian, ",".join(sorted(s.signals)),
                 commercial(s.signals), kind(s.signals), s.inbound))
+    s.saved_pages, s.saved_georgian = s.pages, s.georgian
 
 
 def add_site(db, sites: dict[str, Site], host: str, source: str, state: str = "probe") -> Site:
@@ -211,30 +222,66 @@ def seed_wiki(db, sites: dict[str, Site]) -> None:
     print(f"wiki seeds: {sum(s.source == 'wiki' for s in sites.values()):,} domains", flush=True)
 
 
-def seed_cc(db, sites: dict[str, Site]) -> None:
-    """Hosts that write mostly Georgian in Common Crawl: probe = home page + a page CC saw.
-    A known host rejected with no page (it did not answer) is probed again."""
-    cc = sqlite3.connect(CC_HOSTS)
-    for host, url in cc.execute("SELECT host, url FROM hosts WHERE main > 0"):
+def seed_cc(db, sites: dict[str, Site], limit: int = 500) -> None:
+    """Bounded import, revisiting changed CC data after a completed scan.
+
+    The source updates rows in place, so rowid alone would miss hosts that gain
+    Georgian pages later. Save the scan's starting mtime, then rescan only when
+    the file changed; seen positive rows avoid repeatedly probing failed hosts.
+    """
+    db.executescript("CREATE TABLE IF NOT EXISTS cc_import_state (id INT PRIMARY KEY, cursor INT, scan_mtime INT, completed_mtime INT); "
+                     "CREATE TABLE IF NOT EXISTS cc_import_seen (source_rowid INT PRIMARY KEY)")
+    state = db.execute("SELECT cursor,scan_mtime,completed_mtime FROM cc_import_state WHERE id=1").fetchone() or (0, 0, 0)
+    cursor, scan_mtime, completed_mtime = state
+    mtime = CC_HOSTS.stat().st_mtime_ns
+    if cursor == 0 and completed_mtime == mtime:
+        return
+    if cursor == 0:
+        scan_mtime = mtime
+    cc = sqlite3.connect(f"file:{CC_HOSTS}?mode=ro", uri=True)
+    rows = cc.execute("SELECT rowid,host,url,main FROM hosts WHERE rowid>? ORDER BY rowid LIMIT ?", (cursor, limit)).fetchall()
+    cc.close()
+    added = 0
+    for rowid, host, url, main in rows:
+        cursor = rowid
+        if main <= 0 or db.execute("SELECT 1 FROM cc_import_seen WHERE source_rowid=?", (rowid,)).fetchone():
+            continue
         key = domain_of(f"https://{host}/")
         s = sites.get(key)
         if s is None and not skip(key):
             s = add_site(db, sites, key, "cc")
+            added += 1
         elif s is not None and s.state == "rejected" and s.pages == 0:
             s.state = "probe"
             db.execute("UPDATE queue SET status='todo' WHERE host=? AND status='dead'", (key,))
             save(db, s)
         else:
-            continue
-        enqueue(db, s, [f"https://{key}/"], 0)
-        enqueue(db, s, [url], 1)
+            s = None
+        if s is not None:
+            enqueue(db, s, [f"https://{key}/", url], 1)
+            # Preserve the home page's link-list depth.
+            db.execute("UPDATE queue SET depth=0 WHERE url=?", (f"https://{key}/",))
+        db.execute("INSERT OR IGNORE INTO cc_import_seen VALUES (?)", (rowid,))
+    if len(rows) < limit:
+        cursor, completed_mtime = 0, scan_mtime
+    db.execute("INSERT OR REPLACE INTO cc_import_state VALUES (1,?,?,?)", (cursor, scan_mtime, completed_mtime))
     db.commit()
-    print(f"cc seeds: {sum(s.source == 'cc' for s in sites.values()):,} new domains", flush=True)
+    print(f"cc seeds: scanned {len(rows)} rows, {added} new domains", flush=True)
 
 
 async def get(client: httpx.AsyncClient, url: str) -> httpx.Response | None:
     try:
-        return await client.get(url)
+        # Manual redirects let every actual request share the host budget.
+        for _ in range(6):
+            await wait_for_host(url, pause=PAUSE, background=False)
+            response = await client.get(url, follow_redirects=False)
+            if not response.is_redirect:
+                return response
+            target = urljoin(str(response.url), response.headers.get("location", ""))
+            if not target.startswith(("http://", "https://")):
+                return None
+            url = target
+        return None
     except (httpx.HTTPError, ValueError) as e:  # ValueError: a relative or broken URL (Sitemap: /sitemap.xml)
         print(f"fail     {e!r:.60} {url[:100]}", flush=True)
         return None
@@ -398,7 +445,7 @@ async def main() -> None:
             save(db, sites[d])
     if not any(s.source == "wiki" for s in sites.values()):
         seed_wiki(db, sites)
-    if CC_HOSTS.exists() and not any(s.source == "cc" for s in sites.values()):
+    if CC_HOSTS.exists():
         seed_cc(db, sites)
     for host, n in db.execute("SELECT host, count(*) FROM queue WHERE status='todo' GROUP BY host"):
         if host in sites:
@@ -431,8 +478,12 @@ async def main() -> None:
             LAST_PAGE = time.monotonic()
 
         last_ingest = 0.0
+        last_cc_import = time.monotonic()
         seed_order = deque(sorted((s for s in sites.values() if s.state == "full"), key=lambda s: (s.pages, s.inbound)))
         while True:
+            if CC_HOSTS.exists() and time.monotonic() - last_cc_import >= 3600:
+                seed_cc(db, sites)
+                last_cc_import = time.monotonic()
             # Feeds can queue articles while this process stays running. Consume
             # changed-host notices rather than scanning millions of queue rows.
             if time.monotonic() - last_ingest >= 10:
@@ -449,6 +500,7 @@ async def main() -> None:
                     if site is not None:
                         site.todo = db.execute("SELECT count(*) FROM queue WHERE host=? AND status='todo'", (host,)).fetchone()[0]
                         site.pages, site.georgian = db.execute("SELECT pages, georgian FROM domains WHERE host=?", (host,)).fetchone()
+                        site.saved_pages, site.saved_georgian = site.pages, site.georgian
                     db.execute("DELETE FROM ingest_changes WHERE host=?", (host,))
                 last_ingest = time.monotonic()
             seeding = sum(s.busy and not s.seeded for s in sites.values() if s.state == "full")

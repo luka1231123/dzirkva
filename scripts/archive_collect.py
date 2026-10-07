@@ -19,6 +19,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from dzirkva.archive import connect, parse  # noqa: E402
 from dzirkva.georgian import georgian_ratio  # noqa: E402
+from dzirkva.ingest import wait_for_host  # noqa: E402
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 CDX = "https://web.archive.org/cdx/search/cdx"
@@ -48,6 +49,7 @@ class Trickle:
             await asyncio.sleep(max(0, self.next - time.monotonic()))
             if self.bytes >= self.max_bytes:
                 raise BudgetReached
+            await wait_for_host(url, pause=self.pause, background=True)
             self.next = time.monotonic() + self.pause
             async with self.client.stream("GET", url, params=params) as response:
                 if response.is_redirect:
