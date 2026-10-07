@@ -49,12 +49,14 @@ def graph(word: str) -> dict | None:
     if row is None:
         return None
     count, family, near = row
-    nodes = [{"w": f, "kind": KINDS[level], "sim": sim, "count": c} for f, level, c, sim in family[:FAMILY]]
+    # a form whose lemma is this word opens no new map (ღვინოს → ღვინო): the page says so instead
+    nodes = [{"w": f, "kind": KINDS[level], "sim": sim, "count": c, "opens": resolve(f) not in (None, word)}
+             for f, level, c, sim in family[:FAMILY]]
     shown = {n for n, _ in near[:NEAR]}
     links: set[tuple[str, str]] = set()
     for n, sim in near[:NEAR]:
         other = _row(n)
-        nodes.append({"w": n, "kind": "near", "sim": sim, "count": other[0] if other else 0})
+        nodes.append({"w": n, "kind": "near", "sim": sim, "count": other[0] if other else 0, "opens": True})
         if other:
             links |= {tuple(sorted((n, m))) for m, _ in other[2] if m in shown}
     return {"word": word, "count": count, "nodes": nodes, "links": sorted(links)}
@@ -94,6 +96,9 @@ CSS = """
 .wg .node:focus{outline:none}
 .wg svg.focus .node:not(.hot):not(.center),.wg svg.focus .edge:not(.hot),.wg svg.focus .tie:not(.hot){opacity:.18}
 .wg .node.enter{opacity:0}
+.wg .node.same{cursor:default} .wg .node.same rect{stroke-dasharray:3 3;fill:transparent}
+.wg .node.pulse rect{animation:wg-pulse .5s ease}
+@keyframes wg-pulse{50%{transform:scale(1.12)}}
 .wg-tip{position:absolute;pointer-events:none;background:#14110fee;border:1px solid var(--line);border-radius:10px;
  padding:8px 12px;font-size:12.5px;line-height:1.5;color:var(--text);opacity:0;transform:translateY(4px);
  transition:opacity .15s,transform .15s;max-width:260px;z-index:2}
@@ -103,6 +108,7 @@ CSS = """
 .wg-lists .row{margin:10px 0} .wg-lists .row .cap{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);margin-bottom:5px}
 .wg-lists .row .cap i{width:8px;height:8px;border-radius:50%;background:var(--c)}
 .wg-lists .rel a{font-size:13.5px}
+.wg-lists .rel span{border:1px dashed var(--line);border-radius:16px;padding:4px 12px;font-size:13.5px;color:var(--muted)}
 .wg-empty{padding:40px 0;text-align:center;color:var(--muted)}
 @media (max-width:520px){.wg-stage{height:72vh;border-radius:12px} .wg-legend button{flex:none}
  .wg-top h1{font-size:25px} .wg .node text{font-size:13px} .wg-form{flex-basis:100%;margin-left:0}}
@@ -143,7 +149,8 @@ function build(origin) {
       n.edge = el('path', {class: 'edge', stroke: color(n.kind),
         'stroke-width': 0.8 + 2.2 * Math.max(n.sim || 0.3, 0), opacity: 0.25 + 0.55 * Math.max(n.sim || 0.3, 0)}, gEdges);
     }
-    const g = n.g = el('g', {class: `node ${n.kind}${p ? '' : ' enter'}`, tabindex: 0, role: 'button',
+    const same = n.kind !== 'center' && n.opens === false;
+    const g = n.g = el('g', {class: `node ${n.kind}${same ? ' same' : ''}${p ? '' : ' enter'}`, tabindex: 0, role: 'button',
                              'aria-label': n.w, style: `--c:${color(n.kind)}`}, gNodes);
     const rect = el('rect', {rx: n.kind === 'center' ? 20 : 15}, g), text = el('text', {}, g);
     text.textContent = n.w;
@@ -244,11 +251,13 @@ function point(e) { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.cli
 
 function bind(n) {
   let start = null, moved = false;
+  let slop = 6;
   n.g.addEventListener('pointerdown', e => { start = {x: e.clientX, y: e.clientY}; moved = false;
+    slop = e.pointerType === 'touch' ? 14 : 6;  // a finger moves a little on every tap
     n.g.setPointerCapture(e.pointerId); });
   n.g.addEventListener('pointermove', e => {
     if (!start) return;
-    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4) moved = true;
+    if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > slop) moved = true;
     if (moved) { const p = point(e); n.x = p.x; n.y = p.y; n.fixed = true; hideTip(); heat(0.25); }
   });
   n.g.addEventListener('pointerup', () => { if (start && !moved) open(n); start = null; n.fixed = false; heat(0.15); });
@@ -278,6 +287,11 @@ function hideTip() { tip.classList.remove('on'); }
 
 async function open(n) {
   if (n.kind === 'center') { location.href = '/?q=' + encodeURIComponent(n.w) + '&from=words'; return; }
+  if (n.opens === false) {  // a form of the centre word: point at it, there is no other map
+    focus(n); tip.querySelector('.k').textContent = 'იგივე სიტყვაა, სხვა ფორმით';
+    const c = nodes[0].g; c.classList.remove('pulse'); void c.getBBox(); c.classList.add('pulse');
+    return;
+  }
   const r = await fetch('/words.json?w=' + encodeURIComponent(n.w));
   if (!r.ok) return;
   const next = await r.json();
@@ -306,8 +320,11 @@ function lists() {
     const row = document.createElement('div'); row.className = 'row'; row.style.setProperty('--c', color(kind));
     row.innerHTML = '<div class=cap><i></i></div><div class=rel></div>';
     row.querySelector('.cap').append(LABELS[kind]);
-    for (const n of words) { const a = document.createElement('a'); a.href = '/words?w=' + encodeURIComponent(n.w);
-      a.textContent = n.w; a.onclick = e => { e.preventDefault(); open(n); }; row.querySelector('.rel').append(a); }
+    for (const n of words) {
+      const a = document.createElement(n.opens === false ? 'span' : 'a'); a.textContent = n.w;
+      if (n.opens !== false) { a.href = '/words?w=' + encodeURIComponent(n.w); a.onclick = e => { e.preventDefault(); open(n); }; }
+      row.querySelector('.rel').append(a);
+    }
     box.append(row);
   }
 }
@@ -344,7 +361,8 @@ def page(raw: str) -> tuple[str, dict | None]:
     q = escape(data["word"])
     lists = "".join(
         f"<div class=row style='--c:var(--k-{k})'><div class=cap><i></i>{escape(v)}</div><div class=rel>"
-        + "".join(f"<a href='/words?w={escape(n['w'])}'>{escape(n['w'])}</a>" for n in data["nodes"] if n["kind"] == k)
+        + "".join(f"<a href='/words?w={escape(n['w'])}'>{escape(n['w'])}</a>" if n["opens"] else f"<span>{escape(n['w'])}</span>"
+                  for n in data["nodes"] if n["kind"] == k)
         + "</div></div>"
         for k, v in LABELS.items() if any(n["kind"] == k for n in data["nodes"]))
     count = f"{data['count']:,}".replace(",", " ")

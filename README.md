@@ -27,7 +27,7 @@ no LLM: only code and one local embedding model, BGE-M3. Live at https://dzirkva
 | Own crawler (runs all the time, slowly) | pages from trusted and small Georgian sites |
 | Passage embeddings (BGE-M3) | about 870k passages |
 | Academic papers (OAI-PMH) and the National Library catalog | 29k papers, 601k records |
-| Word forms and word map | 1.65M forms, 75k words |
+| Word forms and word map | 1.65M forms, 83k words |
 
 ## Stack
 
@@ -76,7 +76,7 @@ Setup and data building are described in Georgian below.
 | `archive.db` | დახურული ქართული საიტების ასლები Internet Archive-დან |
 | `families.db` | 1,65 მილიონი სიტყვის ფორმა და მათი საწყისი ფორმები (პროექტ ka-lemma-დან) |
 | `dictionary.db` | სიტყვების განმარტებები ვიქსიკონიდან |
-| `wordgraph.db` | სიტყვების რუკა: 75 ათასი სიტყვის ოჯახი და მნიშვნელობით ახლო სიტყვები |
+| `wordgraph.db` | სიტყვების რუკა: 83 ათასი სიტყვის ოჯახი და მნიშვნელობით ახლო სიტყვები |
 
 სანდო საიტების სია `config/sources.yaml` ფაილშია.
 

@@ -114,7 +114,7 @@ header{border-bottom:1px solid var(--line);background:var(--card)}
 header div,main{max-width:720px;margin:0 auto;padding:0 16px}
 header div{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding-block:14px}
 .logo,.logo:visited{color:var(--accent);font-weight:600;font-size:20px;letter-spacing:.08em;text-decoration:none}
-form{display:flex;flex:1;min-width:240px;gap:8px}
+form{display:flex;flex:1;min-width:min(100%,400px);gap:8px}
 input{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--ink);background:var(--bg);
  border:1px solid var(--line);border-radius:22px;padding:8px 16px;outline:none}
 input:focus{border-color:var(--link)}
