@@ -36,6 +36,13 @@ Licensed under AGPL-3.0.
 
 Setup and data building are described in Georgian below.
 
+## AI access (MCP)
+
+AI assistants can search Georgian sources, read indexed text and inspect the trusted-source
+list through Dzirkva's MCP server. Run `uv run --extra mcp dzirkva-mcp` for stdio, or add
+`--transport streamable-http` for `http://127.0.0.1:8001/mcp`.
+See [MCP.md](MCP.md) for client configuration, tools and hosting.
+
 ---
 
 # ძირკვა (dzirkva)

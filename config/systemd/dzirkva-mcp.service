@@ -1,0 +1,15 @@
+[Unit]
+Description=dzirkva MCP (127.0.0.1:8001/mcp)
+After=network-online.target
+
+[Service]
+User=luka
+WorkingDirectory=/home/luka/dzirkva
+Environment=HF_HUB_OFFLINE=1
+ExecStart=/home/luka/.local/bin/uv run --frozen --extra mcp dzirkva-mcp --transport streamable-http
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

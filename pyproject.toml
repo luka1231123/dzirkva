@@ -18,6 +18,12 @@ dependencies = [
 
 [project.scripts]
 dzirkva = "dzirkva:main"
+dzirkva-mcp = "dzirkva.mcp:main"
+
+[project.optional-dependencies]
+mcp = [
+    "mcp>=1.28,<2",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
