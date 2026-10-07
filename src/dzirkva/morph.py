@@ -1,6 +1,8 @@
 """Georgian morphology: word form -> lemma(s) and word family.
 
 1. Lexicon (Wiktionary, data/lexicon.tsv): exact forms, suppletive verbs (ნახა -> ხედავს).
+   Then the ka-lemma table (data/families.db): every corpus word (1.65M) -> lemma, built by the ka-lemma project
+   from our own corpus; it knows the rare words Wiktionary lacks.
 2. Noun/adjective rules: 7 cases, full and short forms, postpositions fused to the case,
    modern (-ებ-) and archaic (-ნ-, -თ-) plural, vowel truncation (დედა -> დედის),
    syncope (წყალი -> წყლის), superlative (უდიდესი -> დიდი), particles (-ც, -ვე, -ღა, -ა, -ო).
@@ -11,6 +13,8 @@ A rule result is kept only if the lexicon or the ka.wikipedia word list confirms
 Search uses `families()` for matching and `lemmas()` for query variants.
 """
 
+import os
+import sqlite3
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -19,6 +23,9 @@ from dzirkva.georgian import freq, vocab
 
 LEXICON_FILE = Path(__file__).resolve().parents[2] / "data" / "lexicon.tsv"
 SYNONYMS_FILE = LEXICON_FILE.with_name("synonyms.tsv")
+KA_FILE = LEXICON_FILE.with_name("families.db")  # ka-lemma: form, lemma, level, preverb, pos, count
+KA_LEVEL = 4  # 5 same form, 4 inflection, 3 aspect preverb / verbal noun, 2 other preverb, 1 derived word
+KA = os.environ.get("KA_LEMMA", "1") != "0"
 VOWELS = set("აეიოუ")
 SYNCOPE_BEFORE = set("ლრნმვ")  # წყალ-ი -> წყლ-ის, ფანჯარ-ა -> ფანჯრ-ის, სოფელ-ი -> სოფლ-ის
 
@@ -94,6 +101,19 @@ def _lexicon() -> tuple[dict[str, list[tuple[str, str]]], dict[str, str], frozen
         verb_fams = {family[l] for fs in forms.values() for l, p in fs if p == "verb"}
         verb_words = {w for w, fs in forms.items() if any(family[l] in verb_fams for l, _ in fs)}
     return forms, family, frozenset(verb_words), frozenset(verb_fams)
+
+
+@cache
+def _ka_db() -> sqlite3.Connection | None:
+    if not KA or not KA_FILE.exists():
+        return None
+    return sqlite3.connect(f"file:{KA_FILE}?mode=ro", uri=True, check_same_thread=False)
+
+
+def ka_lemma(word: str) -> tuple[str, str, int] | None:
+    """(lemma, pos, level) from the ka-lemma table, or None for a word outside the corpus."""
+    db = _ka_db()
+    return db.execute("SELECT lemma, pos, level FROM f WHERE form = ?", (word,)).fetchone() if db else None
 
 
 def _verb_analysis(word: str) -> Analysis:
@@ -212,6 +232,8 @@ def analyze(word: str, exact: bool = True) -> tuple[Analysis, ...]:
         if word.startswith(PARTICIPLE_SHAPE[0]) and word.endswith(PARTICIPLE_SHAPE[1]):
             out += [_verb_analysis(v) for v in _verb_lemmas(word)[:2] if v in forms]
         return tuple(out)
+    if (ka := ka_lemma(word)) and ka[0] != word and ka[2] >= KA_LEVEL:
+        out.append(Analysis(ka[0], "verb" if ka[1] == "verb" else "noun", family.get(ka[0], ka[0]), "ka-lemma"))
     for lemma in sorted(_noun_lemmas(word), key=lambda c: (-_known(c), -freq(c))):
         out.append(Analysis(lemma, "noun", family.get(lemma, lemma), "noun-rule"))
     if not out or _known(out[0].lemma) < 2:
@@ -220,7 +242,7 @@ def analyze(word: str, exact: bool = True) -> tuple[Analysis, ...]:
         # A real word form the rules could not reduce: keep it as its own lemma.
         out.append(Analysis(word, "?", word, "unknown"))
     # Lexicon-confirmed lemmas first, then by frequency; drop repeats of the same family.
-    out.sort(key=lambda a: (-_known(a.lemma), -freq(a.lemma)))
+    out.sort(key=lambda a: (a.source != "ka-lemma", -_known(a.lemma), -freq(a.lemma)))
     seen: set[str] = set()
     out = [a for a in out if not (a.family in seen or seen.add(a.family))]
     return tuple(out) or (Analysis(word, "?", word, "unknown"),)
