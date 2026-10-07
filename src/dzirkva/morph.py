@@ -13,6 +13,7 @@ A rule result is kept only if the lexicon or the ka.wikipedia word list confirms
 Search uses `families()` for matching and `forms_of()` for word forms.
 """
 
+import os
 import sqlite3
 from dataclasses import dataclass
 from functools import cache
@@ -23,7 +24,9 @@ from dzirkva.georgian import freq
 LEXICON_FILE = Path(__file__).resolve().parents[2] / "data" / "lexicon.tsv"
 KA_FILE = LEXICON_FILE.with_name("families.db")  # ka-lemma: form, lemma, level, preverb, pos, count
 KA_LEVEL = 4  # 5 same form, 4 inflection, 3 aspect preverb / verbal noun, 2 other preverb, 1 derived word
-KA_FORMS = 100  # forms_of: at most this many forms from the ka-lemma table
+# forms_of: Wiktionary gives fewer forms than this → add the ka-lemma table's forms (.env KA_FORMS; 0 = never)
+KA_FORMS = int(os.environ.get("KA_FORMS") or 10)
+KA_FORMS_MAX = 100  # forms_of: at most this many forms from the ka-lemma table
 VOWELS = set("აეიოუ")
 SYNCOPE_BEFORE = set("ლრნმვ")  # წყალ-ი -> წყლ-ის, ფანჯარ-ა -> ფანჯრ-ის, სოფელ-ი -> სოფლ-ის
 
@@ -269,14 +272,17 @@ def _forms_by_lemma() -> dict[str, list[str]]:
 
 @cache
 def forms_of(lemma: str) -> tuple[str, ...]:
-    """All known inflected forms of a lemma: Wiktionary tables, else the ka-lemma table (names: ტრამპი →
-    ტრამპის, ტრამპმა …). Not for verbs: ka-lemma gives their forms without the preverb (ჩავწერე → წერს)."""
-    if forms := _forms_by_lemma().get(lemma):
-        return tuple(forms)
+    """All known inflected forms of a lemma: Wiktionary tables; with fewer than KA_FORMS of them also the ka-lemma
+    table's, most common first (names: ტრამპი → ტრამპის, ტრამპმა …). Not for verbs: ka-lemma gives their forms
+    without the preverb (ჩავწერე → წერს)."""
+    lex = _lexicon()[0]
+    forms = _forms_by_lemma().get(lemma, [])
     db = _ka_db()
+    if len(forms) >= KA_FORMS or db is None or (lemma, "verb") in lex.get(lemma, []):
+        return tuple(forms)
     rows = db.execute("SELECT form FROM f WHERE lemma = ? AND level >= ? AND pos != 'verb' ORDER BY count DESC "
-                      "LIMIT ?", (lemma, KA_LEVEL, KA_FORMS)).fetchall() if db else []
-    return tuple(f for (f,) in rows)
+                      "LIMIT ?", (lemma, KA_LEVEL, KA_FORMS_MAX)).fetchall()
+    return tuple(dict.fromkeys(forms + [f for (f,) in rows]))
 
 
 def family_members(family: str) -> list[str]:
