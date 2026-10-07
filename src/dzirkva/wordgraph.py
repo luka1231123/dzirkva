@@ -5,6 +5,7 @@ Data: data/wordgraph.db from scripts/build_word_graph.py, one row per lemma; a p
 
 import json
 import sqlite3
+import time
 from functools import cache
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from dzirkva.morph import analyze, ka_lemma
 
 DB = Path(__file__).resolve().parents[2] / "data" / "wordgraph.db"
 KINDS = {4: "f4", 3: "f3", 2: "f2", 1: "f1"}  # ka-lemma level → node kind; "near" for meaning neighbours
+START = ("ღვინო", "სახლი", "წიგნი", "მთა", "ზღვა", "პური", "ქალაქი", "სიმღერა", "ბაღი", "მეგობარი")  # /words alone: one a day
 NEAR = 16    # meaning neighbours shown
 FAMILY = 14  # family forms shown
 
@@ -63,15 +65,19 @@ LABELS = {"center": "", "f4": "ფორმები", "f3": "ზმნისწ
 
 CSS = """
 .wg{--k-center:#d9774b;--k-f4:#a9cf8e;--k-f3:#e2b87c;--k-f2:#c7b3e6;--k-f1:#ef9f9f;--k-near:#8ec5e0}
-.wg-top{display:flex;flex-wrap:wrap;align-items:center;gap:12px 18px;margin:22px 0 10px}
-.wg-top h1{margin:0;font-size:26px;font-weight:600;color:var(--ink);letter-spacing:.02em}
+.wg-top{display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px 18px;margin:24px 0 12px}
+.wg-title{display:grid;grid-template-columns:auto 1fr;align-items:baseline;column-gap:14px}
+.nav,.nav:visited{background:#8ec5e02a}
+.wg-top h1{margin:0;font-size:30px;line-height:1.2;font-weight:600;color:var(--ink);letter-spacing:.02em}
 .wg-top .m{font-size:12.5px}
+.wg-intro{margin:0 0 6px;font-size:14.5px;color:var(--text);max-width:620px}
 .wg-form{display:flex;gap:8px;margin-left:auto;min-width:220px;flex:0 1 300px}
-.wg-legend{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 0}
-.wg-legend button{display:flex;align-items:center;gap:7px;background:var(--card);color:var(--text);
- box-shadow:inset 0 0 0 1px var(--line);padding:5px 12px;font-size:11.5px;font-weight:500;transition:opacity .2s,box-shadow .2s}
+.wg-legend{display:flex;flex-wrap:wrap;gap:6px 8px;margin:2px 0 8px}
+.wg-legend button{display:flex;align-items:center;gap:7px;background:transparent;color:var(--muted);
+ box-shadow:none;padding:3px 8px;font-size:11.5px;font-weight:500;transition:opacity .2s,color .2s}
+.wg-legend button:hover{color:var(--ink)}
 .wg-legend button i{width:9px;height:9px;border-radius:50%;background:var(--c)}
-.wg-legend button.off{opacity:.4} .wg-legend button:hover{box-shadow:inset 0 0 0 1px var(--muted)}
+.wg-legend button.off{opacity:.4;text-decoration:line-through}
 .wg-stage{position:relative;left:50%;transform:translateX(-50%);width:min(1100px,calc(100vw - 24px));
  height:min(68vh,640px);min-height:380px;margin:14px 0 6px;border:1px solid var(--line);border-radius:16px;overflow:hidden;
  background:radial-gradient(ellipse at 50% 45%,#2a221d 0%,var(--bg) 70%)}
@@ -93,13 +99,13 @@ CSS = """
  transition:opacity .15s,transform .15s;max-width:260px;z-index:2}
 .wg-tip.on{opacity:1;transform:none} .wg-tip b{color:var(--ink);font-size:15px;font-weight:600}
 .wg-tip .k{display:inline-block;margin-top:2px;font-size:11px;color:var(--c)}
-.wg-hint{font-size:12px;color:var(--muted);margin:2px 0 16px}
+.wg-hint{font-size:13px;margin:0 0 16px}
 .wg-lists .row{margin:10px 0} .wg-lists .row .cap{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);margin-bottom:5px}
 .wg-lists .row .cap i{width:8px;height:8px;border-radius:50%;background:var(--c)}
 .wg-lists .rel a{font-size:13.5px}
 .wg-empty{padding:40px 0;text-align:center;color:var(--muted)}
 @media (max-width:520px){.wg-stage{height:72vh;border-radius:12px} .wg-legend button{flex:none}
- .wg-top h1{font-size:23px} .wg .node text{font-size:13px} .wg-form{flex-basis:100%;margin-left:0}}
+ .wg-top h1{font-size:25px} .wg .node text{font-size:13px} .wg-form{flex-basis:100%;margin-left:0}}
 """
 
 JS = r"""
@@ -284,7 +290,7 @@ async function open(n) {
 function show(origin) {
   for (const k of [...pos.keys()]) if (k !== data.word && !data.nodes.some(n => n.w === k)) pos.delete(k);
   document.title = data.word + ' · ძირკვა';
-  document.querySelector('.wg-form input').value = data.word;
+  document.querySelector('.wg-form input').value = '';
   document.querySelector('.wg-top h1').textContent = data.word;
   document.querySelector('.wg-top .m').textContent = num(data.count) + '-ჯერ ტექსტებში';
   const link = document.querySelector('.wg-search');
@@ -325,14 +331,14 @@ def page(raw: str) -> tuple[str, dict | None]:
     """(body HTML, graph data) for /words?w=raw. The lists under the graph are links, so the page works without JS."""
     from html import escape
 
-    word = resolve(raw) if raw else "სიტყვა"
+    word = resolve(raw) if raw else START[int(time.strftime("%j")) % len(START)]
     data = graph(word) if word else None
     legend = "".join(f"<button type=button data-k={k} style='--c:var(--k-{k})'><i></i>{escape(v)}</button>"
                      for k, v in LABELS.items() if k != "center")
-    form = (f"<form class=wg-form action=/words><input name=w value='{escape(data['word'] if data else raw)}' "
-            "placeholder='ჩაწერეთ სიტყვა' aria-label='სიტყვა'><button>ნახვა</button></form>")
+    form = ("<form class=wg-form action=/words><input name=w placeholder='სხვა სიტყვა' aria-label='სიტყვა'>"
+            "<button>ნახვა</button></form>")
     if data is None:
-        return (f"<div class='wg'><div class=wg-top><h1>სიტყვების რუკა</h1>{form}</div>"
+        return (f"<div class='wg'><div class=wg-top><div class=wg-title><h1>ვერ ვიპოვეთ</h1></div>{form}</div>"
                 f"<p class=wg-empty>სიტყვა „{escape(raw)}“ ჩვენს ტექსტებში საკმარისად ხშირად არ გვხვდება. სცადეთ სხვა "
                 "ფორმა ან სხვა სიტყვა.</p></div>"), None
     q = escape(data["word"])
@@ -342,12 +348,14 @@ def page(raw: str) -> tuple[str, dict | None]:
         + "</div></div>"
         for k, v in LABELS.items() if any(n["kind"] == k for n in data["nodes"]))
     count = f"{data['count']:,}".replace(",", " ")
-    return (f"<div class=wg><div class=wg-top><h1>{q}</h1><span class=m>{count}-ჯერ ტექსტებში</span>{form}</div>"
-            f"<div class=wg-legend>{legend}</div>"
+    intro = ("" if raw else "<p class=wg-intro>ერთ მხარეს ჩანს ფორმები და მონათესავეები, მეორეზე მნიშვნელობით ახლოები. "
+             "დააჭირეთ ნებისმიერს და მისი რუკა გაიხსნება.</p>")
+    return (f"<div class=wg><div class=wg-top><div class=wg-title>"
+            f"<h1>{q}</h1><span class=m>{count}-ჯერ ტექსტებში</span></div>{form}</div>{intro}"
             "<div class=wg-stage><span class='wg-side l'>ᲤᲝᲠᲛᲐ</span><span class='wg-side r'>ᲛᲜᲘᲨᲕᲜᲔᲚᲝᲑᲐ</span>"
             "<svg id=wg role=img aria-label='სიტყვების რუკა'></svg><div class=wg-tip></div></div>"
-            "<p class=wg-hint>დააჭირეთ სიტყვას, რომ მისი რუკა ნახოთ. სიტყვის გადატანაც შეიძლება. შუა სიტყვაზე "
-            f"დაჭერით ძიება გაიხსნება: <a class=wg-search href='/?q={q}&amp;from=words'>„{q}“ ძიებაში →</a></p>"
+            f"<div class=wg-legend>{legend}</div>"
+            f"<p class=wg-hint><a class=wg-search href='/?q={q}&amp;from=words'>„{q}“ ძიებაში →</a></p>"
             f"<div class=wg-lists>{lists}</div></div>"), data
 
 

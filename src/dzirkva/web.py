@@ -100,6 +100,8 @@ if(c)t("copy",1,c.dataset.r)});
 </script>"""
 
 # Colors are tokens: light by default, dark when the system asks for it.
+ICON_MAP = ("<svg width=18 height=14 viewBox='0 0 18 14' aria-hidden=true><g stroke=currentColor stroke-width=1.3 fill=none><path d='M9 7 3 2.5M9 7 3 11.5M9 7 15 2.5M9 7 15.5 9'/></g><g fill=currentColor><circle cx=9 cy=7 r=2.6/><circle cx=3 cy=2.5 r=1.6/><circle cx=3 cy=11.5 r=1.6/><circle cx=15 cy=2.5 r=1.6/><circle cx=15.5 cy=9 r=1.6/></g></svg>")  # three words around one: the word map
+
 CSS = """
 :root{--bg:#1b1714;--card:#241f1b;--ink:#f1e9df;--text:#d6ccc0;--muted:#9a8f83;--line:#352e28;
 --link:#eab676;--visited:#d1a2c4;--accent:#d9774b;--fb:#3a2c1f;
@@ -117,7 +119,9 @@ input{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--ink);background
  border:1px solid var(--line);border-radius:22px;padding:8px 16px;outline:none}
 input:focus{border-color:var(--link)}
 button{font:inherit;font-size:12.5px;font-weight:600;border:0;border-radius:22px;padding:8px 18px;background:var(--accent);color:#1b1714;cursor:pointer}
-.nav,.nav:visited{font-size:12.5px;font-weight:600;color:var(--muted);letter-spacing:.04em} .nav:hover{color:var(--ink);text-decoration:none}
+.nav,.nav:visited{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:#8ec5e0;
+ letter-spacing:.04em;padding:7px 14px;border-radius:22px;background:#8ec5e014;box-shadow:inset 0 0 0 1px #8ec5e055;transition:background .2s}
+.nav:hover{background:#8ec5e02a;text-decoration:none} .nav svg{flex:none}
 button.deep{background:transparent;color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);padding:8px 14px}
 .tabs{display:flex;gap:22px;border-bottom:1px solid var(--line);margin-top:6px}
 .tabs a{padding:11px 0 8px;font-size:12.5px;color:var(--muted);border-bottom:2px solid transparent}
@@ -188,7 +192,7 @@ def _page(q: str, body: str, refresh: int = 0, extra_css: str = "", script: str 
             f"<style>{CSS}{extra_css}</style><header><div><a class=logo href=/>{cap('ძირკვა')}</a>"
             f"<form action=/><input name=q value='{escape(q)}' autofocus><button>{cap('ძებნა')}</button>"
             f"<button class=deep name=deep value=1 title='სამჯერ მეტი მოთხოვნა, სიტყვის ფორმა და შედეგი, უფრო ნელა'>"
-            f"{cap('ამოძირკვა')}</button></form><a class=nav href=/words>{cap('სიტყვები')}</a></div></header>"
+            f"{cap('ამოძირკვა')}</button></form><a class=nav href=/words>{ICON_MAP}{cap('სიტყვების რუკა')}</a></div></header>"
             f"<main>{body}</main>" + (f"<script>{script}</script>" if script else ""))
 
 
@@ -645,6 +649,10 @@ def home_page() -> str:
             "რამდენიმე საძიებო სისტემიდან და საკუთარი ინდექსებიდან აგროვებს და წინ იმ გვერდებს აყენებს, რომლებიც "
             "ადამიანებმა დაწერეს. რეკლამა არ არის და პასუხს ხელოვნური ინტელექტი არ წერს.</p>"
             f"<p class=facts>{index}</p></div>"
+            + _block("სიტყვების რუკა",
+                     "<p>ჩაწერეთ სიტყვა და ნახავთ მის ფორმებს, მონათესავე სიტყვებს და სიტყვებს, რომლებიც "
+                     "მნიშვნელობით ახლოსაა. რუკა ქართული ტექსტებიდანაა აგებული.</p>"
+                     f"<a class=go href=/words>{cap('რუკის გახსნა')} →</a>")
             + _block("როგორ დავწეროთ შეკითხვა",
                      "<ul class=list>" + "".join(f"<li>{escape(x)}</li>" for x in QUERY_TIPS) + "</ul>"
                      "<p>ამინდს, რუკას ან საყიდელს დიდ საძიებო სისტემებში უფრო სწრაფად იპოვით.</p>")
