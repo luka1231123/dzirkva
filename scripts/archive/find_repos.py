@@ -30,7 +30,6 @@ PATHS = ("/index.php/index/oai", "/oai/request", "/server/oai/request", "/cgi/oa
 SOFTWARE = {"/index.php/": "ojs", "/index/oai": "ojs", "/oai/request": "dspace", "/cgi/oai2": "eprints"}
 OJS_PREFIX = re.compile(r"^(https?://[^/?#]+)(/[^?#]*?)/index\.php/")
 URL = re.compile(r"https?://[^\s\[\]|<>\"'{}]+")
-PAUSE = 5.0
 NS = {"oai": "http://www.openarchives.org/OAI/2.0/"}
 
 
@@ -124,7 +123,6 @@ def academic_candidates() -> tuple[set[str], set[str]]:
 
 
 async def main() -> None:
-    global PAUSE
     parser = argparse.ArgumentParser(description="Slow, bounded discovery of new academic OAI-PMH repositories")
     parser.add_argument("--limit", type=int, default=20, help="candidate hosts/endpoints per batch")
     parser.add_argument("--pause", type=float, default=5, help="seconds before every request")
@@ -132,7 +130,6 @@ async def main() -> None:
     args = parser.parse_args()
     if args.limit <= 0 or args.pause < 0:
         parser.error("limit must be positive and pause nonnegative")
-    PAUSE = args.pause
     db = papers.connect()
     db.execute("CREATE TABLE IF NOT EXISTS repo_probes(candidate TEXT PRIMARY KEY, checked TEXT, found INT)")
     known = {h for (h,) in db.execute("SELECT host FROM repos")}

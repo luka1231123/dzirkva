@@ -92,6 +92,9 @@ async def harvest(client, db, base, pause, max_pages=20):
             previous = db.execute("SELECT rowid," + ",".join(f"c{i}" for i in range(12)) +
                                   " FROM papers_content WHERE c0 = ?", (row[0],)).fetchone()
             if previous:
+                # Landing-page discovery fills gaps absent from the OAI record; retain that useful link.
+                if not row[2] and previous[2] == row[1]:
+                    row = (*row[:2], previous[3], *row[3:])
                 rid = previous[0]
                 old_stamp = db.execute("SELECT stamp FROM record_stamps WHERE oai=?", (row[0],)).fetchone()
                 if tuple(previous[1:]) != row or (old_stamp and old_stamp[0] != stamps.get(row[0], "")):
