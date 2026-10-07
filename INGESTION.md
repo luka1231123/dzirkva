@@ -61,7 +61,7 @@ Status rows contain job name, next run time, last start time, exit code and run 
 The service journal reports new feed items, indexed texts, queued URLs, PDF bytes and extraction outcomes,
 archive bytes, word-index progress and scored hosts.
 
-To run a named job manually with the same resource limits, stop the timer briefly and run:
+To run a named job manually with the same resource limits, stop the timer briefly, change to `~/dzirkva`, and run:
 
 ```bash
 systemd-run --user --wait --pipe --working-directory="$PWD" -p CPUQuota=10% -p MemoryMax=300M -p IOSchedulingClass=idle \
@@ -79,5 +79,7 @@ uv run python scripts/build_pdf_words.py
 rsync -t data/pdf_words.db rexvopc:dzirkva/data/
 ```
 
-Vectors remain a separate foreground task on the Mac (`scripts/build_passages.py`), followed by copying the
-database when ingestion writers are safely stopped. The server can search newly indexed text before vectors exist.
+Vectors remain a separate foreground task on the Mac (`scripts/build_passages.py`). Start from a fresh SQLite
+backup of the live server database, and merge the resulting vectors by passage ID and matching text; replacing
+the live database with an older Mac copy would discard new ingestion. The server can search newly indexed text
+before vectors exist.

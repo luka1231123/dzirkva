@@ -30,6 +30,13 @@ def main():
     parser.add_argument("--status", action="store_true")
     args = parser.parse_args()
     DATA.mkdir(exist_ok=True)
+    if args.status:
+        with sqlite3.connect(DATA / "ingest.db", timeout=30) as db:
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='jobs'").fetchone():
+                print("[]")
+            else:
+                print(json.dumps(db.execute("SELECT name,next,last,exit_code,runs FROM jobs ORDER BY name").fetchall()))
+        return
     with (DATA / "ingest.lock").open("w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -41,9 +48,6 @@ def main():
                        "last REAL DEFAULT 0,exit_code INT,runs INT DEFAULT 0)")
             db.executemany("INSERT OR IGNORE INTO jobs(name) VALUES (?)", [(name,) for name in JOBS])
             db.commit()
-            if args.status:
-                print(json.dumps(db.execute("SELECT name,next,last,exit_code,runs FROM jobs ORDER BY name").fetchall()))
-                return
             if search_busy():
                 print("search active; expansion waits for the next timer tick", flush=True)
                 return
