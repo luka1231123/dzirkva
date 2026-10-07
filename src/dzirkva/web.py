@@ -54,7 +54,8 @@ PER_SITE = 2
 SITE_LIMIT = {"ka.wikipedia.org": 2, "ka.wikisource.org": 1}  # local indexes must not fill the list
 MAX_SOCIAL = 3  # social posts in the main list (all social sites together)
 ENGINE_NAMES = {"wikipedia": "ვიკიპედია", "passages": "ვიკიპედია (აზრით)", "archive": "ძველი ვები", "crawl": "ჩვენი ინდექსი", "iverieli": "ივერიელი", "wikisource": "ვიკიწყარო", "papers": "სამეცნიერო ჟურნალები",
-                "cited": "ვიკიპედიის წყაროები", "named": "დასახელებული საიტი", "intent": "საჭიროების საიტები"}
+                "cited": "ვიკიპედიის წყაროები", "named": "დასახელებული საიტი", "intent": "საჭიროების საიტები",
+                "passage_words": "აბზაცები (სიტყვებით)"}
 KIND_NAMES = {"knowledge": "ცოდნა", "news": "სიახლე", "web": "ვები", "forum": "ფორუმი", "social": "სოციალური ქსელი",
               "video": "ვიდეო", "film": "ფილმი"}
 # Signs that a person wrote or chose a page: key → (label, CSS class, meaning). Results show the meaning on hover;
@@ -83,13 +84,19 @@ MAX_SEARCHES = int(os.environ.get("MAX_SEARCHES", "3"))  # new searches running 
 PORT = int(os.environ.get("PORT", "8000"))
 BUSY_SECONDS = 10  # the busy page reloads itself after this
 SEARCH_CACHE_SIZE = max(0, int(os.environ.get("SEARCH_CACHE_SIZE", "32")))
+SEARCH_CACHE_TTL = max(0, int(os.environ.get("SEARCH_CACHE_TTL", "900")))
 _cache: OrderedDict[str, tuple[dict, list, dict]] = OrderedDict()
+_cache_times: dict[str, float] = {}
 _cache_lock = threading.Lock()
 
 
 def _cached(key):
     with _cache_lock:
         value = _cache.get(key)
+        if value is not None and time.monotonic() - _cache_times.get(key, 0) >= SEARCH_CACHE_TTL:
+            _cache.pop(key, None)
+            _cache_times.pop(key, None)
+            return None
         if value is not None:
             _cache.move_to_end(key)
         return value
@@ -99,14 +106,17 @@ def _remember(key, value):
     with _cache_lock:
         if SEARCH_CACHE_SIZE:
             _cache[key] = value
+            _cache_times[key] = time.monotonic()
             _cache.move_to_end(key)
             while len(_cache) > SEARCH_CACHE_SIZE:
-                _cache.popitem(last=False)
+                evicted, _ = _cache.popitem(last=False)
+                _cache_times.pop(evicted, None)
 
 
 def _clear_cache():
     with _cache_lock:
         _cache.clear()
+        _cache_times.clear()
 
 DEEP_KEY = "\x00deep"  # _cache key of a deep search: the question + this
 _last_view: dict[str, float] = {}  # session → time of its last results page (time to click)

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the next bounded dzirkva expansion job
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=2min
+RandomizedDelaySec=30
+Unit=dzirkva-ingest.service
+
+[Install]
+WantedBy=timers.target

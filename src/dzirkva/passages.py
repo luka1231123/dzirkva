@@ -8,13 +8,14 @@ The question vector finds the nearest paragraphs directly. Built by scripts/buil
 import re
 import sqlite3
 import subprocess
-from functools import cache
+import tempfile
+from functools import cache, lru_cache
 from pathlib import Path
 from urllib.parse import quote
 
 import numpy as np
 
-from dzirkva.georgian import count, from_keyboard, georgian_ratio
+from dzirkva.georgian import from_keyboard, georgian_ratio
 
 DB = Path(__file__).resolve().parents[2] / "data" / "passages.db"
 SCHEMA = """CREATE TABLE IF NOT EXISTS passages (id INTEGER PRIMARY KEY, title TEXT, text TEXT, v BLOB);
@@ -58,11 +59,29 @@ def chunks(body: str) -> list[str]:
     return out + [cur.strip()] if cur.strip() else out
 
 
+@cache
+def _pdf_words():
+    path = DB.with_name("pdf_words.db")
+    if not path.exists():
+        return None
+    db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, check_same_thread=False)
+    db.execute("PRAGMA cache_size=-2048")
+    return db
+
+
+@lru_cache(maxsize=8192)
+def _known_pdf_word(word: str) -> bool:
+    db = _pdf_words()
+    # The exact vocabulary is built once by build_pdf_words.py. Never load the huge Python word dict
+    # in a resource-capped PDF ingestion job; Unicode PDFs do not require this font conversion.
+    return bool(db and db.execute("SELECT 1 FROM words WHERE word=?", (word,)).fetchone())
+
+
 def _fix_page(page: str) -> str:
     """A page in the pre-Unicode AcadNusx font (Latin letters for Georgian) → Unicode Georgian: when most of its
     Latin words are Georgian words after georgian.from_keyboard. Unicode pages stay as they are."""
     latin = LATIN_WORD.findall(page)
-    if latin and sum(count(from_keyboard(w)) > 0 for w in latin) > len(latin) / 2:
+    if latin and sum(_known_pdf_word(from_keyboard(w)) for w in latin) > len(latin) / 2:
         page = from_keyboard(page)
     return page
 
@@ -70,7 +89,15 @@ def _fix_page(page: str) -> str:
 def pdf_text(pdf: bytes) -> str:
     """Georgian text of a PDF (needs pdftotext: brew install poppler): pages joined, hyphenated line ends and
     line breaks removed."""
-    out = subprocess.run(["pdftotext", "-enc", "UTF-8", "-", "-"], input=pdf, capture_output=True).stdout
+    # Compressed PDFs can expand far beyond their download size. Spool tool output to disk before
+    # retaining it, rather than capture_output allocating an unbounded Python byte string.
+    with tempfile.TemporaryFile() as output:
+        subprocess.run(["pdftotext", "-enc", "UTF-8", "-", "-"], input=pdf,
+                       stdout=output, stderr=subprocess.DEVNULL, check=True, timeout=120)
+        output.seek(0)
+        out = output.read(8 * 1024 * 1024 + 1)
+    if len(out) > 8 * 1024 * 1024:
+        raise RuntimeError("PDF text exceeds 8 MiB extraction limit")
     pages = [_fix_page(p) for p in out.decode("utf-8", "replace").split("\f")]
     text = " ".join(p for p in pages if georgian_ratio(p) >= PDF_PAGE_GEORGIAN)
     return re.sub(r"\s+", " ", re.sub(r"-\n(?=\w)", "", text)).strip()
@@ -83,6 +110,90 @@ def pdf_chunks(pdf: bytes) -> list[str]:
 
 def embed_text(title: str, text: str) -> str:
     return f"{title}. {text}"
+
+
+def build_word_index(db: sqlite3.Connection, batch: int = 1000, limit: int = 20_000) -> tuple[int, bool]:
+    """Bounded, resumable FTS backfill. New passage text is indexed by triggers, without embedding."""
+    db.executescript("""
+    CREATE TABLE IF NOT EXISTS words_progress (id INTEGER PRIMARY KEY CHECK(id=1), last INT, target INT);
+    INSERT OR IGNORE INTO words_progress SELECT 1, 0, coalesce(max(id),0) FROM passages;
+    CREATE VIRTUAL TABLE IF NOT EXISTS passages_fts USING fts5(title,text,content='passages',content_rowid='id',
+                                                             tokenize='unicode61');
+    CREATE TRIGGER IF NOT EXISTS passages_words_insert AFTER INSERT ON passages
+      WHEN new.id <= (SELECT last FROM words_progress WHERE id=1)
+        OR new.id > (SELECT target FROM words_progress WHERE id=1) BEGIN
+        INSERT INTO passages_fts(rowid,title,text) VALUES(new.id,new.title,new.text);
+    END;
+    CREATE TRIGGER IF NOT EXISTS passages_words_delete AFTER DELETE ON passages
+      WHEN old.id <= (SELECT last FROM words_progress WHERE id=1)
+        OR old.id > (SELECT target FROM words_progress WHERE id=1) BEGIN
+        INSERT INTO passages_fts(passages_fts,rowid,title,text) VALUES('delete',old.id,old.title,old.text);
+    END;
+    CREATE TRIGGER IF NOT EXISTS passages_words_update AFTER UPDATE OF title,text ON passages
+      WHEN old.id <= (SELECT last FROM words_progress WHERE id=1)
+        OR old.id > (SELECT target FROM words_progress WHERE id=1) BEGIN
+        INSERT INTO passages_fts(passages_fts,rowid,title,text) VALUES('delete',old.id,old.title,old.text);
+        INSERT INTO passages_fts(rowid,title,text) VALUES(new.id,new.title,new.text);
+    END;
+    """)
+    done = 0
+    while done < limit:
+        # An immediate transaction keeps a concurrent edit from changing text between read and indexing.
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            last, target = db.execute("SELECT last,target FROM words_progress WHERE id=1").fetchone()
+            rows = db.execute("SELECT id,title,text FROM passages WHERE id>? AND id<=? ORDER BY id LIMIT ?",
+                              (last, target, min(batch, limit - done))).fetchall()
+            if rows:
+                db.executemany("INSERT INTO passages_fts(rowid,title,text) VALUES (?,?,?)", rows)
+                last = rows[-1][0]
+            else:
+                last = target
+            db.execute("UPDATE words_progress SET last=? WHERE id=1", (last,))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        done += len(rows)
+        if last >= target:
+            return done, True
+    return done, False
+
+
+def word_search(words: list[str], limit: int = 20) -> list[dict]:
+    """Stored passage text, including PDFs without vectors. Works while bounded backfill is underway."""
+    from dzirkva.wiki import SITES, any_form
+
+    if not words or not DB.exists():
+        return []
+    db = _db()
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='passages_fts'").fetchone():
+        return []
+    rows = []
+    for op in (" AND ", " OR "):
+        expr = op.join(any_form(w) for w in words)
+        rows = db.execute("SELECT p.title,p.site,p.url,snippet(passages_fts,1,'','','…',35),p.v "
+                          "FROM passages_fts JOIN passages p ON p.id=passages_fts.rowid "
+                          "WHERE passages_fts MATCH ? ORDER BY bm25(passages_fts,5,1) LIMIT ?",
+                          (expr, limit * 4)).fetchall()
+        if len(rows) >= 5 or len(words) == 1:
+            break
+    out, seen = [], set()
+    for title, site, url, text, v in rows:
+        if not url:
+            if site not in SITES:
+                continue
+            url = SITES[site][1] + quote(title.replace(" ", "_"))
+        if url in seen:
+            continue
+        seen.add(url)
+        hit = {"url": url, "title": title, "snippet": text, "engine": "passage_words"}
+        if v:
+            hit["vector"] = np.frombuffer(v, dtype=np.float16).astype(np.float32)
+        out.append(hit)
+        if len(out) == limit:
+            break
+    return out
 
 
 @cache

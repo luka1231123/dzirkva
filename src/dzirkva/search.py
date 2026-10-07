@@ -38,6 +38,7 @@ import yaml
 
 from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize, spell_candidates, typo_weight, words
 from dzirkva.meaning import cached_vectors, vectors
+from dzirkva.ingest import search_activity
 from dzirkva.morph import analyze, families, family_members
 from dzirkva import archive, clicks, crawl, dictionary, iverieli, papers, passages, wiki
 from dzirkva.sources import by_category, georgian_hosts, host, kind, lookup, named_sites, tags
@@ -78,7 +79,7 @@ MEANING_WEB = os.environ.get("MEANING_WEB", "1") != "0"  # 0 (.env, slow CPU): n
 COVERAGE_FLOOR = 0.2    # score × (floor + (1 - floor) × coverage)
 LOCAL_FLOOR = 0.3       # a page only our local indexes found: × (floor + (1 - floor) × title fit)
 TITLE_FIT = (0.5, 0.65)   # title-query similarity: filler 0.23-0.55, the right article 0.60-1.00 → fit 0..1
-LOCAL_LISTS = {"wikipedia", "wikisource", "passages", "papers", "iverieli"}  # papers and catalog records match
+LOCAL_LISTS = {"wikipedia", "wikisource", "passages", "passage_words", "papers", "iverieli"}  # papers and catalog records match
 # on the abstract and the authors' university: ახალი ამბები found a thesis on translating news
 FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every query word
 ROUND1_GOOD = 3         # round 1 is good when this many of its top 10 contain every query word: no round 2
@@ -330,6 +331,9 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[st
             m = merged.setdefault(canonical_url(r["url"]), Result(r["url"], r["title"], r["snippet"]))
             if len(r["snippet"]) > len(m.snippet):
                 m.snippet = r["snippet"]
+                m.vector = r.get("vector")
+            elif m.vector is None and m.snippet == r["snippet"]:
+                m.vector = r.get("vector")
             rrf = 1 / (RRF_K + rank)
             m.score = max(m.score, rrf) if urlparse(m.url).hostname in WIKI_HOSTS else m.score + rrf
             m.queries.add(name)
@@ -501,6 +505,7 @@ def click_key(content: list[str]) -> str:
     return " ".join(sorted(_lemma(w) for w in content))
 
 
+@search_activity()
 def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result], dict]:
     """Returns the words searched in each list, the ranked results, and debug information (with the answer box).
     deep: DEEP × more local results and results read by meaning; slower."""
@@ -534,6 +539,7 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     topic = [w for w in content if not _lemmas(w) & intents()["research"]["words"]] or content
     kinds = {k for w in content for k in _lemmas(w) if k in papers.KIND_WORDS}
     lists.append(("papers", papers.search(topic, 10 * m, kinds=kinds)))
+    lists.append(("passage_words", passages.word_search(topic, 20 * m)))
     qv = vectors([query])[0]
     near = passages.search(query, 20 * m, qv=qv)     # Wikipedia paragraphs nearest in meaning
     lists.append(("passages", near))

@@ -1,0 +1,16 @@
+[Unit]
+Description=dzirkva bounded feeds, papers, small-web and archive expansion
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=luka
+WorkingDirectory=/home/luka/dzirkva
+Environment=HF_HUB_OFFLINE=1
+ExecStart=/home/luka/.local/bin/uv run --frozen python scripts/ingest.py
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=10%
+MemoryMax=300M
+TimeoutStartSec=21min

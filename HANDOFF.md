@@ -19,6 +19,16 @@ Read `CLAUDE.md` first (rules, commands, layout). This file holds the state and 
   The web result cache is an LRU capped at 32 searches (`SEARCH_CACHE_SIZE`, 0 disables).
   The next uncached search reloads the model; language tables and the 1-bit passage index stay in the web process.
 
+### Continuous expansion (implemented 2026-10-07)
+
+See [INGESTION.md](INGESTION.md) for budgets and operations. `dzirkva-ingest.timer` runs one bounded job at a
+ time under 10% CPU / 300 MB, leaving `dzirkva-crawl` at its existing 25% cap. RSS registry/validators,
+ complete-feed indexing and priority excerpts, incremental OAI updates, bounded full-text PDFs, gradual
+ repository/CC-host discovery, archive CDX batches and incremental personal-site scoring are implemented.
+ Existing passages get a resumable FTS backfill; new text is word-searchable before offline vectors exist.
+ Search-cache entries expire after 15 minutes (`SEARCH_CACHE_TTL`), so fresh ingestion reaches repeated searches.
+ Bulk new dumps, Common Crawl downloads, Iverieli scans and server embeddings remain outside these jobs.
+
 ### Data (Mac copies, 2026-10-02; the live `crawl.db` is on the server and bigger)
 
 | Index | Size |

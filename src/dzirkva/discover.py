@@ -144,14 +144,15 @@ def newest_posts(limit: int = POSTS) -> list[tuple[str, str, str]]:
 def _newest_posts(limit: int, hour: str) -> list[tuple[str, str, str]]:
     today = time.strftime("%Y-%m-%d")
     posts: dict[str, tuple[str, str, str]] = {}
+    mine = set(people())
     if FEEDS_DB.exists():  # feed dates are real publication dates
         with sqlite3.connect(FEEDS_DB) as db:
             for url, title, date, host in db.execute("SELECT url, title, date, host FROM posts WHERE date <= ? "
                                                      "ORDER BY date DESC", (today,)):
-                if title:
+                if title and host in mine:
                     posts.setdefault(host, (url, title, date))
     db = crawl._db()
-    mine, found = set(people()), 0
+    found = 0
     for url, title, date in db.execute("SELECT c0, c1, c2 FROM pages_content WHERE c2 BETWEEN ? AND ? "
                                        "ORDER BY c2 DESC", (DATE_FLOOR, today)) if db else []:  # read until enough
         h = crawl.domain_of(url)

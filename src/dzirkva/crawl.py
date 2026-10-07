@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS domains (
     pages INT DEFAULT 0, georgian REAL DEFAULT 0,     -- pages with text, mean share of Georgian letters
     signals TEXT DEFAULT '', commercial INT DEFAULT 0, kind TEXT DEFAULT 'other', inbound INT DEFAULT 0);
 CREATE TABLE IF NOT EXISTS links (src TEXT, dst TEXT, PRIMARY KEY (src, dst)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS ingest_changes (host TEXT PRIMARY KEY); -- notify the live crawler of feed writes
 """
 MIN_GEORGIAN = 0.3
 COMMERCIAL = 2       # commercial score from which a domain is commercial
@@ -52,9 +53,70 @@ MAX_REPORTING = 1
 def connect() -> sqlite3.Connection:
     db = sqlite3.connect(DB, check_same_thread=False, timeout=60)  # the crawler writes all the time
     db.executescript(SCHEMA)
-    if "cited" not in {c[1] for c in db.execute("PRAGMA table_info(queue)")}:  # cited in Wikipedia: crawled first
-        db.execute("ALTER TABLE queue ADD COLUMN cited INT DEFAULT 0")
+    columns = {c[1] for c in db.execute("PRAGMA table_info(queue)")}
+    for column in ("cited", "priority"):
+        if column not in columns:
+            db.execute(f"ALTER TABLE queue ADD COLUMN {column} INT DEFAULT 0")
     return db
+
+
+def queue_url(db: sqlite3.Connection, url: str, priority: int = 2) -> bool:
+    """Feed excerpts join the existing slow crawler, rather than another page downloader."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+            return False
+    except ValueError:
+        return False
+    url = url.split("#", 1)[0]
+    host = domain_of(url)
+    row = db.execute("SELECT state FROM domains WHERE host=?", (host,)).fetchone()
+    if row is None and host in sources():
+        db.execute("INSERT INTO domains(host,source,state) VALUES (?,'trusted','full')", (host,))
+        row = ("full",)
+    if not row or row[0] not in ("full", "probe"):
+        return False
+    if db.execute("SELECT 1 FROM pages_content WHERE c0=? LIMIT 1", (url,)).fetchone():
+        return False
+    changed = db.execute("INSERT INTO queue(url,host,depth,status,priority) VALUES (?,?,1,'todo',?) "
+               "ON CONFLICT(url) DO UPDATE SET priority=max(priority,excluded.priority), "
+               "status='todo' WHERE (queue.status IN ('todo','error','http:404','http:429') "
+               "OR queue.status LIKE 'http:5%') "
+               "AND (queue.priority<excluded.priority OR queue.status!='todo')",
+               (url, host, priority)).rowcount
+    if changed:
+        db.execute("INSERT OR IGNORE INTO ingest_changes VALUES (?)", (host,))
+    return bool(changed)
+
+
+def upsert_page(db: sqlite3.Connection, url: str, title: str, date: str, text: str,
+                *, update_domain: bool = True, prefer_existing_longer: bool = False) -> bool:
+    """Replace a URL's indexed text; caller commits. RSS and the crawler share this path."""
+    from dzirkva.georgian import georgian_ratio
+    from dzirkva.smallweb import update_voice
+
+    url = url.split("#", 1)[0]
+    host = domain_of(url)
+    if host in sources():
+        db.execute("INSERT OR IGNORE INTO domains(host,source,state) VALUES (?,'trusted','full')", (host,))
+    old = db.execute("SELECT c1,c2,c3 FROM pages_content WHERE c0=? ORDER BY length(c3) DESC LIMIT 1",
+                     (url,)).fetchone()
+    new = old is None
+    if old:
+        title, date = title or old[0], date or old[1]
+        if prefer_existing_longer and len(old[2] or "") > len(text):
+            text = old[2]
+    db.execute("DELETE FROM pages WHERE rowid IN (SELECT id FROM pages_content WHERE c0=?)", (url,))
+    db.execute("INSERT INTO pages(url,title,date,text) VALUES (?,?,?,?)", (url, title, date, text))
+    if new and update_domain:
+        ratio = georgian_ratio(text)
+        db.execute("UPDATE domains SET georgian=(georgian*pages+?)/(pages+1),pages=pages+1 WHERE host=?",
+                   (ratio, host))
+    db.execute("UPDATE queue SET status='done' WHERE url=?", (url,))
+    if update_domain:
+        db.execute("INSERT OR IGNORE INTO ingest_changes VALUES (?)", (host,))
+    update_voice(url, text, host)
+    return new
 
 
 @cache
