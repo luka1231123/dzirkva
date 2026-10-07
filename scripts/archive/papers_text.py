@@ -118,6 +118,8 @@ async def main():
     db = papers.connect()
     papers.drain_retired(db)
     pdb = passages.connect()
+    print("checking PDF passage URL index (first build scans the passage table once)", flush=True)
+    passages.ensure_url_index(pdb)
     now = datetime.now(timezone.utc).isoformat()
     candidates = db.execute(
         "SELECT p.url, p.pdf, p.title, p.repo FROM papers p LEFT JOIN texts t ON t.url=p.url "

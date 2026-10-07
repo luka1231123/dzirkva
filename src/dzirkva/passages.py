@@ -40,6 +40,16 @@ def connect() -> sqlite3.Connection:
     return db
 
 
+def ensure_url_index(db: sqlite3.Connection) -> None:
+    """Build once in a capped ingestion job, never during web startup.
+
+    Wiki passages have no URL. A partial index keeps their hundreds of thousands of rows out
+    while letting PDF replacement/retirement find (site, URL) without scanning vector blobs.
+    """
+    db.execute("CREATE INDEX IF NOT EXISTS passages_site_url ON passages(site,url) WHERE url IS NOT NULL")
+    db.commit()
+
+
 @cache
 def _db() -> sqlite3.Connection:
     """One read connection per process. WAL: the web page reads while scripts add passages."""

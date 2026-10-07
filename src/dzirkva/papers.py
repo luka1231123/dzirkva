@@ -156,6 +156,7 @@ def drain_retired(db: sqlite3.Connection) -> None:
         while batch := rows.fetchmany(100):
             if pdb is None:
                 pdb = passages.connect()
+                passages.ensure_url_index(pdb)
             pdb.executemany("DELETE FROM passages WHERE site='papers' AND url=?", batch)
             pdb.commit()
             db.executemany("DELETE FROM retired_text WHERE url=?", batch)
