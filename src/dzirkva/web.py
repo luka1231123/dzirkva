@@ -15,6 +15,7 @@ The All tab without filters shows ordinary results, max 2 per site and max 3 soc
 
 import hashlib
 import hmac
+import json
 import os
 import queue
 import random
@@ -32,7 +33,8 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse, urlsplit
 import yaml
 
 from dzirkva.georgian import normalize
-from dzirkva import archive, clicks, crawl, dictionary, discover, engines, iverieli, papers, passages, telemetry, wiki
+from dzirkva import (archive, clicks, crawl, dictionary, discover, engines, iverieli, papers, passages, telemetry, wiki,
+                     wordgraph)
 from dzirkva.meaning import similarity
 from dzirkva.morph import analyze, families
 from dzirkva.georgian import KEEP_RATIO
@@ -115,6 +117,7 @@ input{flex:1;min-width:0;font:inherit;font-size:16px;color:var(--ink);background
  border:1px solid var(--line);border-radius:22px;padding:8px 16px;outline:none}
 input:focus{border-color:var(--link)}
 button{font:inherit;font-size:12.5px;font-weight:600;border:0;border-radius:22px;padding:8px 18px;background:var(--accent);color:#1b1714;cursor:pointer}
+.nav,.nav:visited{font-size:12.5px;font-weight:600;color:var(--muted);letter-spacing:.04em} .nav:hover{color:var(--ink);text-decoration:none}
 button.deep{background:transparent;color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);padding:8px 14px}
 .tabs{display:flex;gap:22px;border-bottom:1px solid var(--line);margin-top:6px}
 .tabs a{padding:11px 0 8px;font-size:12.5px;color:var(--muted);border-bottom:2px solid transparent}
@@ -175,18 +178,18 @@ th{font-size:11px;color:var(--muted);text-align:left;font-weight:600;padding:2px
 
 
 
-def _page(q: str, body: str, refresh: int = 0) -> str:
+def _page(q: str, body: str, refresh: int = 0, extra_css: str = "", script: str = "") -> str:
     """ამოძირკვა (deep search): the second button sends deep=1 (search.DEEP × more queries, pages, forms; slower)."""
     return (f"<!doctype html><html lang=ka><meta charset=utf-8>"
             + (f"<meta http-equiv=refresh content={refresh}>" if refresh else "") +
             f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{escape(q) + ' · ' if q else ''}ძირკვა</title>"
             "<link rel=preconnect href=https://fonts.googleapis.com><link rel=stylesheet href="
             "'https://fonts.googleapis.com/css2?family=Noto+Serif+Georgian:wght@400..600&display=swap'>"
-            f"<style>{CSS}</style><header><div><a class=logo href=/>{cap('ძირკვა')}</a>"
+            f"<style>{CSS}{extra_css}</style><header><div><a class=logo href=/>{cap('ძირკვა')}</a>"
             f"<form action=/><input name=q value='{escape(q)}' autofocus><button>{cap('ძებნა')}</button>"
             f"<button class=deep name=deep value=1 title='სამჯერ მეტი მოთხოვნა, სიტყვის ფორმა და შედეგი, უფრო ნელა'>"
-            f"{cap('ამოძირკვა')}</button></form></div></header>"
-            f"<main>{body}</main>")
+            f"{cap('ამოძირკვა')}</button></form><a class=nav href=/words>{cap('სიტყვები')}</a></div></header>"
+            f"<main>{body}</main>" + (f"<script>{script}</script>" if script else ""))
 
 
 def cap(text: str) -> str:
@@ -618,7 +621,7 @@ def _thousands(n: int) -> str:
 
 def _foot() -> str:
     return (f"<p class=foot>{PRIVACY} <a href=/about>{cap('როგორ მუშაობს')}</a> · "
-            f"<a href=/discover>{cap('აღმოჩენა')}</a> · <a href=/random>{cap('შემთხვევითი საიტი')}</a></p>")
+            f"<a href=/discover>{cap('აღმოჩენა')}</a> · <a href=/words>{cap('სიტყვების რუკა')}</a> · <a href=/random>{cap('შემთხვევითი საიტი')}</a></p>")
 
 
 def home_page() -> str:
@@ -1014,6 +1017,15 @@ class Handler(BaseHTTPRequestHandler):
             body = discover_page()
             self._log("discover")
             return self._send(_page("", body))
+        if route == "/words.json":
+            data = wordgraph.graph(wordgraph.resolve(p("w")) or "")
+            self._log("words", p("w"), json=True)
+            return self._send(json.dumps(data, ensure_ascii=False), content_type="application/json")
+        if route == "/words":
+            body, data = wordgraph.page(p("w"))
+            self._log("words", p("w"))
+            return self._send(_page("", body, extra_css=wordgraph.CSS,
+                                    script=wordgraph.script(data) if data else ""))
         if route == "/about":
             self._log("about")
             return self._send(_page("", about_page()))
@@ -1086,9 +1098,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Set-Cookie", f"s={self.session}; Max-Age={telemetry.SESSION_MINUTES * 60}; Path=/; "
                                            "HttpOnly; SameSite=Lax")
 
-    def _send(self, html: str, status: int = 200) -> None:
+    def _send(self, html: str, status: int = 200, content_type: str = "text/html") -> None:
         self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
         self._cookie()
         self.end_headers()
         self.wfile.write(html.encode())
