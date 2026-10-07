@@ -11,8 +11,8 @@ The systemd timer chooses the next due job after the preceding one finishes. Eac
 | RSS | 30 minutes | discover 10 hosts, poll 30 feeds, 10 MiB of bodies |
 | Passage word index | 10 minutes until complete, then weekly | 20,000 existing passages |
 | Personal-site scores | hourly | 2,000 historical pages; new pages score on ingestion |
-| Paper metadata | hourly | one due repository, 20 XML pages (8 MiB per response); completed repositories refresh weekly |
-| Repository discovery | daily | 20 academic candidates |
+| Paper metadata | hourly | one due repository, 20 XML pages, 10 MiB total (8 MiB per response); completed repositories refresh weekly |
+| Repository discovery | daily | 20 academic candidates, 5 MiB total |
 | Paper text | daily | 20 papers, 25 MiB total, 10 MiB per file |
 | Archives | daily | 20 URLs, 20 MB total, 2 MB per response, seven seconds between requests |
 
