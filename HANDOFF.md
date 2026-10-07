@@ -19,7 +19,7 @@ Read `CLAUDE.md` first (rules, commands, layout). This file holds the state and 
   The web result cache is an LRU capped at 32 searches (`SEARCH_CACHE_SIZE`, 0 disables).
   The next uncached search reloads the model; language tables and the 1-bit passage index stay in the web process.
 
-### Continuous expansion (implemented 2026-10-07)
+### Continuous expansion (deployed 2026-10-07)
 
 See [INGESTION.md](INGESTION.md) for budgets and operations. `dzirkva-ingest.timer` runs one bounded job at a
  time under 10% CPU / 300 MB, leaving `dzirkva-crawl` at its existing 25% cap. RSS registry/validators,
@@ -27,6 +27,12 @@ See [INGESTION.md](INGESTION.md) for budgets and operations. `dzirkva-ingest.tim
  repository/CC-host discovery, archive CDX batches and incremental personal-site scoring are implemented.
  Existing passages get a resumable FTS backfill; new text is word-searchable before offline vectors exist.
  Search-cache entries expire after 15 minutes (`SEARCH_CACHE_TTL`), so fresh ingestion reaches repeated searches.
+
+Live checks: RSS added 80 entries and indexed 53 complete texts (4.86 MB, 70.3 MiB peak); 20,000 of 872,172
+existing passages were backfilled and word search returned results; 2,000 historical pages were scored; the
+crawler imported the first 500 Common Crawl discovery rows. One new paper PDF produced searchable full text.
+Its slow passage replacement exposed a missing URL index, now built under the cap and verified with an indexed
+query plan. The timer is enabled and active; live searches correctly defer ingestion until a later tick.
  Bulk new dumps, Common Crawl downloads, Iverieli scans and server embeddings remain outside these jobs.
 
 ### Data (Mac copies, 2026-10-02; the live `crawl.db` is on the server and bigger)
@@ -104,7 +110,7 @@ Check each step alone with `uv run python scripts/run_stress.py eval/<name>.json
 | RSS for every crawled site with a feed (`domains.signals` has `rss`); hourly for news | low | freshness: Brave gave it before |
 | `archive_collect.py` (7.5k queued) | low | run capped |
 | FTS5 index on `passages.text` | minutes, once | PDF text without vectors becomes word-searchable; then new PDF text needs no vectors |
-| Paper PDFs (6,084 left) | low | **download: measure 20 PDFs, ask** |
+| Paper PDFs (6,084 initially left) | low | approved: at most 20 attempts and 25 MiB per daily batch |
 | Iverieli PDFs (89k left) | low | **download: ask; a slice only** |
 | Small dumps: ka Wikiquote, Wikinews, Wikibooks | seconds | `build_wiki_index.py` reads the format |
 | Bulk Georgian web (FineWeb-2 `kat_Geor`, Common Crawl Georgian records) | import on the Mac | **big download: ask** |
@@ -153,6 +159,6 @@ Never: LLM rewrites at search time (HyDE, query2doc), doc2query, many feedback w
 ## Open decisions for the user
 
 1. Delete `cache.db`, `vendor/searxng`, `data/searxng.log`?
-2. Paper and Iverieli PDF downloads: how much?
+2. Iverieli PDF downloads: how much? Paper ingestion now has an approved bounded daily budget.
 3. Keep the dictionary answer box when Wiktionary goes?
 4. Push `471fec9` to GitHub?
