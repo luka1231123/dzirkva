@@ -118,7 +118,7 @@ to change the delay. The in-memory search cache keeps the 32 most recently used 
 To unload the model manually and clear the search cache on the running server:
 
 ```bash
-ssh rexvopc 'cd ~/dzirkva && uv run python -m dzirkva.meaning --idle'
+ssh rexvopc 'cd ~/dzirkva && ~/.local/bin/uv run python -m dzirkva.meaning --idle'
 ```
 
 This waits for queued searches to finish. New searches wake the model again. The control

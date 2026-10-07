@@ -15,7 +15,7 @@ Read `CLAUDE.md` first (rules, commands, layout). This file holds the state and 
 
 - **Embedding worker and cache:** BGE-M3 loads lazily in a spawned process and exits after 300 seconds without
   embedding requests (`MODEL_IDLE_SECONDS`). Manual unload and web cache clear:
-  `ssh rexvopc 'cd ~/dzirkva && uv run python -m dzirkva.meaning --idle'`.
+  `ssh rexvopc 'cd ~/dzirkva && ~/.local/bin/uv run python -m dzirkva.meaning --idle'`.
   The web result cache is an LRU capped at 32 searches (`SEARCH_CACHE_SIZE`, 0 disables).
   The next uncached search reloads the model; language tables and the 1-bit passage index stay in the web process.
 

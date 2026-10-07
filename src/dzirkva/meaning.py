@@ -7,7 +7,9 @@ close their meanings are, even when they share no words
 
 import atexit
 import hashlib
-import multiprocessing
+import subprocess
+import sys
+from multiprocessing import Pipe
 import os
 import threading
 import time
@@ -63,14 +65,15 @@ class EmbeddingWorker:
     def _stop(self):
         if self.process is not None:
             self.conn.close()
-            self.process.join(timeout=2)
-            if self.process.is_alive():
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
                 self.process.terminate()
-                self.process.join(timeout=2)
-            if self.process.is_alive():
-                self.process.kill()
-                self.process.join()
-            self.process.close()
+                try:
+                    self.process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait()
             self.process = self.conn = None
 
     def idle(self):
@@ -87,15 +90,22 @@ class EmbeddingWorker:
 
     def encode(self, texts):
         with self.lock:
-            if self.process is not None and not self.process.is_alive():
+            if self.process is not None and self.process.poll() is not None:
                 self._stop()
             if self.process is None:
-                ctx = multiprocessing.get_context("spawn")
-                self.conn, child = ctx.Pipe()
-                self.process = ctx.Process(target=_serve, args=(child,), daemon=True,
-                                           name="dzirkva-embeddings")
-                self.process.start()
-                child.close()
+                self.conn, child = Pipe()
+                try:
+                    # A fresh module, rather than multiprocessing spawn: callers such as build_titles.py
+                    # have top-level work that must never run again in the child.
+                    self.process = subprocess.Popen(
+                        [sys.executable, "-m", "dzirkva.meaning", "--worker-fd", str(child.fileno())],
+                        pass_fds=(child.fileno(),))
+                except Exception:
+                    self.conn.close()
+                    self.conn = None
+                    raise
+                finally:
+                    child.close()
             try:
                 self.conn.send(texts)
                 ok, result = self.conn.recv()
@@ -159,8 +169,14 @@ if __name__ == "__main__":
     from urllib.request import Request, urlopen
 
     parser = argparse.ArgumentParser(description="Control the running web embedding worker")
-    parser.add_argument("--idle", action="store_true", required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--idle", action="store_true")
+    mode.add_argument("--worker-fd", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.worker_fd is not None:
+        from multiprocessing.connection import Connection
+        _serve(Connection(args.worker_fd))
+        sys.exit(0)
     req = Request(f"http://127.0.0.1:{os.environ.get('PORT', '8000')}/idle", method="POST",
                   headers={"X-Dzirkva-Control": "idle"})
     with urlopen(req, timeout=600) as response:
