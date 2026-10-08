@@ -6,6 +6,12 @@
 The upstream dataset card reports about 3.7 million Georgian records before the local filters and deduplication.
 This is extracted web text with original URLs and capture dates, rather than a ready-made SQLite database.
 
+The verified October 2026 build contains **3,505,415 indexed documents** after filtering and deduplication.
+The self-contained SQLite file is 39,958,290,432 bytes; its Zstandard level-9 download is 11,340,514,815 bytes.
+The raw database SHA-256 is `0fd102c83ad6fd55dec01f97540892801cd5f438180a3bf2281ca5583a3e1cac`.
+Its BLAKE3 checksum is `5f82295a201fc9c828095875b8b048b71bfcbe749b75c7b10a05461b0a0ca435`.
+It passed SQLite `quick_check` and FTS5's full external-content integrity check on the Mac.
+
 Download and build on the Mac:
 
 ```bash
@@ -44,14 +50,36 @@ For a compressed transfer (after finalization):
 
 ```bash
 zstd -T2 -9 -f data/bulk.db -o data/bulk.db.zst
-rsync --partial -t data/bulk.db.zst rexvopc:dzirkva/data/bulk-incoming.db.zst
+rsync --whole-file --partial -t data/bulk.db.zst rexvopc:dzirkva/data/bulk-incoming.db.zst
 ssh rexvopc 'cd ~/dzirkva && systemd-run --user --wait --pipe --working-directory="$PWD" \
   -p CPUQuota=10% -p MemoryMax=300M -p IOSchedulingClass=idle \
+  nice -n 19 flock data/ingest.lock \
   zstd -q -d -f data/bulk-incoming.db.zst -o data/bulk-incoming.db'
 ```
 
 Verify the unpacked SHA-256 against the Mac file, then rename `data/bulk-incoming.db` to `data/bulk.db` and
 restart `dzirkva-web`. Stage under `data/` on the server: its `/tmp` is RAM-backed and unsuitable for this corpus.
+`--whole-file` avoids the Mac's openrsync building a large delta-comparison table for a partial compressed file;
+an interrupted transfer restarts the straight copy. A direct SSH connection on the same network can avoid the
+Cloudflare tunnel, using the existing host key to verify the server.
+The unpack job holds the ingestion lock so a scheduled ingestion batch cannot overlap its 10% CPU budget.
+
+To overlap transfer and unpacking on a slow connection, stream the level-3 compressed copy instead
+(12,877,574,880 bytes for this build). This uses less decoder CPU than level 9. Install Ubuntu's small `b3sum`
+package first; its native BLAKE3 implementation avoids the old server CPU's expensive SHA-256 verification.
+Compute the Mac reference with `b3sum --num-threads 2 --no-names data/bulk.db` or Python's `blake3` package.
+
+```bash
+zstd -T2 -3 -f data/bulk.db -o data/bulk.db.fast.zst
+ssh rexvopc 'cd ~/dzirkva && systemd-run --user --wait --pipe --working-directory="$PWD" \
+  -p CPUQuota=10% -p MemoryMax=300M -p IOSchedulingClass=idle \
+  nice -n 19 flock data/ingest.lock /bin/bash -o pipefail -c \
+  "zstd -q -dc | tee data/bulk-incoming.db | b3sum --num-threads 1 --no-names - > data/bulk-incoming.db.blake3"' \
+  < data/bulk.db.fast.zst
+```
+
+Publish only after the pipeline exits normally and the written database's BLAKE3 equals the Mac reference.
+An interrupted stream leaves an incomplete staging file and must restart from the beginning.
 
 The database attribution is FineWeb-2, HuggingFaceFW, under
 [ODC-By 1.0](https://opendatacommons.org/licenses/by/1-0/). The dataset card also refers to
