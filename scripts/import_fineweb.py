@@ -164,6 +164,34 @@ def import_file(db, reader, path, batch, limit):
     return processed
 
 
+def finalize(db, compact=False):
+    """Offline copy preparation; INTEGER PRIMARY KEY document IDs survive VACUUM."""
+    print("finalize: optimizing FTS segments", flush=True)
+    db.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')")
+    db.commit()
+    free = db.execute("PRAGMA freelist_count").fetchone()[0]
+    pages = db.execute("PRAGMA page_count").fetchone()[0]
+    ratio = free / pages if pages else 0
+    print(f"finalize: {free:,}/{pages:,} pages free ({ratio:.1%})", flush=True)
+    if compact or ratio >= .05:
+        # Offline only: avoid keeping a database-sized VACUUM transaction in WAL.
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        db.execute("PRAGMA journal_mode=DELETE")
+        print("finalize: compacting database with VACUUM", flush=True)
+        db.execute("VACUUM")
+    print("finalize: checking FTS against stored documents", flush=True)
+    db.execute("INSERT INTO docs_fts(docs_fts,rank) VALUES('integrity-check',1)")
+    db.commit()
+    print("finalize: running SQLite quick_check", flush=True)
+    result = db.execute("PRAGMA quick_check").fetchall()
+    if result != [("ok",)]:
+        raise sqlite3.DatabaseError(str(result))
+    print("finalize: checkpointing and removing WAL", flush=True)
+    db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    db.execute("PRAGMA journal_mode=DELETE")
+    print("quick_check and FTS integrity check: ok; optimized and copy-ready", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("files", nargs="*", type=Path)
@@ -174,10 +202,13 @@ def main():
     parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--memory-limit", default="512MB")
     parser.add_argument("--sqlite-cache-mb", type=int, default=256, help="offline importer SQLite page cache in MiB")
+    parser.add_argument("--compact", action="store_true", help="force offline VACUUM with --finalize (automatic at 5%% free pages)")
     parser.add_argument("--finalize", action="store_true", help="verify and optimize index; remove WAL for copying")
     args = parser.parse_args()
     if args.batch < 1 or args.limit < 0 or args.threads < 1 or args.sqlite_cache_mb < 1:
         parser.error("batch/threads/cache must be positive and limit nonnegative")
+    if args.compact and not args.finalize:
+        parser.error("--compact requires --finalize")
     db = bulk.connect(args.db)
     db.execute(f"PRAGMA cache_size={-args.sqlite_cache_mb * 1024}")
     metadata(db, args.revision)
@@ -195,15 +226,7 @@ def main():
                    [("document_count", str(document_count)), ("url_count", str(url_count))])
     db.commit()
     if args.finalize:
-        db.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')")
-        db.execute("INSERT INTO docs_fts(docs_fts,rank) VALUES('integrity-check',1)")
-        db.commit()
-        result = db.execute("PRAGMA quick_check").fetchall()
-        if result != [("ok",)]:
-            raise sqlite3.DatabaseError(str(result))
-        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        db.execute("PRAGMA journal_mode=DELETE")
-        print("quick_check and FTS integrity check: ok; optimized and copy-ready", flush=True)
+        finalize(db, args.compact)
     print(json.dumps({"documents": document_count,
                       "urls": url_count,
                       "imports": db.execute("SELECT path,row_offset,done FROM imports").fetchall()}, ensure_ascii=False), flush=True)

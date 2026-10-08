@@ -32,8 +32,11 @@ No pages are fetched and no embeddings are generated during import. Search uses 
 it does not open Parquet or load the corpus into memory. Capture dates appear in snippets. These are historical
 captures, not a promise that the original page is still available. The ongoing crawler and feeds provide updates.
 
-Finalization optimizes FTS, checks SQLite and FTS integrity, and produces a self-contained database without WAL
-sidecars. Copy the finalized file to the server using a temporary filename, then publish it by atomic rename
+Finalization logs each stage: FTS optimization, compaction, integrity checks, and WAL removal.
+After optimization it automatically runs offline `VACUUM` when at least 5% of the database pages are free;
+`--compact --finalize` forces compaction. Explicit document IDs stay stable, and the external FTS index is
+checked against its documents afterward. Compaction needs temporary disk space for another database copy
+and its transaction journal. It produces a self-contained database without WAL sidecars. Copy the finalized file to the server using a temporary filename, then publish it by atomic rename
 and restart the web service so cached readers and coverage counts open the new file. Never replace `crawl.db`
 or `passages.db` with this corpus. The server needs only SQLite for corpus search, not DuckDB or the downloads.
 
