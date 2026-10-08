@@ -637,7 +637,16 @@ def _bulk_count() -> int:
     if not path.exists():
         return 0
     with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
-        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='docs'").fetchone():
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='metadata'").fetchone():
+            row = db.execute("SELECT value FROM metadata WHERE key='document_count'").fetchone()
+            try:
+                if row and int(row[0]) >= 0:
+                    return int(row[0])
+            except (TypeError, ValueError):
+                pass
+        # Legacy fixtures may lack published counts; never scan a large deployed corpus at startup.
+        size = sum(candidate.stat().st_size for candidate in (path, Path(str(path) + "-wal")) if candidate.exists())
+        if size > 32 * 1024 * 1024 or not db.execute("SELECT 1 FROM sqlite_master WHERE name='docs'").fetchone():
             return 0
         return db.execute("SELECT count(*) FROM docs").fetchone()[0]
 

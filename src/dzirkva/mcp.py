@@ -154,6 +154,26 @@ def _modified(filename):
     return datetime.fromtimestamp(max(stamps), UTC).isoformat() if stamps else None
 
 
+def _bulk_count() -> int | None:
+    """Use published import counts; legacy COUNT is allowed only for small database fixtures."""
+    path = DATA / "bulk.db"
+    if not path.exists():
+        return 0
+    if _row("bulk.db", "SELECT name FROM sqlite_master WHERE name='metadata'", ()):
+        row = _row("bulk.db", "SELECT value FROM metadata WHERE key='document_count'", ())
+        try:
+            if row and int(row["value"]) >= 0:
+                return int(row["value"])
+        except (TypeError, ValueError):
+            pass
+    size = sum(candidate.stat().st_size for candidate in (path, DATA / "bulk.db-wal") if candidate.exists())
+    if size > 32 * 1024 * 1024:
+        return None  # Unknown legacy count rather than an expensive full-corpus scan.
+    if _row("bulk.db", "SELECT name FROM sqlite_master WHERE name='docs'", ()):
+        return _row("bulk.db", "SELECT count(*) AS documents FROM docs", ())["documents"]
+    return 0
+
+
 def _fetch(url, offset, max_chars):
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
@@ -468,9 +488,7 @@ def create_server(host="127.0.0.1", port=8001, public_url=None, search_backend=N
         indexes = [{"name": name, "available": (DATA / (name + ".db")).exists(),
                     "modified_at": _modified(name + ".db")} for name in names]
         bulk_entry = next(item for item in indexes if item["name"] == "bulk")
-        bulk_entry["documents"] = 0
-        if bulk_entry["available"] and _row("bulk.db", "SELECT name FROM sqlite_master WHERE name='docs'", ()):
-            bulk_entry["documents"] = _row("bulk.db", "SELECT count(*) AS documents FROM docs", ())["documents"]
+        bulk_entry["documents"] = _bulk_count()
         return json.dumps({"indexes": indexes}, ensure_ascii=False)
 
     return server
