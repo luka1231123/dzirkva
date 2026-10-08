@@ -173,11 +173,13 @@ def main():
     parser.add_argument("--revision", default=REVISION)
     parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--memory-limit", default="512MB")
+    parser.add_argument("--sqlite-cache-mb", type=int, default=256, help="offline importer SQLite page cache in MiB")
     parser.add_argument("--finalize", action="store_true", help="verify and optimize index; remove WAL for copying")
     args = parser.parse_args()
-    if args.batch < 1 or args.limit < 0 or args.threads < 1:
-        parser.error("batch/threads must be positive and limit nonnegative")
+    if args.batch < 1 or args.limit < 0 or args.threads < 1 or args.sqlite_cache_mb < 1:
+        parser.error("batch/threads/cache must be positive and limit nonnegative")
     db = bulk.connect(args.db)
+    db.execute(f"PRAGMA cache_size={-args.sqlite_cache_mb * 1024}")
     metadata(db, args.revision)
     reader = duckdb.connect()
     reader.execute("SET threads=?", [args.threads])
