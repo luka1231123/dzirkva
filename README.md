@@ -93,6 +93,10 @@ into the system prompt.
 - **Georgian language questions**: lemma and part of speech, all forms of a word, word family,
   dictionary meaning, words near in meaning.
 - **Judging a Georgian source**: trust tier, Wikipedia citations, archive history, related sites.
+- **What Georgians write themselves**: with `tag: "people"` (blogs, forums, personal sites) or
+  `tag: "small"` (personal sites in the first person). Each search keeps up to 20 such pages beyond
+  its top results, from about 25,000 personal sites and blogs. General search engines seldom show them:
+  experiences, opinions, local history, recipes, everyday language.
 
 Not a good fit: today's news, prices, weather, non-Georgian topics, and English-only queries.
 dzirkva searches its own indexes, which can be weeks or years old; it does not search the live web.
@@ -173,6 +177,9 @@ AI ასისტენტებს ძირკვის გამოყენ
 - დახურული ან ძველი ქართული საიტები: Internet Archive-ის ასლები და 2013–2024 წლების გვერდები.
 - ენის კითხვები: სიტყვის ფუძე, ფორმები, ოჯახი, მნიშვნელობა, აზრით ახლო სიტყვები.
 - ქართული საიტის შეფასება: სანდოობა, ვიკიპედიის ციტირებები, ძველი ასლები.
+- რას წერენ თავად ადამიანები: ფილტრი `tag: "people"` (ბლოგები, ფორუმები, პირადი საიტები) ან
+  `tag: "small"` (პირადი საიტები, სადაც ავტორი პირველ პირში წერს). ყოველი ძიება ასეთ 20 გვერდამდე
+  ინახავს დაახლოებით 25 000 პირადი საიტიდან და ბლოგიდან. დიდი საძიებო სისტემები მათ იშვიათად აჩვენებს.
 
 არ გამოდგება დღევანდელი ამბებისთვის, ფასებისთვის, ამინდისთვის და არაქართული თემებისთვის: ძირკვა საკუთარ
 ინდექსებში ეძებს და ცოცხალ ინტერნეტს არ ათვალიერებს.

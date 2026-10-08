@@ -70,6 +70,10 @@ queries are not translated. For example:
 
 `kind` accepts `knowledge`, `news`, `web`, `forum`, `archive`, `video`, `film`, `social`.
 `tag` accepts `knowledge`, `texts`, `people`, `small`, `academic`, `old`.
+`people` (blogs, forums, social posts, personal sites) and `small` (personal sites in the first
+person) find Georgian voices that general search engines seldom show. Every search keeps up to 20
+pages from these sites beyond the crawl's top results (60 with `deep: true`), so these filters
+return real candidates; the website's ხალხი and პატარა ვები filters use the same list.
 `domain` is a hostname such as `nplg.gov.ge`; its subdomains also match. These filters
 narrow the ranked candidates, so an empty filtered response does not mean the entire
 index has no matching pages. Normal search is the default. `deep: true` invokes

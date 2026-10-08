@@ -26,6 +26,20 @@ and does not translate. The MCP tools are read-only.
    `"texts"` (books, PDFs, text libraries), `"people"` (forums, blogs), `"small"` (personal sites);
    `kind: "news"`; `domain: "tsu.ge"`.
    An empty filtered list does not prove that no source exists.
+
+## People's own voices (use this often)
+
+Georgian blogs, forums and personal sites are sources that are hard to find elsewhere: general search
+engines rank them low. dzirkva keeps up to 20 pages from such sites
+in every search (60 with `deep: true`), beyond the top results.
+
+- `tag: "people"`: blogs (blogspot, wordpress …), forums, social posts, personal sites.
+- `tag: "small"`: personal sites only. The author writes in the first person, sells nothing, and the site
+  is not news, government or a school.
+- Use them for experiences and opinions ("how people remember the 1990s"), local and family history,
+  recipes and crafts, everyday life, reviews, and how people really use a word.
+- Run the normal search too: the filters only narrow its candidates. Then `fetch_source` the posts.
+- Present these as personal accounts, not as facts. Give the date of each post.
 3. `fetch_source` on each URL you will use. Do not rely on a snippet alone. `text_kind` says
    what you got: `full_text`, `abstract` or `catalog_description`. Follow `next_offset` for more.
 4. `read_passages` for the body text of a paper or library item when `fetch_source` gives only
