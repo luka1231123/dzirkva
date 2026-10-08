@@ -215,7 +215,9 @@ def _fetch(url, offset, max_chars):
             row = _row("iverieli.db", "SELECT title, creator AS authors, year, substr(description, ?, ?) AS text, "
                        "length(description) AS total_chars FROM items WHERE handle=?",
                        (*window, parsed.path[len("/handle/"):]))
-    if row is None and (DATA / "bulk.db").exists():
+    # A captured page supplies body text beyond a paper abstract or catalog description.
+    # Current crawl/wiki/archive text and complete extracted paper text keep priority.
+    if (row is None or text_kind != "full_text") and (DATA / "bulk.db").exists():
         from dzirkva import bulk
 
         if document := bulk.get(url, offset=offset, max_chars=max_chars):
