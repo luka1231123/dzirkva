@@ -40,7 +40,7 @@ from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize,
 from dzirkva.meaning import cached_vectors, vectors
 from dzirkva.ingest import search_activity
 from dzirkva.morph import analyze, families, family_members
-from dzirkva import archive, clicks, crawl, dictionary, iverieli, papers, passages, wiki
+from dzirkva import archive, bulk, clicks, crawl, dictionary, iverieli, papers, passages, wiki
 from dzirkva.sources import by_category, georgian_hosts, host, kind, lookup, named_sites, tags
 
 # Question words and function words: dropped from keyword queries and feedback terms.
@@ -524,6 +524,10 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     lists.append(("wikisource", wiki.search(content, 10 * m, "wikisource")))  # classic texts: poems, prose, laws
     lists.append(("archive", archive.search(content, 20 * m)))  # old Georgian web, local index
     lists.append(("crawl", crawl.search(content, 20 * m)))  # trusted sites, own crawl
+    # Already-extracted Georgian web text, indexed offline on the Mac. Prefer a live crawl match
+    # for the same URL, so an older bulk capture cannot replace its current snippet.
+    live_urls = {canonical_url(r["url"]) for r in lists[-1][1]}
+    lists.append(("bulk", [r for r in bulk.search(content, 20 * m) if canonical_url(r["url"]) not in live_urls]))
     qs = {}
     if wanted:  # the same words on the sites made for what the query wants
         qs[f"intent:{want}"] = f"{' '.join(content)} ({len(wanted)} საიტი)"
