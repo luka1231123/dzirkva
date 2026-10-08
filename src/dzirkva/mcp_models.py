@@ -93,6 +93,7 @@ class SourceResponse(BaseModel):
     offset: int = 0
     total_chars: int = 0
     next_offset: int | None = None
+    provenance: dict[str, str] | None = Field(default=None, description="Imported corpus dataset, revision and source-record metadata")
     index_modified_at: str | None = Field(default=None, description="Database modification time; not source publication time")
     note: str
 

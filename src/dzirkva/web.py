@@ -25,6 +25,7 @@ import sqlite3
 import threading
 import time
 from collections import OrderedDict
+from contextlib import closing
 from functools import cache
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -58,7 +59,7 @@ SITE_LIMIT = {"ka.wikipedia.org": 2, "ka.wikisource.org": 1}  # local indexes mu
 MAX_SOCIAL = 3  # social posts in the main list (all social sites together)
 ENGINE_NAMES = {"wikipedia": "ვიკიპედია", "passages": "ვიკიპედია (აზრით)", "archive": "ძველი ვები", "crawl": "ჩვენი ინდექსი", "iverieli": "ივერიელი", "wikisource": "ვიკიწყარო", "papers": "სამეცნიერო ჟურნალები",
                 "cited": "ვიკიპედიის წყაროები", "named": "დასახელებული საიტი", "intent": "საჭიროების საიტები",
-                "passage_words": "აბზაცები (სიტყვებით)"}
+                "passage_words": "აბზაცები (სიტყვებით)", "bulk": "ტექსტების კრებული"}
 KIND_NAMES = {"knowledge": "ცოდნა", "news": "სიახლე", "web": "ვები", "forum": "ფორუმი", "social": "სოციალური ქსელი",
               "video": "ვიდეო", "film": "ფილმი"}
 # Signs that a person wrote or chose a page: key → (label, CSS class, meaning). Results show the meaning on hover;
@@ -630,11 +631,22 @@ GROW = [
 ]
 
 
+def _bulk_count() -> int:
+    """Count imported texts without opening a writer or requiring the optional corpus module."""
+    path = papers.DB.with_name("bulk.db")
+    if not path.exists():
+        return 0
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='docs'").fetchone():
+            return 0
+        return db.execute("SELECT count(*) FROM docs").fetchone()[0]
+
+
 @cache
 def _sizes() -> dict[str, int]:
     """Index sizes for the start page, counted once per start."""
     count = lambda db, sql: db.execute(sql).fetchone()[0] if db else 0
-    return {"wiki": count(wiki._db(), "SELECT count(*) FROM wiki"),
+    return {"bulk": _bulk_count(), "wiki": count(wiki._db(), "SELECT count(*) FROM wiki"),
             "crawl": count(crawl._db(), "SELECT count(*) FROM pages_content"),
             "sites": count(crawl._db(), "SELECT count(*) FROM domains WHERE state = 'full'"),
             "iverieli": count(iverieli._db(), "SELECT count(*) FROM items"),
@@ -664,6 +676,8 @@ def home_page() -> str:
     index = (f"ინდექსში: {k(n['wiki'])} ვიკიპედიის სტატია · {k(n['crawl'])} გვერდი {n['sites']:,} საიტიდან · "
              f"{k(n['papers'])} სამეცნიერო ნაშრომი · {k(n['iverieli'])} ბიბლიოთეკის ჩანაწერი · "
              f"{n['people']} პირადი საიტი · {n['archive']:,} ძველი ვების გვერდი")
+    if n["bulk"]:
+        index += f" · {k(n['bulk'])} ქართული ტექსტი კრებულიდან"
     signs = "".join(f"<li>{_sign(key, ' · 2010' if key == 'old' else '')} {escape(meaning)}</li>"
                     for key, (_, _, meaning) in SIGNS.items())
     today = _finds(random.Random(time.strftime("%Y-%m-%d")))  # the same finds all day
@@ -733,7 +747,9 @@ def _details() -> list[tuple[str, str, list[str]]]:
         ("სად ეძებს",
          "ეძებს საკუთარ ინდექსებში: ქართულ ვიკიპედიაში "
          f"({k(n['wiki'])} სტატია), ვიკიწყაროში, ჩვენ მიერ შეგროვებულ {kd(n['crawl'])} გვერდში {n['sites']:,} საიტიდან, "
-         f"„ივერიელის“ {kd(n['iverieli'])} ჩანაწერში, {kd(n['papers'])} სამეცნიერო ნაშრომში და ძველი ვების ასლებში.", []),
+         f"„ივერიელის“ {kd(n['iverieli'])} ჩანაწერში, {kd(n['papers'])} სამეცნიერო ნაშრომში"
+         + (f", კრებულების {kd(n['bulk'])} ქართულ ტექსტში" if n["bulk"] else "")
+         + " და ძველი ვების ასლებში.", []),
         ("აზრით ძიება",
          f"ადგილობრივი ენის მოდელი (BGE-M3) {kd(n['passages'])} აბზაცს ინახავს რიცხვების სახით: ვიკიპედიის, "
          "ვიკიწყაროს, ნაშრომებისა და ბიბლიოთეკის ტექსტებს. შეკითხვაც ასეთ რიცხვებად იქცევა, და ძირკვა პოულობს "
@@ -779,6 +795,8 @@ def about_page() -> str:
         "რატომ: ვხედავთ, რას ვერ პოულობს ძირკვა და სად უნდა გაუმჯობესდეს.",
     ]
     n = _sizes()
+    if n["bulk"]:
+        origins.append("ღია ტექსტების კრებულები: ქართული გვერდების ტექსტები. ყოველ ტექსტს ახლავს მისი წყაროს ბმული.")
     rules = {  # SIGNS: the exact rule of each
         "small": f"1000 სიტყვაზე მინიმუმ {crawl.MIN_VOICE} პირველი პირის სიტყვა („მე“, „ჩემი“, „ვფიქრობ“, „მახსოვს“ …), "
                  f"{crawl.MAX_CORPORATE}-ზე ნაკლები კომპანიის სიტყვა („შპს“, „მომსახურება“, „ფასი“ …) და "

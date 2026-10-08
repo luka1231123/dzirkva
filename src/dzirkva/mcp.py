@@ -195,6 +195,19 @@ def _fetch(url, offset, max_chars):
             row = _row("iverieli.db", "SELECT title, creator AS authors, year, substr(description, ?, ?) AS text, "
                        "length(description) AS total_chars FROM items WHERE handle=?",
                        (*window, parsed.path[len("/handle/"):]))
+    if row is None and (DATA / "bulk.db").exists():
+        from dzirkva import bulk
+
+        if document := bulk.get(url, offset=offset, max_chars=max_chars):
+            index, text_kind = "bulk", "full_text"
+            provenance = {key: str(value) for key, value in document.get("provenance", {}).items()
+                          if value is not None}
+            for key in ("source", "dataset_id", "dump", "digest"):
+                if document.get(key) is not None:
+                    provenance[key] = str(document[key])
+            row = {"title": document["title"], "date": document.get("date"),
+                   "text": document["text"], "total_chars": document["total_chars"],
+                   "provenance": provenance}
     if row is None:
         return {"url": url, "found": False, "note": "No stored text for this URL. No live page was fetched."}
     text = row.pop("text") or ""
@@ -364,7 +377,7 @@ def create_server(host="127.0.0.1", port=8001, public_url=None, search_backend=N
         domain: str | None = None,
         offset: Annotated[int, Field(ge=0, le=10000)] = 0,
     ) -> SearchResponse:
-        """Search Georgian web pages, Wikipedia, Wikisource, papers, library records and archived sites.
+        """Search Georgian web pages, Wikipedia, Wikisource, papers, library records, imported corpora and archived sites.
 
         Georgian queries or Latin transliteration work best. Normal search is the default.
         deep=true enables ამოძირკვა: 3x local retrieval and more meaning comparisons; it takes longer.
@@ -386,7 +399,7 @@ def create_server(host="127.0.0.1", port=8001, public_url=None, search_backend=N
     ) -> SourceResponse:
         """Read stored text for a search result URL; never downloads a live page or PDF.
 
-        Returns full text for crawled/wiki/archive pages and papers with stored full text; otherwise
+        Returns full text for crawled/wiki/archive pages, imported corpora and papers with stored full text; otherwise
         abstracts for papers, descriptions for library
         records, or found=false when no text is stored. offset and next_offset paginate by characters.
         """
@@ -450,10 +463,15 @@ def create_server(host="127.0.0.1", port=8001, public_url=None, search_backend=N
     @server.resource("dzirkva://indexes")
     def index_inventory() -> str:
         """Available local indexes and database modification times; not publication dates."""
-        names = ("wiki", "wikisource", "crawl", "archive", "papers", "iverieli", "passages",
+        names = ("wiki", "wikisource", "crawl", "archive", "papers", "iverieli", "passages", "bulk",
                  "dictionary", "families", "wordgraph")
-        return json.dumps({"indexes": [{"name": name, "available": (DATA / (name + ".db")).exists(),
-                                        "modified_at": _modified(name + ".db")} for name in names]}, ensure_ascii=False)
+        indexes = [{"name": name, "available": (DATA / (name + ".db")).exists(),
+                    "modified_at": _modified(name + ".db")} for name in names]
+        bulk_entry = next(item for item in indexes if item["name"] == "bulk")
+        bulk_entry["documents"] = 0
+        if bulk_entry["available"] and _row("bulk.db", "SELECT name FROM sqlite_master WHERE name='docs'", ()):
+            bulk_entry["documents"] = _row("bulk.db", "SELECT count(*) AS documents FROM docs", ())["documents"]
+        return json.dumps({"indexes": indexes}, ensure_ascii=False)
 
     return server
 
