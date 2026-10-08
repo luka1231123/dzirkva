@@ -187,6 +187,11 @@ def main():
     for path in args.files:
         import_file(db, reader, path.resolve(strict=True), args.batch, args.limit)
     reader.close()
+    document_count = db.execute("SELECT count(*) FROM docs").fetchone()[0]
+    url_count = db.execute("SELECT count(*) FROM captures").fetchone()[0]
+    db.executemany("INSERT OR REPLACE INTO metadata VALUES (?,?)",
+                   [("document_count", str(document_count)), ("url_count", str(url_count))])
+    db.commit()
     if args.finalize:
         db.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')")
         db.execute("INSERT INTO docs_fts(docs_fts,rank) VALUES('integrity-check',1)")
@@ -197,8 +202,8 @@ def main():
         db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         db.execute("PRAGMA journal_mode=DELETE")
         print("quick_check and FTS integrity check: ok; optimized and copy-ready", flush=True)
-    print(json.dumps({"documents": db.execute("SELECT count(*) FROM docs").fetchone()[0],
-                      "urls": db.execute("SELECT count(*) FROM captures").fetchone()[0],
+    print(json.dumps({"documents": document_count,
+                      "urls": url_count,
                       "imports": db.execute("SELECT path,row_offset,done FROM imports").fetchall()}, ensure_ascii=False), flush=True)
     db.close()
 

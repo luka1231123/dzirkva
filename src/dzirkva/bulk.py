@@ -51,7 +51,15 @@ def _db() -> sqlite3.Connection | None:
 
 def count() -> int:
     db = _db()
-    return db.execute("SELECT count(*) FROM docs").fetchone()[0] if db else 0
+    if db is None:
+        return 0
+    row = db.execute("SELECT value FROM metadata WHERE key='document_count'").fetchone()
+    if row:
+        try:
+            return int(row[0])
+        except (ValueError, TypeError):
+            pass
+    return db.execute("SELECT count(*) FROM docs").fetchone()[0]
 
 
 def get(url: str, offset: int = 0, max_chars: int | None = None) -> dict | None:
