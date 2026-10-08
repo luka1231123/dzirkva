@@ -43,7 +43,7 @@ from dzirkva import (archive, clicks, crawl, dictionary, discover, iverieli, pap
 from dzirkva.meaning import idle as idle_model
 from dzirkva.morph import analyze, families
 from dzirkva.georgian import KEEP_RATIO
-from dzirkva.search import COPY_SIMILARITY, MIN_GEORGIAN, ROUND1_GOOD, canonical_url, intents, search
+from dzirkva.search import COPY_SIMILARITY, MIN_GEORGIAN, ROUND1_GOOD, people_sites, canonical_url, intents, search
 from dzirkva.sources import sources
 
 TABS = {"all": "ყველა", "video": "ვიდეო", "news": "სიახლეები"}
@@ -1231,6 +1231,7 @@ if __name__ == "__main__":
                                    search_backend=_mcp_search)
         threading.Thread(target=run_http, args=(mcp_server,), daemon=True).start()
         print(f"MCP: http://127.0.0.1:{mcp_port}/mcp", flush=True)
+    people_sites()  # the small-web site set (~2 s on the server) before the first search, not in it
     # The worker: every new search runs here, one at a time. The meaning model on the Mac GPU hangs when called
     # from other threads; the request threads build the pages and wait only for their search.
     while True:

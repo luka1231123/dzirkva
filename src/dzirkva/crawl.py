@@ -10,6 +10,7 @@ Search boosts rare domains (small_site): small, non-commercial, Georgian, not on
 
 import re
 import sqlite3
+from collections import Counter
 from functools import cache
 from pathlib import Path
 from urllib.parse import urlparse
@@ -169,11 +170,20 @@ def domain_signals(url: str) -> set[str]:
     return {row[0], *row[1].split(",")} - {"", "other"} if row else set()
 
 
-def search(words: list[str], limit: int = 20, urls: list[str] = (), hosts: list[str] = ()) -> list[dict]:
+KEEP_POOL = 2000  # matches read (URL only) to find the `keep` pages beyond the top results
+KEEP_PER_SITE = 2
+
+
+def search(words: list[str], limit: int = 20, urls: list[str] = (), hosts: list[str] = (),
+           keep=None, keep_limit: int = 0) -> list[dict]:
     """Crawled pages with all words (any form); if too few, with any of them. The date starts the snippet.
 
     urls: only these pages (http and https both), for the pages Wikipedia articles cite.
-    hosts: only pages on these sites (http and https, with and without www.; not their other subdomains)."""
+    hosts: only pages on these sites (http and https, with and without www.; not their other subdomains).
+    keep(url) → bool: after the top `limit`, also the next best `keep_limit` pages it accepts, KEEP_PER_SITE per
+    site, from the first KEEP_POOL matches. Big sites fill the top; this finds people's sites (search.people)."""
+    if keep and keep_limit:
+        return _search_keep(words, limit, keep, keep_limit)
     db = _db()
     if db is None or not words:
         return []
@@ -196,6 +206,32 @@ def search(words: list[str], limit: int = 20, urls: list[str] = (), hosts: list[
             break
     return [{"url": url, "title": title or url, "snippet": f"{date} · {snip}" if date else snip, "engine": "crawl"}
             for url, title, date, snip in rows]
+
+
+def _search_keep(words: list[str], limit: int, keep, keep_limit: int) -> list[dict]:
+    """search() with keep: one ranking of KEEP_POOL matches (URL only), then snippets for the chosen pages."""
+    db = _db()
+    if db is None or not words:
+        return []
+    for op in (" AND ", " OR "):
+        expr = op.join(any_form(w) for w in words)
+        pool = db.execute("SELECT rowid, url FROM pages WHERE pages MATCH ? AND rank MATCH 'bm25(0,5,0,1)' "
+                          "ORDER BY rank LIMIT ?", (expr, max(KEEP_POOL, limit))).fetchall()
+        if len(pool) >= 5 or len(words) == 1:
+            break
+    chosen, sites = [rowid for rowid, _ in pool[:limit]], Counter()
+    for rowid, url in pool[limit:]:
+        if len(chosen) >= limit + keep_limit:
+            break
+        site = domain_of(url)
+        if sites[site] < KEEP_PER_SITE and keep(url):
+            sites[site] += 1
+            chosen.append(rowid)
+    rows = {r[0]: r[1:] for r in db.execute(
+        f"SELECT rowid, url, title, date, snippet(pages, 3, '', '', '…', 30) FROM pages WHERE pages MATCH ? "
+        f"AND rowid IN ({','.join('?' * len(chosen))})", (expr, *chosen))} if chosen else {}
+    return [{"url": url, "title": title or url, "snippet": f"{date} · {snip}" if date else snip, "engine": "crawl"}
+            for url, title, date, snip in (rows[i] for i in chosen if i in rows)]
 
 
 def count(word: str, context: list[str] = (), limit: int = 1000) -> int:

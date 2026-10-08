@@ -41,7 +41,7 @@ from dzirkva.meaning import cached_vectors, vectors
 from dzirkva.ingest import search_activity
 from dzirkva.morph import analyze, families, family_members
 from dzirkva import archive, bulk, clicks, crawl, dictionary, iverieli, papers, passages, wiki
-from dzirkva.sources import by_category, georgian_hosts, host, kind, lookup, named_sites, tags
+from dzirkva.sources import BLOG_HOSTS, by_category, georgian_hosts, host, kind, lookup, named_sites, tags
 
 # Question words and function words: dropped from keyword queries and feedback terms.
 STOPWORDS = set(
@@ -87,6 +87,8 @@ SITE_FREE = 2           # results per site before the site penalty (თბილ
 SITE_PENALTY = 0.5      # × for each further result from the same site
 SITE_MAX = 5            # results per site at most, unless the query names the site (ჩამოლაბორანტება: 25 Wikipedia pages)
 VOICE_BONUS = 0.3       # × (1 + bonus × coverage) for people: small web, blogs, forums, social posts (ხალხი)
+LISTING = re.compile(r"/(\d{4}/(\d{2}/(\d{2}/)?)?)?(index\.\w+)?$")  # /, /2011/, /2011/06/: not one post
+PEOPLE_PAGES = 20       # crawl pages from people's sites kept beyond the crawl's top results (crawl.search keep)
 COPY_SIMILARITY = 0.6   # word overlap (Jaccard) of two snippets that makes them copies
 # Question word → the shape of a text that answers it. A result with that shape gets SHAPE_BONUS.
 SHAPES = {
@@ -179,6 +181,23 @@ def _lemma(word: str) -> str:
         if a.source in ("lexicon", "noun-rule") and a.lemma in family_members(a.family):
             return a.lemma
     return word
+
+
+@cache
+def people_sites() -> frozenset[str]:
+    """Personal sites and one-person blogs (discover.people), once per start: about 2 s on the server."""
+    from dzirkva import discover
+    return frozenset(discover.people())
+
+
+def people(url: str) -> bool:
+    """A site where people write for themselves: small web, a blog, a forum or a social network (ხალხი,
+    პატარა ვები). The crawl's top results are mostly big sites; search keeps these pages too."""
+    u = urlparse(url)
+    if not u.query and LISTING.match(u.path or "/"):  # a home page or date archive matches many words loosely
+        return False
+    base = ".".join(host(url).split(".")[-2:])
+    return crawl.domain_of(url) in people_sites() or base in BLOG_HOSTS or kind(url) in ("forum", "social")
 
 
 @cache
@@ -536,7 +555,7 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     lists.append(("wikipedia", wiki.search(content, 20 * m)))   # local Georgian Wikipedia, every search
     lists.append(("wikisource", wiki.search(content, 10 * m, "wikisource")))  # classic texts: poems, prose, laws
     lists.append(("archive", archive.search(content, 20 * m)))  # old Georgian web, local index
-    lists.append(("crawl", crawl.search(content, 20 * m)))  # trusted sites, own crawl
+    lists.append(("crawl", crawl.search(content, 20 * m, keep=people, keep_limit=PEOPLE_PAGES * m)))  # own crawl
     # Already-extracted Georgian web text, indexed offline on the Mac. Prefer a live crawl match
     # for the same URL, so an older bulk capture cannot replace its current snippet.
     live_urls = {canonical_url(r["url"]) for r in lists[-1][1]}
