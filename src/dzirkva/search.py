@@ -326,13 +326,26 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[st
 
     cited: canonical URLs of the pages the matching Wikipedia articles cite; clicked: good clicks per canonical URL."""
     merged: dict[str, Result] = {}
+    snippet_origins, title_origins = {}, {}
     for name, results in lists:
         for rank, r in enumerate(results):
-            m = merged.setdefault(canonical_url(r["url"]), Result(r["url"], r["title"], r["snippet"]))
-            if len(r["snippet"]) > len(m.snippet):
+            key = canonical_url(r["url"])
+            engines = set(r["engine"].split("+"))
+            if key not in merged:
+                merged[key] = Result(r["url"], r["title"], r["snippet"])
+                snippet_origins[key] = title_origins[key] = engines
+            m = merged[key]
+            # Every crawl-derived list (including feedback) outranks an older corpus capture.
+            prefer_live = "crawl" in engines and "bulk" in snippet_origins[key]
+            older_bulk = "bulk" in engines and "crawl" in m.engines
+            if "crawl" in engines and "bulk" in title_origins[key]:
+                m.url, m.title = r["url"], r["title"]
+                title_origins[key] = engines
+            if not older_bulk and (prefer_live or len(r["snippet"]) > len(m.snippet)):
                 m.snippet = r["snippet"]
                 m.vector = r.get("vector")
-            elif m.vector is None and m.snippet == r["snippet"]:
+                snippet_origins[key] = engines
+            elif not older_bulk and m.vector is None and m.snippet == r["snippet"]:
                 m.vector = r.get("vector")
             rrf = 1 / (RRF_K + rank)
             m.score = max(m.score, rrf) if urlparse(m.url).hostname in WIKI_HOSTS else m.score + rrf

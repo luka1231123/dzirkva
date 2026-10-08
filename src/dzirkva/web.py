@@ -409,8 +409,10 @@ def _result(r, marks: dict[str, str], key: str, q: str, where: str) -> str:
             f"<a href='{escape(_out(c.url, 'copy', q=q, r=r.rank))}'>{escape(_host(c.url))}</a>" for c in r.copies[:6])
     tags = f"<div class=tags>{_labels(r)}{copies}</div>" if _labels(r) or copies else ""
     paper = ""
-    if m := papers.meta(r.url):  # a paper: authors, year, journal; the abstract; PDF, citation, the author's papers
-        snippet = _highlight(m["description"][:320], marks)[0] if m["description"] else snippet
+    if m := papers.meta(r.url):  # authors, year, journal, PDF and citation accompany the matched text
+        # The selected snippet may come from full PDF text or a dated corpus capture, beyond the abstract.
+        if not r.snippet and m["description"]:
+            snippet = _highlight(m["description"][:320], marks)[0]
         who = papers.authors(m["creator"])
         info = " · ".join(escape(x) for x in ("; ".join(who[:3]), m["year"], papers.journal(m["source"]),
                                                 papers.type_name(m["type"])) if x)
