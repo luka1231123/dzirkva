@@ -47,7 +47,7 @@ Own indexes only (no outside search engine; Brave and SearXNG archived in `scrip
 - `config/easter_eggs.yaml` — query → one Mtavruli line above the results (აფხაზეთი → აფხაზეთი საქართველოა)
 - `config/sources.yaml` + `src/dzirkva/sources.py` — trusted Georgian sites: category and tier; check with `uv run python scripts/check_sources.py`
 - Named sites (`sources.named_sites`): query names a site → its pages rank higher, and a navigational query (name = half the words or more) also searches the crawl on that site (the other words) and shows the home page. Names from Wikidata: `uv run python scripts/build_sites.py` (→ `data/sites.tsv`, ~2 min, QLever endpoint); Georgian site names and languages from Common Crawl: `data/cc_hosts.db` (`scripts/cc_hosts.py`). Sites that write mostly Georgian pass the Georgian filter even with a Latin title.
-- `.env` — `GO_SECRET` (signs `/go` links; the old name `SEARXNG_SECRET` still works) (gitignored)
+- `.env` — `GO_SECRET` (signs `/go` links; the old name `SEARXNG_SECRET` still works); `MCP_PORT`/`MCP_PUBLIC_URL` start the MCP listener inside the web process (`MCP.md`) (gitignored)
 
 ## Plan
 See `plan.md`. Tick each checkbox when its step works.

@@ -6,9 +6,7 @@ After=network-online.target
 User=luka
 WorkingDirectory=/home/luka/dzirkva
 Environment=HF_HUB_OFFLINE=1
-# MCP listener in the same process: shares the model and the search limit (MCP.md)
-Environment=MCP_PORT=8001
-Environment=MCP_PUBLIC_URL=https://mcp.dzirkva.ge
+# --extra mcp: the MCP listener (MCP_PORT in .env) runs in this process (MCP.md)
 ExecStart=/home/luka/.local/bin/uv run --frozen --extra mcp python -m dzirkva.web
 Restart=always
 RestartSec=5

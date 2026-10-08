@@ -113,11 +113,11 @@ guarantee. Discovered sites can appear in search without being in the curated li
 On rexvopc, the MCP listener runs inside the website process, `dzirkva-web`. It shares the
 website's embedding worker, passage cache, search cache and `MAX_SEARCHES` limit. The server
 has 7 GB of RAM and the website uses most of it, so do not start a second, standalone MCP
-process there. `config/systemd/dzirkva-web.service` sets this up:
+process there. Two settings turn it on:
 
-- `ExecStart` adds `--extra mcp`, so `uv` keeps the MCP package installed.
-- `Environment=MCP_PORT=8001` starts the listener at `http://127.0.0.1:8001/mcp`.
-- `Environment=MCP_PUBLIC_URL=https://mcp.dzirkva.ge` permits that public origin.
+- The server `.env` has `MCP_PORT=8001` (listener at `http://127.0.0.1:8001/mcp`) and
+  `MCP_PUBLIC_URL=https://mcp.dzirkva.ge` (permits that public origin).
+- `config/systemd/dzirkva-web.service` runs `uv run --extra mcp`, so `uv` keeps the MCP package installed.
 
 Without `MCP_PORT`, the website starts normally and does not import the MCP package.
 Searches go to the website's main-thread worker; language and source-reading tools run on
