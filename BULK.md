@@ -20,6 +20,7 @@ Transfers resume with curl; file lengths and the published SHA-256 hashes are ch
 the revision, URLs, sizes and checksums. Import uses two DuckDB threads, a 512 MB DuckDB memory limit and
 bounded SQLite transactions. Each file has a durable row checkpoint. Only completed files should be passed
 to the importer; a `.sha256` marker identifies a completed verified download.
+The importer defaults to a 256 MiB SQLite page cache; `--sqlite-cache-mb` changes it. Search readers use 8 MiB.
 
 The importer keeps text of at least 300 characters with at least 50% Georgian letters, valid HTTP(S) URLs,
 and source provenance. Wikimedia pages already covered by the dedicated indexes are excluded. Equal text
@@ -35,6 +36,19 @@ Finalization optimizes FTS, checks SQLite and FTS integrity, and produces a self
 sidecars. Copy the finalized file to the server using a temporary filename, then publish it by atomic rename
 and restart the web service so cached readers and coverage counts open the new file. Never replace `crawl.db`
 or `passages.db` with this corpus. The server needs only SQLite for corpus search, not DuckDB or the downloads.
+
+For a compressed transfer (after finalization):
+
+```bash
+zstd -T2 -9 -f data/bulk.db -o data/bulk.db.zst
+rsync --partial -t data/bulk.db.zst rexvopc:dzirkva/data/bulk-incoming.db.zst
+ssh rexvopc 'cd ~/dzirkva && systemd-run --user --wait --pipe --working-directory="$PWD" \
+  -p CPUQuota=10% -p MemoryMax=300M -p IOSchedulingClass=idle \
+  zstd -q -d -f data/bulk-incoming.db.zst -o data/bulk-incoming.db'
+```
+
+Verify the unpacked SHA-256 against the Mac file, then rename `data/bulk-incoming.db` to `data/bulk.db` and
+restart `dzirkva-web`. Stage under `data/` on the server: its `/tmp` is RAM-backed and unsuitable for this corpus.
 
 The database attribution is FineWeb-2, HuggingFaceFW, under
 [ODC-By 1.0](https://opendatacommons.org/licenses/by/1-0/). The dataset card also refers to
