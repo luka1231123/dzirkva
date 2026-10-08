@@ -40,6 +40,10 @@ The MCP dependency is optional and pinned to the
 [official SDK's supported v1 line](https://py.sdk.modelcontextprotocol.io/v1/).
 Normal `uv sync` and website operation do not require it.
 
+Client setup for Claude, Cursor, VS Code, LM Studio, Open WebUI and other local AI apps is in the
+[README](README.md#ai-access-mcp). The skill [`skills/dzirkva/SKILL.md`](skills/dzirkva/SKILL.md) teaches an
+assistant the search → read → cite flow.
+
 ## Tools
 
 | Tool | Inputs | Result |
