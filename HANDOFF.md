@@ -1,4 +1,4 @@
-# dzirkva handoff (2026-10-07)
+# dzirkva handoff (2026-10-08)
 
 Goal of the next sessions: expand dzirkva's own indexes, make search more accurate, and make the code simpler.
 Read `CLAUDE.md` first (rules, commands, layout). This file holds the state and the plan.
@@ -35,12 +35,26 @@ Its slow passage replacement exposed a missing URL index, now built under the ca
 query plan. The timer is enabled and active; live searches correctly defer ingestion until a later tick.
  Bulk new dumps, Common Crawl downloads, Iverieli scans and server embeddings remain outside these jobs.
 
+### Bulk Georgian corpus (deployed 2026-10-08)
+
+The user explicitly authorized downloading and adding a large existing corpus. FineWeb-2's complete Georgian
+slice (three verified Parquet files, 6.85 GB) was downloaded and indexed on the Mac. `data/bulk.db` now adds
+**3,505,415 documents** to live word search on `rexvopc`; it preserves original URLs, capture dates and provenance.
+These are historical web captures. Current crawler matches keep their newer title and snippet in every search round.
+Paper results retain matched body text instead of replacing it with an abstract.
+
+The finished index passed SQLite structural and FTS integrity checks on the Mac. The server copy matches the Mac's
+BLAKE3 hash; stored-text pagination, provenance and word search passed there. Transfer/unpack held the ingestion
+lock and stayed at 10% CPU / 300 MB with zero swap. Homepage and About show the new coverage and attribution.
+No corpus embeddings or index build ran on the server. See [BULK.md](BULK.md) for pinned source, checksums and operations.
+
 ### Data (Mac copies, 2026-10-02; the live `crawl.db` is on the server and bigger)
 
 | Index | Size |
 |---|---|
 | `crawl.db` | 1.41M pages, 34,664 hosts; queue 2.79M URLs; 236k known domains; 327k links (src, dst; no anchor text) |
 | `wiki.db` / `wikisource.db` | 174k articles, 684k citations / 6.1k texts |
+| `bulk.db` (Mac and server, 2026-10-08) | 3,505,415 Georgian FineWeb-2 documents; 39.96 GB SQLite / 11.34 GB compressed |
 | `passages.db` | 872k paragraphs, **all with vectors**: wikipedia 667k, papers 97k, wikisource 77k, iverieli 32k |
 | `papers.db` | 29.4k papers; full text read for 11,040 of 17,124 PDFs |
 | `iverieli.db` | 246k records; text of 1,859 of 90.8k small PDFs |
@@ -113,7 +127,7 @@ Check each step alone with `uv run python scripts/run_stress.py eval/<name>.json
 | Paper PDFs (6,084 initially left) | low | approved: at most 20 attempts and 25 MiB per daily batch |
 | Iverieli PDFs (89k left) | low | **download: ask; a slice only** |
 | Small dumps: ka Wikiquote, Wikinews, Wikibooks | seconds | `build_wiki_index.py` reads the format |
-| Bulk Georgian web (FineWeb-2 `kat_Geor`, Common Crawl Georgian records) | import on the Mac | **big download: ask** |
+| Bulk Georgian web (FineWeb-2 `kat_Geor`) | built on the Mac; read-only on server | **done:** 3.5M documents; explicit user download approval |
 
 ## 4. Morphology: Wiktionary → ka-lemma
 
