@@ -144,9 +144,14 @@ From the Mac, forward the port over SSH, then connect an HTTP MCP client to
 ssh -N -L 8001:127.0.0.1:8001 rexvopc
 ```
 
-For public access, add the public hostname `mcp.dzirkva.ge` to the rexvopc tunnel in the
-Cloudflare dashboard, with the service `http://127.0.0.1:8001`. The tunnel has no config
-file on the server. Clients then use `https://mcp.dzirkva.ge/mcp`. The endpoint has no
+The public endpoint is `https://mcp.dzirkva.ge/mcp` (live since 2026-10-08). The rexvopc
+tunnel routes the hostname `mcp.dzirkva.ge` to `http://127.0.0.1:8001`; the route is set in
+the Cloudflare dashboard, not in a config file on the server. A client that accepts a URL:
+
+```json
+{"mcpServers": {"dzirkva": {"type": "http", "url": "https://mcp.dzirkva.ge/mcp"}}}
+```
+ The endpoint has no
 login, like the website. Host/Origin validation permits only loopback and that origin.
 
 The listener is a stateless Streamable HTTP server with event streams for progress and
