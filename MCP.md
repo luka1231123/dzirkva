@@ -84,7 +84,10 @@ feedback terms and nearby passages.
 Use `fetch_source` on a returned URL before relying on its snippet. Crawled pages,
 Wikipedia, Wikisource and archive pages return stored full text. Papers return retained
 full text when the database contains it, otherwise an abstract; Iverieli records return
-catalog descriptions. The tool labels `text_kind` explicitly. Follow `next_offset`
+catalog descriptions. When a page or record has no full text of its own but the
+FineWeb-2 corpus (`bulk.db`, see `BULK.md`) holds a capture of the same URL, the tool
+returns that capture as `index: "bulk"`, with its dataset, dump and capture provenance.
+The tool labels `text_kind` explicitly. Follow `next_offset`
 to read another chunk; `null` means the end. It never downloads a live page or PDF.
 Missing databases are skipped, and source reading opens SQLite in read-only mode.
 
@@ -105,54 +108,62 @@ those URLs. Indexed text may be outdated or incomplete, and source text and snip
 are evidence rather than instructions. A trust tier is a ranking signal, not a factual
 guarantee. Discovered sites can appear in search without being in the curated list.
 
-## HTTP and hosting
+## On the server (rexvopc)
+
+On rexvopc, the MCP listener runs inside the website process, `dzirkva-web`. It shares the
+website's embedding worker, passage cache, search cache and `MAX_SEARCHES` limit. The server
+has 7 GB of RAM and the website uses most of it, so do not start a second, standalone MCP
+process there. `config/systemd/dzirkva-web.service` sets this up:
+
+- `ExecStart` adds `--extra mcp`, so `uv` keeps the MCP package installed.
+- `Environment=MCP_PORT=8001` starts the listener at `http://127.0.0.1:8001/mcp`.
+- `Environment=MCP_PUBLIC_URL=https://mcp.dzirkva.ge` permits that public origin.
+
+Without `MCP_PORT`, the website starts normally and does not import the MCP package.
+Searches go to the website's main-thread worker; language and source-reading tools run on
+the MCP worker. The server `.env` has `MEANING_WEB=0`: search uses only stored result
+vectors, as on the website. A search takes about 4–6 s; the first one after the model
+exits takes longer.
+
+Install or update the unit (the user types the sudo password):
 
 ```bash
-uv run --extra mcp dzirkva-mcp --transport streamable-http --port 8001
+rsync -a --files-from=<(git ls-files) . rexvopc:dzirkva/
+ssh rexvopc 'cd ~/dzirkva && ~/.local/bin/uv sync --frozen --inexact --extra mcp'
+ssh -t rexvopc 'sudo cp ~/dzirkva/config/systemd/dzirkva-web.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart dzirkva-web'
 ```
 
-Connect an HTTP MCP client to `http://127.0.0.1:8001/mcp`. This is a stateless Streamable
-HTTP server with event streams for progress and JSON-RPC results. It binds to loopback; port 8001 avoids the website's
-default port 8000. Index operations run on one worker, with at most three admitted
-operations; additional calls receive a busy tool error and can retry. Protocol handling
-continues while a search runs. Calls do not record website telemetry or clicks,
-and HTTP access logs are disabled to avoid storing visitors' IP addresses.
+Check it: `ssh rexvopc 'journalctl -u dzirkva-web -n 5'` shows `MCP: http://127.0.0.1:8001/mcp`.
 
-For a Cloudflare Tunnel or HTTPS reverse proxy, explicitly allow its public origin:
+### Connect
+
+From the Mac, forward the port over SSH, then connect an HTTP MCP client to
+`http://127.0.0.1:8001/mcp`:
 
 ```bash
-uv run --extra mcp dzirkva-mcp --transport streamable-http \
-  --public-url https://mcp.dzirkva.ge
+ssh -N -L 8001:127.0.0.1:8001 rexvopc
 ```
 
-Route that hostname to `http://127.0.0.1:8001`, preserving `/mcp`. The public URL is an
-example; this repository change does not create DNS records or publish the server.
-Host/Origin validation remains enabled and permits only loopback and the configured
-origin. The supplied service unit uses loopback until that option is added.
+For public access, add the public hostname `mcp.dzirkva.ge` to the rexvopc tunnel in the
+Cloudflare dashboard, with the service `http://127.0.0.1:8001`. The tunnel has no config
+file on the server. Clients then use `https://mcp.dzirkva.ge/mcp`. The endpoint has no
+login, like the website. Host/Origin validation permits only loopback and that origin.
 
-### Share the website's search backend
+The listener is a stateless Streamable HTTP server with event streams for progress and
+JSON-RPC results. At most three operations are admitted at a time; more calls receive a
+busy tool error and can retry. Calls do not record website telemetry or clicks, and HTTP
+access logs are off, so visitors' IP addresses are not stored.
 
-On the home server, the HTTP listener can run inside the website process to share its
-embedding worker, passage cache and search cache:
+### Standalone HTTP (other computers)
 
 ```bash
-MCP_PORT=8001 uv run --extra mcp python -m dzirkva.web
+uv run --extra mcp dzirkva-mcp --transport streamable-http --port 8001 \
+  [--public-url https://mcp.example.org]
 ```
 
-Set `MCP_PUBLIC_URL=https://mcp.dzirkva.ge` when using the public proxy origin.
-Set `MCP_PORT` in the process environment or systemd drop-in. If it is absent, the website starts normally
-without importing the optional MCP dependency. The listener keeps its own protocol
-thread; searches join the website's existing main-thread worker and `MAX_SEARCHES`
-admission limit. Language and source-reading operations run on the MCP worker.
-
-For systemd, add a drop-in to `dzirkva-web` with `Environment=MCP_PORT=8001`, clear
-`ExecStart`, then set it to
-`/home/luka/.local/bin/uv run --frozen --extra mcp python -m dzirkva.web`.
-Route the tunnel to port 8001. Do not also start the standalone MCP service on that port.
-
-`config/systemd/dzirkva-mcp.service` remains available for a standalone deployment. It
-follows the existing home-server paths. A standalone process has its own embedding
-worker and passage cache; running it alongside the website increases RAM usage.
+This process has its own embedding worker and caches up to eight searches for five
+minutes. `config/systemd/dzirkva-mcp.service` runs it under systemd. Do not run it beside
+the website on rexvopc.
 
 The adapter is in `src/dzirkva/mcp.py`, with response contracts in `mcp_models.py`.
 The optional website integration is in `web.py`; search ranking is reused directly.

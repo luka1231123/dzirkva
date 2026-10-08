@@ -1,12 +1,15 @@
 [Unit]
-Description=dzirkva web (127.0.0.1:8000)
+Description=dzirkva web (127.0.0.1:8000) + MCP (127.0.0.1:8001/mcp)
 After=network-online.target
 
 [Service]
 User=luka
 WorkingDirectory=/home/luka/dzirkva
 Environment=HF_HUB_OFFLINE=1
-ExecStart=/home/luka/.local/bin/uv run --frozen python -m dzirkva.web
+# MCP listener in the same process: shares the model and the search limit (MCP.md)
+Environment=MCP_PORT=8001
+Environment=MCP_PUBLIC_URL=https://mcp.dzirkva.ge
+ExecStart=/home/luka/.local/bin/uv run --frozen --extra mcp python -m dzirkva.web
 Restart=always
 RestartSec=5
 # The server has 7 GB and no screen: the web app dies before SSH does

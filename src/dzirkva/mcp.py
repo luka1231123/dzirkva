@@ -183,9 +183,11 @@ def _fetch(url, offset, max_chars):
     if parsed.hostname in {"ka.wikipedia.org", "ka.wikisource.org"} and parsed.path.startswith("/wiki/"):
         index = "wikipedia" if parsed.hostname == "ka.wikipedia.org" else "wikisource"
         title = unquote(parsed.path[len("/wiki/"):]).replace("_", " ")
+        # A title phrase match uses the FTS index; title=? alone reads every article (seconds on the server).
+        match = ("wiki MATCH ? AND ", ('title:"' + title.replace('"', '""') + '"',)) if re.search(r"\w", title) else ("", ())
         row = _row("wiki.db" if index == "wikipedia" else "wikisource.db",
-                   "SELECT title, substr(body, ?, ?) AS text, length(body) AS total_chars FROM wiki WHERE title=?",
-                   (*window, title))
+                   "SELECT title, substr(body, ?, ?) AS text, length(body) AS total_chars FROM wiki "
+                   f"WHERE {match[0]}title=?", (*window, *match[1], title))
     elif parsed.hostname == "web.archive.org":
         match = re.fullmatch(r"/web/(\d+)(?:id_)?/(https?://.+)", url.split("web.archive.org", 1)[1])
         if match:
