@@ -805,7 +805,7 @@ def about_page() -> str:
     ]
     n = _sizes()
     if n["bulk"]:
-        origins.append("ღია ტექსტების კრებულები: ქართული გვერდების ტექსტები. ყოველ ტექსტს ახლავს მისი წყაროს ბმული.")
+        origins.append("FineWeb-2, HuggingFaceFW: ქართული გვერდების ტექსტები. ყოველ ტექსტს ახლავს წყაროს ბმული და შეგროვების თარიღი.")
     rules = {  # SIGNS: the exact rule of each
         "small": f"1000 სიტყვაზე მინიმუმ {crawl.MIN_VOICE} პირველი პირის სიტყვა („მე“, „ჩემი“, „ვფიქრობ“, „მახსოვს“ …), "
                  f"{crawl.MAX_CORPORATE}-ზე ნაკლები კომპანიის სიტყვა („შპს“, „მომსახურება“, „ფასი“ …) და "
@@ -838,7 +838,10 @@ def about_page() -> str:
             + _block("რას აშორებს", "<ul class=list>" + "".join(f"<li>{escape(s)}</li>" for s in against) + "</ul>")
             + _block("როგორ შეიძლება გაიზარდოს", "<ul class=list>" + "".join(f"<li>{escape(x)}</li>" for x in GROW)
                      + "</ul>")
-            + _block("წყაროები", "<ul class=list>" + "".join(f"<li>{escape(s)}</li>" for s in origins) + "</ul>")
+            + _block("წყაროები", "<ul class=list>" + "".join(f"<li>{escape(s)}</li>" for s in origins) + "</ul>"
+                     + (f"<p><a href='{escape(_out('https://huggingface.co/datasets/HuggingFaceFW/fineweb-2', 'about:source'))}'>FineWeb-2</a> · "
+                        f"<a href='{escape(_out('https://opendatacommons.org/licenses/by/1-0/', 'about:license'))}'>ODC-By 1.0</a></p>"
+                        if n["bulk"] else ""))
             + _block("რას ვინახავთ", "<ul class=list>" + "".join(f"<li>{escape(s)}</li>" for s in stored) + "</ul>")
             + _foot())
 
