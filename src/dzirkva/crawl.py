@@ -172,6 +172,7 @@ def domain_signals(url: str) -> set[str]:
 
 KEEP_POOL = 2000  # matches read (URL only) to find the `keep` pages beyond the top results
 KEEP_PER_SITE = 2
+KEEP_CHUNK = 200  # URLs read at a time; about 10% of matches pass search.people
 
 
 def search(words: list[str], limit: int = 20, urls: list[str] = (), hosts: list[str] = (),
@@ -209,24 +210,28 @@ def search(words: list[str], limit: int = 20, urls: list[str] = (), hosts: list[
 
 
 def _search_keep(words: list[str], limit: int, keep, keep_limit: int) -> list[dict]:
-    """search() with keep: one ranking of KEEP_POOL matches (URL only), then snippets for the chosen pages."""
+    """search() with keep: rank KEEP_POOL matches by rowid only, read their URLs in chunks until keep_limit
+    pages pass (a cold disk made reading 2000 URLs at once cost 1.5 s on the server), then the snippets."""
     db = _db()
     if db is None or not words:
         return []
     for op in (" AND ", " OR "):
         expr = op.join(any_form(w) for w in words)
-        pool = db.execute("SELECT rowid, url FROM pages WHERE pages MATCH ? AND rank MATCH 'bm25(0,5,0,1)' "
-                          "ORDER BY rank LIMIT ?", (expr, max(KEEP_POOL, limit))).fetchall()
-        if len(pool) >= 5 or len(words) == 1:
+        ids = [r for r, in db.execute("SELECT rowid FROM pages WHERE pages MATCH ? AND rank MATCH 'bm25(0,5,0,1)' "
+                                      "ORDER BY rank LIMIT ?", (expr, max(KEEP_POOL, limit)))]
+        if len(ids) >= 5 or len(words) == 1:
             break
-    chosen, sites = [rowid for rowid, _ in pool[:limit]], Counter()
-    for rowid, url in pool[limit:]:
+    chosen, sites = ids[:limit], Counter()
+    for i in range(limit, len(ids), KEEP_CHUNK):
+        chunk = ids[i:i + KEEP_CHUNK]
+        urls = dict(db.execute(f"SELECT id, c0 FROM pages_content WHERE id IN ({','.join('?' * len(chunk))})", chunk))
+        for rowid in chunk:
+            site = domain_of(urls[rowid])
+            if len(chosen) < limit + keep_limit and sites[site] < KEEP_PER_SITE and keep(urls[rowid]):
+                sites[site] += 1
+                chosen.append(rowid)
         if len(chosen) >= limit + keep_limit:
             break
-        site = domain_of(url)
-        if sites[site] < KEEP_PER_SITE and keep(url):
-            sites[site] += 1
-            chosen.append(rowid)
     rows = {r[0]: r[1:] for r in db.execute(
         f"SELECT rowid, url, title, date, snippet(pages, 3, '', '', '…', 30) FROM pages WHERE pages MATCH ? "
         f"AND rowid IN ({','.join('?' * len(chosen))})", (expr, *chosen))} if chosen else {}
