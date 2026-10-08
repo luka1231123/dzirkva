@@ -3,6 +3,7 @@
 uv run python scripts/import_fineweb.py data/fineweb-2/test/000_00000.parquet
 Append explicitly named completed shards; --finalize optimizes/verifies a copy-ready SQLite file.
 No per-page requests, crawler changes, embeddings, or loading whole shards into memory.
+URLs are deduplicated by exact URL (fragments removed); matching normalized text also shares one indexed body.
 """
 
 import argparse
@@ -66,8 +67,13 @@ def refresh_group(db, digest, text=None):
     if row is None:
         db.execute("DELETE FROM docs WHERE digest=?", (digest,))
         return
-    old = db.execute("SELECT id FROM docs WHERE digest=?", (digest,)).fetchone()
-    if old:
+    old = db.execute("SELECT id,title FROM docs WHERE digest=?", (digest,)).fetchone()
+    if old and old[1] == row[1]:
+        # Do not name the title/text columns: the existing FTS trigger only fires for those.
+        # Duplicate captures changing URL/date/provenance should not reindex a large unchanged body.
+        db.execute("UPDATE docs SET url=?,date=?,dataset_id=?,dump=?,file_path=? WHERE id=?",
+                   (row[0], *row[2:], old[0]))
+    elif old:
         db.execute("UPDATE docs SET url=?,title=?,date=?,dataset_id=?,dump=?,file_path=? WHERE id=?", (*row, old[0]))
     else:
         db.execute("INSERT INTO docs(url,title,date,dataset_id,dump,file_path,digest,text,source) VALUES (?,?,?,?,?,?,?,?,'FineWeb2')",
