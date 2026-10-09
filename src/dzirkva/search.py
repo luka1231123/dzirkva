@@ -3,12 +3,14 @@ are archived in scripts/archive/engines/.
 
 1. Round 1: the query words (any form, wiki.any_form) in every local index: Wikipedia, Wikisource, the own crawl,
    the old web, the Iverieli catalog, papers; the crawl again on the sites of the query's intent (intents.yaml) and
-   on a site the query names (ფეისბუქი შესვლა → შესვლა on facebook.com). A spelling fix is used only when the crawl has the typed word
+   on a site the query names (ფეისბუქი შესვლა → შესვლა on facebook.com, weighted by how much of the query the name
+   covers). Each index returns pages with every word and some without the most common one (wiki.soft_and): no
+   cutoff, the coverage score ranks them. A spelling fix is used only when the crawl has the typed word
    with the other query words much less often than the fix; else the page asks "did you mean" (confirm_fixes).
    Search by meaning (passages.py) adds the paragraphs nearest to the question:
    they find answers that use other words than the question.
-2. Feedback (only when round 1 is bad: fewer than ROUND1_GOOD of its top 10 contain every query word):
-   read the paragraphs nearest in meaning (else the top snippets that contain every
+2. Feedback, weighted by how bad round 1 is: (1 - share of its top 10 with every query word)², 0 when all have
+   them. Read the paragraphs nearest in meaning (else the top snippets that contain every
    query word) and find the words and names that repeat there but are rare in Georgian overall
    (ბოლტი). This is the word the answer pages use. Round 2 searches the crawl for the query with it.
 3. Rank: combine the engine ranking (RRF over all lists + trust tier + word-family match; a Wikipedia page
@@ -18,8 +20,10 @@ are archived in scripts/archive/engines/.
    a metro-map page without შრიფტი drops for "თბილისის მეტროს შრიფტი").
    Pages that the matching Wikipedia articles cite get a trust bonus like tier 1; the crawled ones join
    the candidates (list "cited"). Wikipedia judges the sources instead of filling the list.
-   Pages people chose for the same question before (clicks.py) get CLICK_BONUS per good click.
-4. Group: the same text on many sites becomes one result with `copies`.
+   Pages people chose for the same question before (clicks.py) get CLICK_BONUS × log2(1 + good clicks).
+   Results whose title is about the query get up to TITLE_WEIGHT more.
+4. Group: the same text on many sites becomes one result with `copies`; each result × SITE_DECAY per better
+   result from its site.
 Only results that are mostly Georgian are kept. `kind` decides the tab (sources.kind), `tags` the filters.
 """
 
@@ -62,10 +66,8 @@ TIER_BONUS = {1: 0.5, 2: 0.25, 3: 0.0}
 SMALL_BONUS = 0.25     # small, non-commercial, Georgian site found by the crawl (crawl.small_site)
 CITED_BONUS = 0.5      # page cited by a Wikipedia article that matches the query
 NAMED_BONUS = 1.0      # page on a site the query names (ფეისბუქი → facebook.com)
-NAVIGATIONAL = 0.5     # the name covers this share of the query words: search the site itself, show its home page
 CITING_ARTICLES = 3    # articles read for citations: top word matches + top meaning matches (+ answer box)
-CLICK_BONUS = 0.3      # × good clicks on the same question (max CLICK_MAX)
-CLICK_MAX = 3
+CLICK_BONUS = 0.45     # × log2(1 + good clicks on the same question): 1 click +0.45, 3 clicks +0.9, 7 clicks +1.35
 WIKI_HOSTS = {"ka.wikipedia.org": "wikipedia", "ka.wikisource.org": "wikisource"}
 FAMILY_BONUS = 0.5      # × share of query word families found in title + snippet
 FEEDBACK_DOCS = 15      # round-1 results read for feedback terms
@@ -77,15 +79,12 @@ MEANING_WEIGHT = 1.5    # meaning rank vs engine rank in the final fusion
 MEANING_TOP = 40        # results (engine order) compared by meaning; the rest keep their engine rank
 MEANING_WEB = os.environ.get("MEANING_WEB", "1") != "0"  # 0 (.env, slow CPU): no new result vectors, only stored ones
 COVERAGE_FLOOR = 0.2    # score × (floor + (1 - floor) × coverage)
-LOCAL_FLOOR = 0.3       # a page only our local indexes found: × (floor + (1 - floor) × title fit)
+TITLE_WEIGHT = 1.0      # × (1 + weight × title fit): the title is about the query, not only the body
 TITLE_FIT = (0.5, 0.65)   # title-query similarity: filler 0.23-0.55, the right article 0.60-1.00 → fit 0..1
-LOCAL_LISTS = {"wikipedia", "wikisource", "passages", "passage_words", "papers", "iverieli"}  # papers and catalog records match
-# on the abstract and the authors' university: ახალი ამბები found a thesis on translating news
 FEEDBACK_MIN_COVERAGE = 0.99  # feedback reads only results that contain every query word
-ROUND1_GOOD = 3         # round 1 is good when this many of its top 10 contain every query word: no round 2
-SITE_FREE = 2           # results per site before the site penalty (თბილისი: half the page was Wikipedia)
-SITE_PENALTY = 0.5      # × for each further result from the same site
-SITE_MAX = 5            # results per site at most, unless the query names the site (ჩამოლაბორანტება: 25 Wikipedia pages)
+FEEDBACK_TOP = 10       # feedback weight = (1 - share of these top results with every query word)²
+SITE_DECAY = 0.7        # × for each better result from the same site (თბილისი: half the page was Wikipedia),
+                        # not for a site the query names
 VOICE_BONUS = 0.3       # × (1 + bonus × coverage) for people: small web, blogs, forums, social posts (ხალხი)
 LISTING = re.compile(r"/(\d{4}/(\d{2}/(\d{2}/)?)?)?(index\.\w+)?$")  # /, /2011/, /2011/06/: not one post
 PEOPLE_PAGES = 20       # crawl pages from people's sites kept beyond the crawl's top results (crawl.search keep)
@@ -340,13 +339,16 @@ def _wiki_page(url: str) -> tuple[str, str] | None:
 
 def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[str] = frozenset(),
           clicked: Counter[str] = Counter(), named: set[str] = frozenset(),
-          wanted: set[str] = frozenset()) -> list[Result]:
-    """RRF over all lists (Wikipedia pages: best rank only), Georgian filter, trust tier and word-family bonuses.
+          wanted: set[str] = frozenset(), weights: dict[str, float] = {}) -> list[Result]:
+    """Weighted RRF over all lists (Wikipedia pages: best rank only), Georgian filter, trust tier and word-family
+    bonuses. weights: list name → weight (default 1); a result's own "weight" (named home pages) multiplies it.
 
     cited: canonical URLs of the pages the matching Wikipedia articles cite; clicked: good clicks per canonical URL."""
     merged: dict[str, Result] = {}
     snippet_origins, title_origins = {}, {}
     for name, results in lists:
+        if not weights.get(name, 1.0):
+            continue
         for rank, r in enumerate(results):
             key = canonical_url(r["url"])
             engines = set(r["engine"].split("+"))
@@ -366,7 +368,7 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[st
                 snippet_origins[key] = engines
             elif not older_bulk and m.vector is None and m.snippet == r["snippet"]:
                 m.vector = r.get("vector")
-            rrf = 1 / (RRF_K + rank)
+            rrf = weights.get(name, 1.0) * r.get("weight", 1.0) / (RRF_K + rank)
             m.score = max(m.score, rrf) if urlparse(m.url).hostname in WIKI_HOSTS else m.score + rrf
             m.queries.add(name)
             m.engines.update(r["engine"].split("+"))
@@ -437,10 +439,10 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
     MEANING_TOP results in engine order get a vector (cached, meaning.cached_vectors; wiki pages have their
     paragraph's vector already); results below rank 40 seldom reach the top 10, so they keep their engine rank
     as their meaning rank.
-    A Wikipedia or Wikisource page that only our local indexes found needs its title to be about the query
-    (_title_fit): the body of a long article mentions every word somewhere (აფთიაქი ღამის → აღდგომის კუნძული).
-    A query that wants a service (encyclopedia=False: a pharmacy, a flat) gets no such page high, however close
-    its title (აფთიაქი ღამის → პოლარული ღამე). topic: the query words without research words (დისერტაცია):
+    A result whose title is about the query (_title_fit) ranks higher: the body of a long article mentions every
+    word somewhere (აფთიაქი ღამის → აღდგომის კუნძული). A query that wants a service (encyclopedia=False: a pharmacy,
+    a flat) gives Wikipedia titles no such bonus, however close (აფთიაქი ღამის → პოლარული ღამე).
+    topic: the query words without research words (დისერტაცია):
     the title of a thesis on ვეფხისტყაოსანი fits ვეფხისტყაოსანი დისერტაცია.
     """
     qtype = question_type(query)
@@ -462,9 +464,9 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
         r.score = fused * (1 + _trust(r)) * (COVERAGE_FLOOR + (1 - COVERAGE_FLOOR) * r.coverage)
         if shape and shape.search(r.snippet):
             r.score *= 1 + SHAPE_BONUS
-        r.score *= 1 + CLICK_BONUS * min(r.clicks, CLICK_MAX)
-        if r.queries <= LOCAL_LISTS:  # no web engine found it: a long text mentions every word somewhere
-            r.score *= LOCAL_FLOOR + (1 - LOCAL_FLOOR) * (_title_fit(r, topic or content, qv) if encyclopedia else 0.0)
+        r.score *= 1 + CLICK_BONUS * math.log2(1 + r.clicks)
+        fit = 0.0 if _wiki_page(r.url) and not encyclopedia else _title_fit(r, topic or content, qv)
+        r.score *= 1 + TITLE_WEIGHT * fit
     return sorted(results, key=lambda r: r.score, reverse=True)
 
 
@@ -491,25 +493,18 @@ def _site(url: str) -> str:
 
 
 def diversify(results: list[Result], named_hosts: set[str] = frozenset()) -> list[Result]:
-    """Many sites, not one: after SITE_FREE results from a site, each further one gets × SITE_PENALTY,
-    and after SITE_MAX the rest go (not for a site the query names). People (small web, blogs, forums) get
-    VOICE_BONUS when they use the query words: institutions fill the top otherwise."""
+    """Many sites, not one: each result gets × SITE_DECAY for every better result from its site (not on a site the
+    query names). People (small web, blogs, forums) get VOICE_BONUS when they use the query words: institutions
+    fill the top otherwise."""
     seen: Counter[str] = Counter()
     for r in results:
         if r.small or "people" in r.tags:
             r.score *= 1 + VOICE_BONUS * r.coverage
         site = _site(r.url)
-        r.score *= SITE_PENALTY ** max(0, seen[site] - SITE_FREE + 1)
+        if host(r.url) not in named_hosts:
+            r.score *= SITE_DECAY ** seen[site]
         seen[site] += 1
-    results = sorted(results, key=lambda r: r.score, reverse=True)
-    kept: Counter[str] = Counter()
-    out = []
-    for r in results:
-        site = _site(r.url)
-        kept[site] += 1
-        if kept[site] <= SITE_MAX or host(r.url) in named_hosts:
-            out.append(r)
-    return out
+    return sorted(results, key=lambda r: r.score, reverse=True)
 
 
 def related(content: list[str], base: str, terms: list[str], wiki_hits: list[dict], near: list[dict],
@@ -548,8 +543,10 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     read_as = " ".join(fixes.get(w, w) for w in typed)
     content = [fixes.get(w, w) for w in content]
     named_hosts = {h for h, _, _ in named}
-    lists = [("named", [{"url": f"https://{h}/", "title": name, "snippet": "", "engine": "named"}
-                        for h, share, name in named if share >= NAVIGATIONAL])]
+    # a named site's home page, weighted by the share of the query its name covers (a guess has share 0: not shown)
+    lists = [("named", [{"url": f"https://{h}/", "title": name, "snippet": "", "engine": "named", "weight": share}
+                        for h, share, name in named if share])]
+    weights: dict[str, float] = {}
     want = intent(content, read_as)
     wanted = set(intents()[want]["sites"]) if want else set()
     lists.append(("wikipedia", wiki.search(content, 20 * m)))   # local Georgian Wikipedia, every search
@@ -566,8 +563,9 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
         lists.append((f"intent:{want}", crawl.search(content, 10 * m, hosts=sorted(wanted))))
     for h, share, name in named[:1]:
         rest = [w for w in content if w not in name.split() and _lemma(w) not in name.split()]
-        if share >= NAVIGATIONAL and rest:  # ფეისბუქი შესვლა → შესვლა on facebook.com
+        if share and rest:  # ფეისბუქი შესვლა → შესვლა on facebook.com, weighted like the home page
             qs[f"named:{h}"] = f"{' '.join(rest)} site:{h}"
+            weights[f"named:{h}"] = share
             lists.append((f"named:{h}", crawl.search(rest, 10 * m, hosts=[h])))
     lists.append(("iverieli", iverieli.search(content, 10 * m)))  # National Library catalog: books, journals, press
     # Georgian journals and university repositories; research words (დისერტაცია, სტატია) name the kind of text,
@@ -596,7 +594,7 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     # the covered snippets (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
     explain = question_type(query) in ANSWER_TYPES and bool(near)
     answer_v = answer_vector(near) if explain else None
-    merged = merge(lists, content, cited, clicked, named_hosts, wanted)
+    merged = merge(lists, content, cited, clicked, named_hosts, wanted, weights)
     encyclopedia = intents()[want]["encyclopedia"] if want else True
     first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia, topic,
                             MEANING_TOP * m)
@@ -605,20 +603,22 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
     # verbs stay out: ბნელდება would bring back the eclipse pages (დაბნელება)
     base = " ".join(_lemma(w) for w in content if not _is_verb(w)) or " ".join(_lemma(w) for w in content)
-    bad = sum(r.coverage >= FEEDBACK_MIN_COVERAGE for r in first[:10]) < ROUND1_GOOD
-    more = terms and bad
+    # the fewer of the top results have every query word, the more the answer word counts (0 when all do)
+    full = sum(r.coverage >= FEEDBACK_MIN_COVERAGE for r in first[:FEEDBACK_TOP]) / FEEDBACK_TOP
+    more = (1 - full) ** 2 if terms else 0.0
     if more:  # the web pages that use the answer word: the crawl
         name = f"feedback:{terms[0]}"
         qs[name] = f"{base} {terms[0]}"
+        weights[name] = more
         lists.append((name, crawl.search(qs[name].split(), 20 * m)))
-        merged = merge(lists, content, cited, clicked, named_hosts, wanted)
+        merged = merge(lists, content, cited, clicked, named_hosts, wanted, weights)
         first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia, topic,
                                 MEANING_TOP * m)
     results = diversify(group_copies(first), named_hosts)
     for i, r in enumerate(results, 1):
         r.rank = i
     debug = {
-        "content": content, "deep": deep, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "named": [h for h, _, _ in named], "intent": want, "read_as": read_as, "feedback": terms if more else [], "answer": answer,
+        "content": content, "deep": deep, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "named": [h for h, _, _ in named], "intent": want, "read_as": read_as, "feedback": terms if more else [], "feedback_weight": round(more, 2), "answer": answer,
         "related": related(content, base, terms, wiki_hits, near, answer),
         "definition": dictionary.define(read_as),  # "სახლი რას ნიშნავს"
         "counts": {name: len(res) for name, res in lists}, "cites": len(cites),

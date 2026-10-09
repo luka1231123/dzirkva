@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from dzirkva.sources import sources
-from dzirkva.wiki import any_form
+from dzirkva.wiki import any_form, soft_and, soft_and_exprs
 
 DB = Path(__file__).resolve().parents[2] / "data" / "crawl.db"
 SCHEMA = """
@@ -177,7 +177,8 @@ KEEP_CHUNK = 200  # URLs read at a time; about 10% of matches pass search.people
 
 def search(words: list[str], limit: int = 20, urls: list[str] = (), hosts: list[str] = (),
            keep=None, keep_limit: int = 0) -> list[dict]:
-    """Crawled pages with all words (any form); if too few, with any of them. The date starts the snippet.
+    """Crawled pages with all words (any form), some without the most common word (wiki.soft_and). The date starts
+    the snippet.
 
     urls: only these pages (http and https both), for the pages Wikipedia articles cite.
     hosts: only pages on these sites (http and https, with and without www.; not their other subdomains).
@@ -196,15 +197,10 @@ def search(words: list[str], limit: int = 20, urls: list[str] = (), hosts: list[
     if starts:
         only += f" AND +rowid IN (SELECT id FROM pages_content WHERE {' OR '.join(['(c0 >= ? AND c0 < ?)'] * len(starts))})"
     sites = [x for p in starts for x in (p, p[:-1] + "0")]
-    rows = []
-    for op in (" AND ", " OR "):
-        expr = op.join(any_form(w) for w in words)
-        rows = db.execute(
-            f"SELECT url, title, date, snippet(pages, 3, '', '', '…', 30) FROM pages "
-            f"WHERE pages MATCH ?{only} AND rank MATCH 'bm25(0,5,0,1)' ORDER BY rank LIMIT ?",
-            (expr, *urls, *sites, limit)).fetchall()
-        if len(rows) >= 5 or len(words) == 1:
-            break
+    rows = soft_and(lambda expr, n: db.execute(
+        f"SELECT url, title, date, snippet(pages, 3, '', '', '…', 30) FROM pages "
+        f"WHERE pages MATCH ?{only} AND rank MATCH 'bm25(0,5,0,1)' ORDER BY rank LIMIT ?",
+        (expr, *urls, *sites, n)).fetchall(), words, limit)
     return [{"url": url, "title": title or url, "snippet": f"{date} · {snip}" if date else snip, "engine": "crawl"}
             for url, title, date, snip in rows]
 
@@ -215,22 +211,25 @@ def _search_keep(words: list[str], limit: int, keep, keep_limit: int) -> list[di
     db = _db()
     if db is None or not words:
         return []
-    for op in (" AND ", " OR "):
-        expr = op.join(any_form(w) for w in words)
-        ids = [r for r, in db.execute("SELECT rowid FROM pages WHERE pages MATCH ? AND rank MATCH 'bm25(0,5,0,1)' "
-                                      "ORDER BY rank LIMIT ?", (expr, max(KEEP_POOL, limit)))]
-        if len(ids) >= 5 or len(words) == 1:
-            break
-    chosen, sites = ids[:limit], Counter()
-    for i in range(limit, len(ids), KEEP_CHUNK):
-        chunk = ids[i:i + KEEP_CHUNK]
+    run = lambda expr, n: [r for r, in db.execute(
+        "SELECT rowid FROM pages WHERE pages MATCH ? AND rank MATCH 'bm25(0,5,0,1)' ORDER BY rank LIMIT ?", (expr, n))]
+    # wiki.soft_and, split: the top of both searches is the result list, the rest is the pool for keep
+    exprs, pool = soft_and_exprs(words), max(KEEP_POOL, limit)
+    full = run(exprs[0], pool)
+    seen = set(full)
+    part = [i for i in run(exprs[-1], len(full) + pool // 2) if i not in seen] if len(exprs) > 1 else []
+    expr = exprs[-1]  # matches every row of both: snippets
+    chosen, rest, sites = full[:limit] + part[:limit // 2], full[limit:] + part[limit // 2:], Counter()
+    top = len(chosen)
+    for i in range(0, len(rest), KEEP_CHUNK):
+        chunk = rest[i:i + KEEP_CHUNK]
         urls = dict(db.execute(f"SELECT id, c0 FROM pages_content WHERE id IN ({','.join('?' * len(chunk))})", chunk))
         for rowid in chunk:
             site = domain_of(urls[rowid])
-            if len(chosen) < limit + keep_limit and sites[site] < KEEP_PER_SITE and keep(urls[rowid]):
+            if len(chosen) < top + keep_limit and sites[site] < KEEP_PER_SITE and keep(urls[rowid]):
                 sites[site] += 1
                 chosen.append(rowid)
-        if len(chosen) >= limit + keep_limit:
+        if len(chosen) >= top + keep_limit:
             break
     rows = {r[0]: r[1:] for r in db.execute(
         f"SELECT rowid, url, title, date, snippet(pages, 3, '', '', '…', 30) FROM pages WHERE pages MATCH ? "

@@ -14,7 +14,7 @@ from urllib.parse import urljoin, urlparse
 import lxml.html
 
 from dzirkva.georgian import from_keyboard, georgian_ratio
-from dzirkva.wiki import any_form
+from dzirkva.wiki import soft_and
 
 DB = Path(__file__).resolve().parents[2] / "data" / "archive.db"
 FONT_FONTS = re.compile(r"(?i)acad|nusx|lit ?mtavr|grigol")   # fonts that draw Latin letters as Georgian
@@ -99,17 +99,13 @@ def _db() -> sqlite3.Connection | None:
 
 
 def search(words: list[str], limit: int = 20) -> list[dict]:
-    """Archived pages with all words (any form); if too few, with any of them. Links go to the Wayback copy."""
+    """Archived pages with all words (any form), some without the most common word (wiki.soft_and).
+    Links go to the Wayback copy."""
     db = _db()
     if db is None or not words:
         return []
-    rows = []
-    for op in (" AND ", " OR "):
-        expr = op.join(any_form(w) for w in words)
-        rows = db.execute(
-            "SELECT url, snapshot, title, snippet(pages_fts, 3, '', '', '…', 30) FROM pages_fts "
-            "WHERE pages_fts MATCH ? ORDER BY bm25(pages_fts, 0, 0, 5, 1) LIMIT ?", (expr, limit)).fetchall()
-        if len(rows) >= 5 or len(words) == 1:
-            break
+    rows = soft_and(lambda expr, n: db.execute(
+        "SELECT url, snapshot, title, snippet(pages_fts, 3, '', '', '…', 30) FROM pages_fts "
+        "WHERE pages_fts MATCH ? ORDER BY bm25(pages_fts, 0, 0, 5, 1) LIMIT ?", (expr, n)).fetchall(), words, limit)
     return [{"url": WAYBACK.format(snap, url), "title": title or url, "snippet": snip, "engine": "archive"}
             for url, snap, title, snip in rows]

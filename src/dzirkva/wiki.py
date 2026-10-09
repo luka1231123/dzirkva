@@ -37,6 +37,28 @@ def any_form(word: str) -> str:
     return "(" + " OR ".join(f'"{f}"' for f in forms) + ")"
 
 
+def soft_and_exprs(words: list[str]) -> list[str]:
+    """FTS5 expressions for a query: every word (any form); then, for two or more words, every word but the most
+    common one, the word a page that answers most often leaves out."""
+    exprs = [" AND ".join(map(any_form, words))]
+    if len(words) > 1:
+        rest = sorted(words, key=freq)[:-1]
+        exprs.append(" AND ".join(map(any_form, rest)))
+    return exprs
+
+
+def soft_and(run, words: list[str], limit: int) -> list:
+    """The top `limit` rows with every word, plus up to limit // 2 more rows missing only the most common word.
+    Both searches run every time; no cutoff picks between them: coverage (search.coverage) ranks what they find.
+    run(expr, n) returns at most n rows, best first; the first item of a row identifies it."""
+    rows, seen = [], set()
+    for expr, extra in zip(soft_and_exprs(words), (limit, limit // 2)):
+        new = [r for r in run(expr, len(rows) + extra) if (r[0] if isinstance(r, tuple) else r) not in seen][:extra]
+        seen.update(r[0] if isinstance(r, tuple) else r for r in new)
+        rows += new
+    return rows
+
+
 @cache
 def count(*words: str) -> int:
     """Number of articles that contain every word (in any form)."""
@@ -87,19 +109,14 @@ def article(words: list[str]) -> dict | None:
 
 
 def search(words: list[str], limit: int = 20, site: str = "wikipedia") -> list[dict]:
-    """Articles with all words (any form), title matches weigh 10×; if too few, any of the words."""
+    """Articles with all words (any form), title matches weigh 10×; some without the most common word (soft_and)."""
     db = _db(site)
     prefix, name = SITES[site][1:]
     if db is None or not words:
         return []
-    rows = []
-    for op in (" AND ", " OR "):
-        expr = op.join(any_form(w) for w in words)
-        rows = db.execute(
-            "SELECT title, snippet(wiki, 1, '', '', '…', 30) FROM wiki WHERE wiki MATCH ? "
-            "AND rank MATCH 'bm25(10,1)' ORDER BY rank LIMIT ?", (expr, limit)).fetchall()
-        if len(rows) >= 5 or len(words) == 1:
-            break
+    rows = soft_and(lambda expr, n: db.execute(
+        "SELECT title, snippet(wiki, 1, '', '', '…', 30) FROM wiki WHERE wiki MATCH ? "
+        "AND rank MATCH 'bm25(10,1)' ORDER BY rank LIMIT ?", (expr, n)).fetchall(), words, limit)
     return [{"url": prefix + quote(title.replace(" ", "_")), "title": f"{title} · {name}",
              "snippet": snip, "engine": site} for title, snip in rows]
 
