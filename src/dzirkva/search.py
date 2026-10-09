@@ -73,10 +73,12 @@ FEEDBACK_PASSAGES = 10  # or: paragraphs nearest in meaning
 FEEDBACK_TERMS = 1      # more terms searched nonsense (ღვინო დუღილის, ყურძნის დუღილის)
 FEEDBACK_MIN_DOCS = 3   # a feedback term repeats in at least this many texts
 FEEDBACK_MIN_IDF = 4.0  # ignore common words (idf of მსოფლიოში ≈ 3.9, სწრაფი ≈ 5.3, rare names ≈ 9)
-MEANING_WEIGHT = 1.5    # meaning rank vs engine rank in the final fusion
+MEANING_WEIGHT = 3.0    # meaning rank vs engine rank in the final fusion (1.5: wording beat topic)
 MEANING_TOP = 40        # results (engine order) compared by meaning; the rest keep their engine rank
 MEANING_WEB = os.environ.get("MEANING_WEB", "1") != "0"  # 0 (.env, slow CPU): no new result vectors, only stored ones
-COVERAGE_FLOOR = 0.2    # score × (floor + (1 - floor) × coverage)
+COVERAGE_FLOOR = 0.5    # score × (floor + (1 - floor) × coverage); 0.2: one missing word sank the best source
+MEANING_COVER = (0.5, 0.7)  # meaning 0.5 → no help, 0.7 → counts as full coverage: on topic in other words
+TITLE_ONLY_FLOOR = 0.2  # no snippet (a named site's home page): the title is weak evidence, keep the strict floor
 LOCAL_FLOOR = 0.3       # a page only our local indexes found: × (floor + (1 - floor) × title fit)
 TITLE_FIT = (0.5, 0.65)   # title-query similarity: filler 0.23-0.55, the right article 0.60-1.00 → fit 0..1
 LOCAL_LISTS = {"wikipedia", "wikisource", "passages", "passage_words", "papers", "iverieli"}  # papers and catalog records match
@@ -459,7 +461,10 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
     by_meaning = {id(r): i for i, r in zip(slots, sorted(have, key=lambda r: r.meaning, reverse=True))}
     for i, r in enumerate(results):  # results are in engine order here
         fused = 1 / (RRF_K + i) + MEANING_WEIGHT / (RRF_K + by_meaning.get(id(r), i))
-        r.score = fused * (1 + _trust(r)) * (COVERAGE_FLOOR + (1 - COVERAGE_FLOOR) * r.coverage)
+        low, high = MEANING_COVER
+        cover = max(r.coverage, min((r.meaning - low) / (high - low), 1.0)) if r.snippet else r.coverage
+        floor = COVERAGE_FLOOR if r.snippet else TITLE_ONLY_FLOOR
+        r.score = fused * (1 + _trust(r)) * (floor + (1 - floor) * cover)
         if shape and shape.search(r.snippet):
             r.score *= 1 + SHAPE_BONUS
         r.score *= 1 + CLICK_BONUS * min(r.clicks, CLICK_MAX)
