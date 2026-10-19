@@ -46,7 +46,8 @@ def client(user_agent: str, language: str, referrer_host: str, local: bool) -> d
         "mobile" if re.search(r"Mobi|Android|iPhone", ua) else "desktop"
     lang = re.split(r"[-,;]", language or "", maxsplit=1)[0].strip().lower()
     out = {"device": device, "lang": lang, "local": local}
-    if BOT.search(ua) or not ua:
+    # Every browser sends Accept-Language; the link-following scrapers of Sep–Oct 2026 (fake phone browsers) never did
+    if BOT.search(ua) or not ua or not language:
         out["bot"] = True
     if referrer_host:
         out["ref"] = referrer_host

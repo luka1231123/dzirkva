@@ -87,6 +87,24 @@ FORWARDED = ("X-Forwarded-For", "Forwarded", "Cf-Connecting-Ip", "X-Real-Ip")  #
 MAX_SEARCHES = int(os.environ.get("MAX_SEARCHES", "3"))  # new searches running or waiting at a time
 PORT = int(os.environ.get("PORT", "8000"))
 BUSY_SECONDS = 10  # the busy page reloads itself after this
+SITE = os.environ.get("SITE_URL", "https://dzirkva.ge")  # canonical links and the sitemap
+NO_INDEX = "noindex, nofollow"
+# Results, site profiles and redirects are endless and cost CPU: crawlers get the start, about, discover pages
+ROBOTS = f"""User-agent: *
+Disallow: /?
+Disallow: /site?
+Disallow: /go
+Disallow: /t?
+Disallow: /random
+Disallow: /words.json
+Disallow: /stats
+
+Sitemap: {SITE}/sitemap.xml
+"""
+SITEMAP = ("<?xml version='1.0' encoding='UTF-8'?><urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'>"
+           + "".join(f"<url><loc>{SITE}{p}</loc></url>" for p in ("/", "/about", "/discover", "/words")) + "</urlset>")
+DESCRIPTION = ("ძირკვა: ქართული საძიებო სისტემა. ეძებს ქართულ საიტებში, ვიკიპედიაში, სამეცნიერო ნაშრომებში, "
+               "ბიბლიოთეკაში და პატარა პირად საიტებზე, სიტყვის ყველა ფორმით.")
 SEARCH_CACHE_SIZE = max(0, int(os.environ.get("SEARCH_CACHE_SIZE", "32")))
 SEARCH_CACHE_TTL = max(0, int(os.environ.get("SEARCH_CACHE_TTL", "900")))
 _cache: OrderedDict[str, tuple[dict, list, dict]] = OrderedDict()
@@ -220,10 +238,15 @@ th{font-size:11px;color:var(--muted);text-align:left;font-weight:600;padding:2px
 
 
 
-def _page(q: str, body: str, refresh: int = 0, extra_css: str = "", script: str = "") -> str:
-    """ამოძირკვა (deep search): the second button sends deep=1 (search.DEEP × more local results; slower)."""
+def _page(q: str, body: str, refresh: int = 0, extra_css: str = "", script: str = "", robots: str = "",
+          description: str = "", canonical: str = "") -> str:
+    """ამოძირკვა (deep search): the second button sends deep=1 (search.DEEP × more local results; slower).
+    robots: "noindex, nofollow" on results and site pages, so search engines neither keep them nor walk their links."""
     return (f"<!doctype html><html lang=ka><meta charset=utf-8>"
-            + (f"<meta http-equiv=refresh content={refresh}>" if refresh else "") +
+            + (f"<meta http-equiv=refresh content={refresh}>" if refresh else "")
+            + (f"<meta name=robots content='{robots}'>" if robots else "")
+            + (f"<meta name=description content='{escape(description)}'>" if description else "")
+            + (f"<link rel=canonical href='{SITE}{canonical}'>" if canonical else "") +
             f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{escape(q) + ' · ' if q else ''}ძირკვა</title>"
             "<link rel=preconnect href=https://fonts.googleapis.com><link rel=stylesheet href="
             "'https://fonts.googleapis.com/css2?family=Noto+Serif+Georgian:wght@400..600&display=swap'>"
@@ -728,6 +751,14 @@ def home_page() -> str:
             + _foot())
 
 
+def gate_page(q: str, params: dict) -> str:
+    """A search asked for by a robot or a cookieless link: the same search behind one button press."""
+    keep = "".join(f"<input type=hidden name={k} value='{escape(v)}'>" for k, vs in params.items()
+                   if k in ("q", "tab", "f", "deep", "from") for v in vs[:1])
+    return (f"<p class=fix>ძიება «{escape(q)}». შედეგების სანახავად დააჭირეთ ღილაკს.</p>"
+            f"<form action=/>{keep}<button>{cap('ძებნა')}</button></form>")
+
+
 def busy_page(path: str) -> str:
     """Shown when MAX_SEARCHES new searches already run or wait; the page reloads itself (BUSY_SECONDS)."""
     return (f"<div class='ans hero'><div class=cap>{cap('დატვირთულია')}</div>"
@@ -1046,6 +1077,7 @@ class Handler(BaseHTTPRequestHandler):
         private = self.headers.get("DNT") == "1" or self.headers.get("Sec-GPC") == "1"
         m = re.search(r"(?:^|;\s*)s=([0-9a-f]{12})(?:;|$)", self.headers.get("Cookie", ""))
         self.session = "" if private else m[1] if m else secrets.token_hex(6)
+        self.returning = bool(m)  # the browser kept our cookie: it has been here before
         host = self.headers.get("Host", "").split(":")[0]
         self.local = host in ("127.0.0.1", "localhost") and not any(h in self.headers for h in FORWARDED)
         ref = urlparse(self.headers.get("Referer", "")).hostname or ""
@@ -1098,6 +1130,10 @@ class Handler(BaseHTTPRequestHandler):
         p = lambda k, default="": params.get(k, [default])[0].strip()
         if route == "/go":
             return self._go(params)
+        if route == "/robots.txt":
+            return self._send(ROBOTS, content_type="text/plain")
+        if route == "/sitemap.xml":
+            return self._send(SITEMAP, content_type="application/xml")
         if route == "/t":
             return self._beacon(params)
         if route == "/random":  # surfing: a random small site, straight to it
@@ -1108,11 +1144,11 @@ class Handler(BaseHTTPRequestHandler):
             host = p("h").lower().removeprefix("www.")
             body = site_page(host)
             self._log("site", host=host, **{"from": p("from")})
-            return self._send(_page("", body))
+            return self._send(_page("", body, robots=NO_INDEX))
         if route in ("/site", "/discover"):
             body = discover_page()
             self._log("discover")
-            return self._send(_page("", body))
+            return self._send(_page("", body, canonical="/discover"))
         if route == "/words.json":
             data = wordgraph.graph(wordgraph.resolve(p("w")) or "")
             self._log("words", p("w"), json=True)
@@ -1124,7 +1160,7 @@ class Handler(BaseHTTPRequestHandler):
                                     script=wordgraph.script(data) if data else ""))
         if route == "/about":
             self._log("about")
-            return self._send(_page("", about_page()))
+            return self._send(_page("", about_page(), description=DESCRIPTION, canonical="/about"))
         if route == "/stats":
             key = os.environ.get("STATS_KEY", "")
             if not (self.local or key and hmac.compare_digest(p("key"), key)):
@@ -1137,13 +1173,20 @@ class Handler(BaseHTTPRequestHandler):
         if not q:
             body = home_page()
             self._log("home")
-            return self._send(_page("", body))
+            return self._send(_page("", body, description=DESCRIPTION, canonical="/"))
         tab = p("tab", "all") if p("tab", "all") in TABS else "all"
         chosen = {f for f in params.get("f", [])[:1] if f in FILTERS}  # one filter at a time
         deep = p("deep") == "1"
         key = q + DEEP_KEY if deep else q
         value = _cached(key)
         fresh = value is None
+        src = p("from", "typed")
+        # Scrapers walked the filter, tab and related links of every result page without end (12k searches a
+        # day, a second of CPU each). A new search from a robot, or from a link with no cookie (a browser that
+        # never saw our pages), waits for a button press instead. Private visitors never get the cookie.
+        if fresh and not self.local and (self.who.get("bot") or src != "typed" and self.session and not self.returning):
+            self._log("gate", q, tab=tab, f=next(iter(chosen), ""), **{"from": src})
+            return self._send(_page(q, gate_page(q, params), robots=NO_INDEX))
         if fresh:
             t = time.time()
             def run_search():
@@ -1163,8 +1206,8 @@ class Handler(BaseHTTPRequestHandler):
                   fixed=bool(debug["spelling"]), dym=bool(debug.get("did_you_mean")), answer=bool(debug.get("answer")),
                   definition=bool(debug.get("definition")), feedback=bool(debug["feedback"]),
                   papers=any("papers" in r.queries for r in top), top=[_host(r.url) for r in top],
-                  **{"from": p("from", "typed")})
-        self._send(_page(q, body))
+                  **{"from": src})
+        self._send(_page(q, body, robots=NO_INDEX))
 
     def _go(self, params: dict) -> None:
         """A click on a link to another site: only links this server signed; results also go to clicks.py."""
@@ -1174,7 +1217,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(400)
         rank = int(p("r")) if p("r").isdigit() else 0
         info = {}
-        if p("k") and rank:
+        if p("k") and rank and not self.who.get("bot"):  # robots' clicks would rank pages for nobody
             clicks.log(p("k"), canonical_url(url), rank)
             value = _cached(q)
             hit = next((r for r in value[1] if r.rank == rank), None) if value else None
