@@ -17,7 +17,11 @@ Each domain runs as its own task, one page at a time; up to MAX_TASKS pages and 
 WORKERS processes parse the pages. New domains
 are probed best first: .ge and blogs, then most linked.
 
-Server: always on, slow (CRAWL_SLOW=1: few pages in flight, one parser), systemd unit config/systemd/dzirkva-crawl.service.
+Modes (CRAWL_MODE): fast (default, the Mac), slow (CRAWL_SLOW=1 too: few pages in flight, one parser),
+max (the server's whole capacity: every core but one parses) and auto (the server, systemd unit
+config/systemd/dzirkva-crawl.service): max while nothing else happens (no ingestion job, the rest of the server under
+IDLE_CPU of one core over the last minute, IDLE_MEM available), slow as soon as something does. Searches come every
+few seconds all day, so a single search does not switch modes: CPUWeight=idle in the unit gives it the CPU at once.
 It exits when the queue is empty or no page finished for STALL seconds (it used to hang after hours); systemd starts it
 again, and each start reads the sitemaps again, so new pages come in by themselves.
 Fast run on the Mac:    nohup uv run python scripts/crawl_sites.py > data/crawl.log 2>&1 &
@@ -27,6 +31,7 @@ Progress:               sqlite3 data/crawl.db "select state, kind, count(*) from
 
 import asyncio
 import bz2
+import fcntl
 import gzip
 import html
 import os
@@ -63,12 +68,21 @@ ROBOTS_TRIES = 3        # a host that does not answer: tries before it is reject
 RETRY = 600             # seconds between the tries
 MAX_DEPTH = 3
 MAX_SITEMAPS = 30       # sitemap files read per site, newest first
-SLOW = os.environ.get("CRAWL_SLOW") == "1"  # home server: small share of CPU, RAM and network
-MAX_FULL = 16 if SLOW else 200     # full domains started per step (least recent first)
-MAX_PROBES = 8 if SLOW else 200    # new domains started per step (best first)
-MAX_TASKS = 16 if SLOW else 400    # pages in flight
-MAX_SEEDS = 2 if SLOW else 40      # full domains reading sitemaps at once (all at once starved the loop: every connect timed out)
-WORKERS = 1 if SLOW else 8         # processes that parse pages (trafilatura is the CPU cost)
+MODE = os.environ.get("CRAWL_MODE") or ("slow" if os.environ.get("CRAWL_SLOW") == "1" else "fast")
+# Per mode: full domains started per step (least recent first), new domains started per step (best first), pages in
+# flight, full domains reading sitemaps at once (all at once starved the loop: every connect timed out), processes
+# that parse pages (trafilatura is the CPU cost)
+LIMITS = {
+    "slow": (16, 8, 16, 2, 1),      # home server while someone searches: small share of CPU, RAM and network
+    "max": (48, 32, 64, 6, max(1, (os.cpu_count() or 2) - 1)),  # home server, nothing else running
+    "fast": (200, 200, 400, 40, 8),  # the Mac
+}
+MAX_FULL, MAX_PROBES, MAX_TASKS, MAX_SEEDS, WORKERS = LIMITS["slow" if MODE == "auto" else MODE]
+IDLE_CPU = 0.5          # auto: max only while the rest of the server uses less than this many cores ...
+BUSY_CPU = 1.0          # ... and back to slow above this many
+IDLE_MEM = 1500 << 20   # auto: max only with this much RAM available ...
+LOW_MEM = 700 << 20     # ... and back to slow below this
+CHECK = 60              # auto: seconds between checks
 STALL = 1800            # seconds without a finished page: the crawler has hung, exit (systemd starts it again)
 PAUSE = 1.0
 MIN_TEXT = 200
@@ -433,7 +447,78 @@ async def visit(client: httpx.AsyncClient, db, sites: dict[str, Site], site: Sit
     save(db, site)
 
 
+class Auto:
+    """CRAWL_MODE=auto: max while nothing else happens on the server, slow as soon as something does."""
+
+    def __init__(self) -> None:
+        self.mode, self.checked, self.cpu = "slow", time.monotonic(), self.cpu_seconds()
+
+    @staticmethod
+    def cpu_seconds() -> tuple[float, float, float]:
+        """(now, busy CPU seconds of the whole server, CPU seconds of this cgroup: the crawler and its parsers)"""
+        try:
+            ticks = [int(x) for x in Path("/proc/stat").read_text().split("\n", 1)[0].split()[1:9]]
+            busy = (sum(ticks) - ticks[3] - ticks[4]) / os.sysconf("SC_CLK_TCK")  # all but idle and iowait
+            group = Path("/proc/self/cgroup").read_text().strip().split("::", 1)[1]
+            stat = Path(f"/sys/fs/cgroup{group}/cpu.stat").read_text().split()
+            own = int(stat[stat.index("usage_usec") + 1]) / 1e6
+        except (OSError, ValueError, IndexError):  # not Linux: no other load to see
+            busy = own = 0.0
+        return time.monotonic(), busy, own
+
+    def other_cpu(self) -> float:
+        """Cores the rest of the server used since the last check."""
+        (then, busy, own), self.cpu = self.cpu, self.cpu_seconds()
+        return max(0.0, (self.cpu[1] - busy) - (self.cpu[2] - own)) / max(1.0, self.cpu[0] - then)
+
+    @staticmethod
+    def available() -> int:
+        try:
+            line = next(x for x in Path("/proc/meminfo").read_text().splitlines() if x.startswith("MemAvailable:"))
+            return int(line.split()[1]) << 10
+        except (OSError, StopIteration):
+            return IDLE_MEM
+
+    @staticmethod
+    def ingesting() -> bool:
+        """A job of scripts/ingest.py holds data/ingest.lock."""
+        try:
+            with WIKI_DUMP.with_name("ingest.lock").open("a") as f:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)  # free: closing the file lets go again
+            return False
+        except BlockingIOError:
+            return True
+        except OSError:  # no data folder to lock: no ingestion either
+            return False
+
+    def wanted(self) -> str:
+        if time.monotonic() - self.checked < CHECK:
+            return self.mode
+        self.checked = time.monotonic()
+        cpu, mem = self.other_cpu(), self.available()
+        calm = cpu < BUSY_CPU and mem > LOW_MEM if self.mode == "max" else cpu < IDLE_CPU and mem > IDLE_MEM
+        if calm and not self.ingesting():
+            return "max"
+        return "slow"
+
+
+def parsers() -> ProcessPoolExecutor:
+    # A fresh process every 1000 pages: a long-lived parser grew to 400 MB
+    return ProcessPoolExecutor(WORKERS, max_tasks_per_child=1000)
+
+
+def use(mode: str) -> None:
+    """Switch the limits. A new parser pool: the old processes finish their pages, then exit and free their RAM."""
+    global MAX_FULL, MAX_PROBES, MAX_TASKS, MAX_SEEDS, WORKERS, POOL
+    MAX_FULL, MAX_PROBES, MAX_TASKS, MAX_SEEDS, WORKERS = LIMITS[mode]
+    old, POOL = POOL, parsers()
+    old.shutdown(wait=False)
+    print(f"mode     {mode}", flush=True)
+
+
 async def main() -> None:
+    auto = Auto() if MODE == "auto" else None
+    print(f"mode     {MODE}", flush=True)
     db = connect()
     sites = {h: Site(h, *row) for h, *row in db.execute(
         "SELECT host, source, state, pages, georgian, signals, inbound FROM domains")}
@@ -481,6 +566,9 @@ async def main() -> None:
         last_cc_import = time.monotonic()
         seed_order = deque(sorted((s for s in sites.values() if s.state == "full"), key=lambda s: (s.pages, s.inbound)))
         while True:
+            if auto and (mode := auto.wanted()) != auto.mode:
+                auto.mode = mode
+                use(mode)
             if CC_HOSTS.exists() and time.monotonic() - last_cc_import >= 3600:
                 seed_cc(db, sites)
                 last_cc_import = time.monotonic()
@@ -561,6 +649,6 @@ def stall_check() -> None:
 
 
 if __name__ == "__main__":
-    POOL = ProcessPoolExecutor(WORKERS)
+    POOL = parsers()
     threading.Thread(target=stall_check, daemon=True).start()
     asyncio.run(main())

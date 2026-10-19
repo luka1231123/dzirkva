@@ -1,21 +1,25 @@
 [Unit]
-Description=dzirkva crawler, slow and always on (CRAWL_SLOW=1)
+Description=dzirkva crawler, always on: max while the server is idle, slow otherwise (CRAWL_MODE=auto)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 User=luka
 WorkingDirectory=/home/luka/dzirkva
-Environment=CRAWL_SLOW=1
+Environment=CRAWL_MODE=auto
 ExecStart=/home/luka/.local/bin/uv run --frozen python scripts/crawl_sites.py
 # Queue empty, stalled or crashed: start again in 10 minutes (each start reads the sitemaps again)
 Restart=always
 RestartSec=600
-# Search comes first: lowest CPU and disk priority, a hard cap on both CPU and RAM
+# Search comes first. CPUWeight=idle: the crawler only gets CPU time no other service wants (cgroups share CPU by
+# weight, not by Nice), so max mode can use 3 of the 4 cores and still never slow a search down.
 Nice=19
 IOSchedulingClass=idle
-CPUQuota=25%
-MemoryMax=1200M
+CPUWeight=idle
+CPUQuota=300%
+# Max mode: 3 parsers. Above MemoryHigh the kernel reclaims instead of killing; auto mode drops to slow first
+MemoryHigh=1500M
+MemoryMax=1800M
 
 [Install]
 WantedBy=multi-user.target
