@@ -101,8 +101,11 @@ Disallow: /stats
 
 Sitemap: {SITE}/sitemap.xml
 """
-SITEMAP = ("<?xml version='1.0' encoding='UTF-8'?><urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'>"
-           + "".join(f"<url><loc>{SITE}{p}</loc></url>" for p in ("/", "/about", "/discover", "/words")) + "</urlset>")
+STATIC = Path(__file__).resolve().parents[2] / "static"  # og.png: the picture of a shared link
+OPENSEARCH = ("<?xml version='1.0' encoding='UTF-8'?><OpenSearchDescription xmlns='http://a9.com/-/spec/opensearch/1.1/'>"
+              "<ShortName>ძირკვა</ShortName><Description>ქართული საძიებო სისტემა</Description>"
+              "<InputEncoding>UTF-8</InputEncoding><Language>ka</Language>"
+              f"<Url type='text/html' method='get' template='{SITE}/?q={{searchTerms}}'/></OpenSearchDescription>")
 DESCRIPTION = ("ძირკვა: ქართული საძიებო სისტემა. ეძებს ქართულ საიტებში, ვიკიპედიაში, სამეცნიერო ნაშრომებში, "
                "ბიბლიოთეკაში და პატარა პირად საიტებზე, სიტყვის ყველა ფორმით.")
 SEARCH_CACHE_SIZE = max(0, int(os.environ.get("SEARCH_CACHE_SIZE", "32")))
@@ -239,15 +242,17 @@ th{font-size:11px;color:var(--muted);text-align:left;font-weight:600;padding:2px
 
 
 def _page(q: str, body: str, refresh: int = 0, extra_css: str = "", script: str = "", robots: str = "",
-          description: str = "", canonical: str = "") -> str:
+          description: str = "", canonical: str = "", title: str = "") -> str:
     """ამოძირკვა (deep search): the second button sends deep=1 (search.DEEP × more local results; slower).
     robots: "noindex, nofollow" on results and site pages, so search engines neither keep them nor walk their links."""
     return (f"<!doctype html><html lang=ka><meta charset=utf-8>"
             + (f"<meta http-equiv=refresh content={refresh}>" if refresh else "")
             + (f"<meta name=robots content='{robots}'>" if robots else "")
             + (f"<meta name=description content='{escape(description)}'>" if description else "")
-            + (f"<link rel=canonical href='{SITE}{canonical}'>" if canonical else "") +
-            f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{escape(q) + ' · ' if q else ''}ძირკვა</title>"
+            + (f"<link rel=canonical href='{_url(canonical)}'>" if canonical else "")
+            + _social(title or q, description, canonical) +
+            f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{escape(title or q) + ' · ' if title or q else ''}ძირკვა</title>"
+            "<link rel=search type=application/opensearchdescription+xml title=ძირკვა href=/opensearch.xml>"
             "<link rel=preconnect href=https://fonts.googleapis.com><link rel=stylesheet href="
             "'https://fonts.googleapis.com/css2?family=Noto+Serif+Georgian:wght@400..600&display=swap'>"
             f"<style>{CSS}{extra_css}</style><header><div><a class=logo href=/>{cap('ძირკვა')}</a>"
@@ -255,6 +260,29 @@ def _page(q: str, body: str, refresh: int = 0, extra_css: str = "", script: str 
             f"<button class=deep name=deep value=1 title='სამჯერ მეტი შედეგი, უფრო ნელა'>"
             f"{cap('ამოძირკვა')}</button></form><a class=nav href=/words>{ICON_MAP}{cap('სიტყვების რუკა')}</a></div></header>"
             f"<main>{body}</main>" + (f"<script>{script}</script>" if script else ""))
+
+
+def _url(path: str) -> str:
+    """Full address of a page of this site, Georgian letters percent-encoded (sitemaps want that)."""
+    return SITE + quote(path, safe="/?=&")
+
+
+def _social(title: str, description: str, canonical: str) -> str:
+    """Open Graph: the title, text and picture a shared link shows on Facebook, Messenger, Telegram."""
+    tags = {"og:type": "website", "og:site_name": "ძირკვა", "og:title": title or "ძირკვა",
+            "og:description": description or DESCRIPTION, "og:image": f"{SITE}/og.png", "og:image:width": "1200",
+            "og:image:height": "630", "og:locale": "ka_GE"} | ({"og:url": _url(canonical)} if canonical else {})
+    return "".join(f"<meta property={k} content='{escape(v)}'>" for k, v in tags.items()) + \
+        "<meta name=twitter:card content=summary_large_image>"
+
+
+@cache
+def _sitemap() -> str:
+    """Start, about, discover, the word map, its index letters and its word pages (wordgraph.sitemap_words)."""
+    paths = ["/", "/about", "/discover", "/words"] + [f"/words?l={c}" for c in wordgraph.ALPHABET] + [
+        f"/words?w={w}" for w in wordgraph.sitemap_words()]
+    return ("<?xml version='1.0' encoding='UTF-8'?><urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'>"
+            + "".join(f"<url><loc>{escape(_url(p))}</loc></url>" for p in paths) + "</urlset>")
 
 
 def cap(text: str) -> str:
@@ -700,7 +728,7 @@ def _thousands(n: int) -> str:
 
 def _foot() -> str:
     return (f"<p class=foot>{PRIVACY} <a href=/about>{cap('როგორ მუშაობს')}</a> · "
-            f"<a href=/discover>{cap('აღმოჩენა')}</a> · <a href=/words>{cap('სიტყვების რუკა')}</a> · <a href=/random>{cap('შემთხვევითი საიტი')}</a></p>")
+            f"<a href=/discover>{cap('აღმოჩენა')}</a> · <a href=/words>{cap('სიტყვების რუკა')}</a> · <a href=/words?l=ა>{cap('ლექსიკონი')}</a> · <a href=/random>{cap('შემთხვევითი საიტი')}</a></p>")
 
 
 def home_page() -> str:
@@ -1133,7 +1161,11 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/robots.txt":
             return self._send(ROBOTS, content_type="text/plain")
         if route == "/sitemap.xml":
-            return self._send(SITEMAP, content_type="application/xml")
+            return self._send(_sitemap(), content_type="application/xml")
+        if route == "/opensearch.xml":
+            return self._send(OPENSEARCH, content_type="application/opensearchdescription+xml")
+        if route == "/og.png":
+            return self._send_bytes((STATIC / "og.png").read_bytes(), "image/png")
         if route == "/t":
             return self._beacon(params)
         if route == "/random":  # surfing: a random small site, straight to it
@@ -1154,10 +1186,18 @@ class Handler(BaseHTTPRequestHandler):
             self._log("words", p("w"), json=True)
             return self._send(json.dumps(data, ensure_ascii=False), content_type="application/json")
         if route == "/words":
-            body, data = wordgraph.page(p("w"))
+            if "l" in params and not p("w"):  # the index: /words?l=ს
+                letter = p("l") if p("l") in wordgraph.ALPHABET else ""
+                self._log("words", letter, index=True)
+                return self._send(_page("", wordgraph.letter_page(letter), extra_css=wordgraph.CSS,
+                                        title="ლექსიკონი" + (f": {letter}" if letter else ""),
+                                        description="ქართული სიტყვები: მნიშვნელობა, ბრუნება, მაგალითები, მსგავსი სიტყვები.",
+                                        canonical=f"/words?l={letter}" if letter else ""))
+            body, data, meta = wordgraph.page(p("w"), out=lambda url: _out(url, "words"))
             self._log("words", p("w"))
-            return self._send(_page("", body, extra_css=wordgraph.CSS,
-                                    script=wordgraph.script(data) if data else ""))
+            return self._send(_page("", body, extra_css=wordgraph.CSS, script=wordgraph.script(data) if data else "",
+                                    title=meta["title"], description=meta.get("description", ""),
+                                    canonical=meta.get("canonical", ""), robots="" if meta["index"] else "noindex"))
         if route == "/about":
             self._log("about")
             return self._send(_page("", about_page(), description=DESCRIPTION, canonical="/about"))
@@ -1249,6 +1289,13 @@ class Handler(BaseHTTPRequestHandler):
         self._cookie()
         self.end_headers()
         self.wfile.write(html.encode())
+
+    def _send_bytes(self, data: bytes, content_type: str) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _redirect(self, url: str) -> None:
         self.send_response(302)

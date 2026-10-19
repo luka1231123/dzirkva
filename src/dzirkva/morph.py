@@ -285,6 +285,11 @@ def forms_of(lemma: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(forms + [f for (f,) in rows]))
 
 
+def parts_of_speech(lemma: str) -> set[str]:
+    """Wiktionary parts of speech of a dictionary form (noun, adj, verb, name …)."""
+    return {pos for lem, pos in _lexicon()[0].get(lemma, []) if lem == lemma}
+
+
 def family_members(family: str) -> list[str]:
     return _members().get(family, [])
 

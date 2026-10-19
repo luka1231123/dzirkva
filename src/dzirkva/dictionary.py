@@ -83,6 +83,13 @@ def _db() -> sqlite3.Connection | None:
     return sqlite3.connect(DB, check_same_thread=False) if DB.exists() else None
 
 
+@cache
+def words() -> frozenset[str]:
+    """Every word with an entry (the sitemap lists their pages)."""
+    db = _db()
+    return frozenset(w for (w,) in db.execute("SELECT word FROM words")) if db else frozenset()
+
+
 def lookup(word: str) -> dict | None:
     """Entry for a word in any form: the form itself first, then its dictionary forms (morph)."""
     db = _db()

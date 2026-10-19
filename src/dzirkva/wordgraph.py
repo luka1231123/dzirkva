@@ -4,19 +4,32 @@ Data: data/wordgraph.db from scripts/build_word_graph.py, one row per lemma; a p
 """
 
 import json
+import re
 import sqlite3
 import time
-from functools import cache
+import zlib
+from functools import cache, lru_cache
 from pathlib import Path
 
+from dzirkva import dictionary, passages
 from dzirkva.georgian import normalize
-from dzirkva.morph import analyze, ka_lemma
+from dzirkva.morph import SYNCOPE_BEFORE, VOWELS, analyze, forms_of, ka_lemma, parts_of_speech
+from dzirkva.wiki import SITES, any_form
 
 DB = Path(__file__).resolve().parents[2] / "data" / "wordgraph.db"
 KINDS = {4: "f4", 3: "f3", 2: "f2", 1: "f1"}  # ka-lemma level → node kind; "near" for meaning neighbours
 START = ("ღვინო", "სახლი", "წიგნი", "მთა", "ზღვა", "პური", "ქალაქი", "სიმღერა", "ბაღი", "მეგობარი")  # /words alone: one a day
 NEAR = 16    # meaning neighbours shown
 FAMILY = 14  # family forms shown
+ALPHABET = "აბგდევზთიკლმნოპჟრსტუფქღყშჩცძწჭხჯჰ"
+LETTER_WORDS = 400   # words on one letter page of the index, most frequent first
+SITEMAP_COUNT = 2000  # words in the sitemap: every dictionary word, and nouns, adjectives, verbs this frequent
+EXAMPLES = 3
+EXAMPLE_LEN = (40, 240)  # characters of an example sentence
+CASES = ("სახელობითი", "მოთხრობითი", "მიცემითი", "ნათესაობითი", "მოქმედებითი", "ვითარებითი", "წოდებითი")
+SENTENCE = re.compile(r"(?<=[ა-ჰ»“\")]{4}[.!?])\s+")  # not after an abbreviation (სოფ. ქ. სხვ.)
+CLEAN_SENTENCE = re.compile(r"^[ა-ჰ„«\"(]|^[A-ZА-Я0-9][^:*]*[ა-ჰ]")  # starts like a sentence, not a list item
+WORD = re.compile(r"[ა-ჰ]+")
 
 
 @cache
@@ -110,6 +123,14 @@ CSS = """
 .wg-lists .rel a{font-size:13.5px}
 .wg-lists .rel span{border:1px dashed var(--line);border-radius:16px;padding:4px 12px;font-size:13.5px;color:var(--muted)}
 .wg-empty{padding:40px 0;text-align:center;color:var(--muted)}
+.wg h2{margin:26px 0 10px;font-size:12.5px;font-weight:600;color:var(--ink);letter-spacing:.04em}
+.wg-def{margin:4px 0 14px;max-width:620px} .wg-def ol{margin:4px 0 6px;padding-left:22px;color:var(--text)}
+.wg-def p{margin:2px 0} .wg-def .m,.wg-ex .m{margin-left:0;font-size:11.5px}
+.wg-cases{border-collapse:collapse;font-size:14.5px} .wg-cases th,.wg-cases td{padding:5px 18px 5px 0;text-align:left;
+ border-bottom:1px solid var(--line)} .wg-cases th{font-weight:500;color:var(--muted);font-size:12.5px}
+.wg-cases td{color:var(--ink)}
+.wg-ex{margin:0;padding-left:18px;max-width:640px} .wg-ex li{margin:0 0 9px}
+.wg-abc{gap:6px} .wg-abc a,.wg-abc b{min-width:34px;text-align:center;padding:3px 8px} .wg-abc b{color:var(--ink)}
 @media (max-width:520px){.wg-stage{height:72vh;border-radius:12px} .wg-legend button{flex:none}
  .wg-top h1{font-size:25px} .wg .node text{font-size:13px} .wg-form{flex-basis:100%;margin-left:0}}
 """
@@ -344,8 +365,105 @@ if (data) { lists(); build(); }
 """
 
 
-def page(raw: str) -> tuple[str, dict | None]:
-    """(body HTML, graph data) for /words?w=raw. The lists under the graph are links, so the page works without JS."""
+def _syncope(stem: str) -> str:
+    """წყალ → წყლ, ფანჯარ → ფანჯრ: the vowel before a final ლ, რ, ნ, მ, ვ drops before a vowel ending."""
+    if len(stem) >= 3 and stem[-1] in SYNCOPE_BEFORE and stem[-2] in VOWELS and stem[-3] not in VOWELS:
+        return stem[:-2] + stem[-1]
+    return stem
+
+
+def cases(lemma: str) -> list[tuple[str, str, str]] | None:
+    """(case, singular, plural) of a noun or adjective. Only forms seen in Wiktionary tables or in texts:
+    a rule proposes candidates per case, the first attested one is shown, an unattested cell stays empty."""
+    if not parts_of_speech(lemma) & {"noun", "adj", "name"}:
+        return None
+    seen = set(forms_of(lemma)) | {lemma}
+    row = _row(lemma)
+    seen |= {f for f, *_ in row[1]} if row else set()
+    if lemma.endswith("ი"):                       # consonant stem: სახლ-ი, წყალ-ი
+        s = lemma[:-1]
+        v = dict.fromkeys((s, _syncope(s)))
+        sg = [[lemma], [s + "მა"], [s + "ს"], [x + "ის" for x in v], [x + "ით" for x in v], [x + "ად" for x in v], [s + "ო"]]
+    elif lemma[-1] in "აე":                        # truncating stem: მთ-ა, ფანჯარ-ა
+        t = lemma[:-1]
+        v = dict.fromkeys((t, _syncope(t)))
+        sg = [[lemma], [lemma + "მ"], [lemma + "ს"], [x + "ის" for x in v], [x + "ით" for x in v], [lemma + "დ"],
+              [lemma + "ვ", lemma]]
+    elif lemma[-1] in "ოუ":                        # vowel stem: რადიო
+        v = {lemma: None}
+        sg = [[lemma], [lemma + "მ"], [lemma + "ს"], [lemma + "ს"], [lemma + "თი"], [lemma + "დ"], [lemma + "ვ", lemma]]
+    else:
+        return None
+    plural = [x + "ებ" for x in v]
+    pl = [[p + e for p in plural] for e in ("ი", "მა", "ს", "ის", "ით", "ად", "ო")]
+    pick = lambda options: next((f for f in options if f in seen), "")
+    table = [(name, pick(a), pick(b)) for name, a, b in zip(CASES, sg, pl)]
+    return table if sum(bool(x) for _, *forms in table for x in forms) >= 5 else None
+
+
+@lru_cache(maxsize=4096)
+def examples(word: str) -> tuple[tuple[str, str, str], ...]:
+    """(sentence, source title, source URL): sentences with the word in any form from Wikipedia and Wikisource,
+    each from another article."""
+    db = passages._db()
+    forms = set(forms_of(word)) | {word}
+    out, titles = [], set()
+    # Start at a place of its own for every word, else every page quotes the same first articles
+    start = zlib.crc32(word.encode()) % (db.execute("SELECT max(rowid) FROM passages").fetchone()[0] or 1)
+    rows = [r for op in (">=", "<") for r in db.execute(
+        "SELECT p.title, p.site, p.text FROM passages_fts JOIN passages p ON p.id = passages_fts.rowid "
+        f"WHERE passages_fts MATCH ? AND passages_fts.rowid {op} ? LIMIT 200", (any_form(word), start))]
+    for title, site, text in rows:
+        if site not in SITES or title in titles:
+            continue
+        for sentence in SENTENCE.split(text):
+            sentence = sentence.strip()
+            if (EXAMPLE_LEN[0] <= len(sentence) <= EXAMPLE_LEN[1] and set(WORD.findall(sentence)) & forms
+                    and CLEAN_SENTENCE.match(sentence) and sentence[-1] in ".!?"
+                    and not re.search(r"[|{}=\[\]*]| :|::|\d{3,}", sentence)):  # no tables, markup, lists
+                out.append((sentence, title, SITES[site][1] + title.replace(" ", "_")))
+                titles.add(title)
+                break
+        if len(out) == EXAMPLES:
+            break
+    return tuple(out)
+
+
+def sitemap_words() -> list[str]:
+    """Word pages worth a search engine's time: dictionary words, and frequent nouns, adjectives and verbs."""
+    db = _db()
+    if db is None:
+        return []
+    defined = dictionary.words()
+    return [w for w, c in db.execute("SELECT word, count FROM g ORDER BY count DESC")
+            if len(w) > 2 and (w in defined or c >= SITEMAP_COUNT and parts_of_speech(w) & {"noun", "adj", "verb"})]
+
+
+def letter_page(letter: str) -> str:
+    """The index: the most frequent words of one letter, and the alphabet. Search engines reach every word page."""
+    from html import escape
+
+    db = _db()
+    words = [w for (w,) in db.execute("SELECT word FROM g WHERE word >= ? AND word < ? ORDER BY count DESC LIMIT ?",
+                                      (letter, chr(ord(letter) + 1), LETTER_WORDS))] if db and letter else []
+    return (f"<div class=wg><div class=wg-top><div class=wg-title><h1>ლექსიკონი{': ' + escape(letter) if letter else ''}</h1>"
+            "</div></div>" + _alphabet(letter)
+            + ("<p class=wg-intro>ყველაზე ხშირი სიტყვები. თითოეულის გვერდზე: მნიშვნელობა, ფორმები, მაგალითები და "
+               "მნიშვნელობით ახლო სიტყვები.</p><div class=rel>"
+               + "".join(f"<a href='/words?w={escape(w)}'>{escape(w)}</a>" for w in sorted(words)) + "</div>"
+               if words else "") + "</div>")
+
+
+def _alphabet(current: str = "") -> str:
+    return ("<nav class='rel wg-abc'>" + "".join(f"<b>{c}</b>" if c == current else f"<a href='/words?l={c}'>{c}</a>"
+                                                 for c in ALPHABET) + "</nav>")
+
+
+def page(raw: str, out=lambda url: url) -> tuple[str, dict | None, dict]:
+    """(body HTML, graph data, meta) for /words?w=raw. The lists under the graph are links, so the page works
+    without JS. Under them what people search a word for: meaning, case table, sentences with it.
+    meta: title, description and canonical path for the head, index=False for a word we do not know.
+    out(url): the link to another site (web.py counts it)."""
     from html import escape
 
     word = resolve(raw) if raw else START[int(time.strftime("%j")) % len(START)]
@@ -357,7 +475,7 @@ def page(raw: str) -> tuple[str, dict | None]:
     if data is None:
         return (f"<div class='wg'><div class=wg-top><div class=wg-title><h1>ვერ ვიპოვეთ</h1></div>{form}</div>"
                 f"<p class=wg-empty>სიტყვა „{escape(raw)}“ ჩვენს ტექსტებში საკმარისად ხშირად არ გვხვდება. სცადეთ სხვა "
-                "ფორმა ან სხვა სიტყვა.</p></div>"), None
+                f"ფორმა ან სხვა სიტყვა.</p>{_alphabet()}</div>"), None, {"title": "ვერ ვიპოვეთ", "index": False}
     q = escape(data["word"])
     lists = "".join(
         f"<div class=row style='--c:var(--k-{k})'><div class=cap><i></i>{escape(v)}</div><div class=rel>"
@@ -368,13 +486,39 @@ def page(raw: str) -> tuple[str, dict | None]:
     count = f"{data['count']:,}".replace(",", " ")
     intro = ("" if raw else "<p class=wg-intro>ერთ მხარეს ჩანს ფორმები და მონათესავეები, მეორეზე მნიშვნელობით ახლოები. "
              "დააჭირეთ ნებისმიერს და მისი რუკა გაიხსნება.</p>")
+    w = data["word"]
+    entry = dictionary.lookup(w)
+    entry = entry if entry and entry["word"] == w else None
+    meaning = (f"<div class=wg-def><span class=m>{escape(entry['pos'])}</span><ol>"
+               + "".join(f"<li>{escape(s)}</li>" for s in entry["senses"][:dictionary.MAX_SENSES]) + "</ol>"
+               + (f"<p class=m>სინონიმები: " + ", ".join(f"<a href='/words?w={escape(s)}'>{escape(s)}</a>"
+                                                         for s in entry["synonyms"]) + "</p>" if entry.get("synonyms") else "")
+               + f"<p class=m>წყარო: <a href='{escape(out(entry['url']))}'>ვიქსიკონი</a></p></div>") if entry else ""
+    table = cases(w) if raw else None
+    declension = ("<h2>ბრუნება</h2><table class=wg-cases><tr><th></th><th>მხოლობითი</th><th>მრავლობითი</th></tr>"
+                  + "".join(f"<tr><th>{c}</th><td>{escape(sg)}</td><td>{escape(pl)}</td></tr>" for c, sg, pl in table)
+                  + "</table>") if table else ""
+    found = examples(w) if raw else ()
+    sentences = ("<h2>მაგალითები</h2><ul class=wg-ex>" + "".join(
+        f"<li>{escape(s)} <a class=m href='{escape(out(url))}'>{escape(t)}</a></li>" for s, t, url in found)
+        + "</ul>") if found else ""
+    forms = [n["w"] for n in data["nodes"] if n["kind"] == "f4"][:6]
+    what = ["მნიშვნელობა"] * bool(entry) + ["ბრუნება" if table else "ფორმები", "მაგალითები"] * bool(raw) + ["მსგავსი სიტყვები"]
+    description = " ".join(filter(None, (
+        f"{w}: {entry['senses'][0]}" if entry else f"{w}: {count}-ჯერ ქართულ ტექსტებში.",
+        "ფორმები: " + ", ".join(forms) + "." if forms else "",
+        "მნიშვნელობით ახლო: " + ", ".join([n["w"] for n in data["nodes"] if n["kind"] == "near"][:5]) + "."
+        if any(n["kind"] == "near" for n in data["nodes"]) else "")))
+    meta = {"title": f"{w}: " + ", ".join(dict.fromkeys(what)) if raw else "სიტყვების რუკა",
+            "description": description[:300], "canonical": f"/words?w={w}" if raw else "/words", "index": True}
     return (f"<div class=wg><div class=wg-top><div class=wg-title>"
-            f"<h1>{q}</h1><span class=m>{count}-ჯერ ტექსტებში</span></div>{form}</div>{intro}"
+            f"<h1>{q}</h1><span class=m>{count}-ჯერ ტექსტებში</span></div>{form}</div>{intro}{meaning}"
             "<div class=wg-stage><span class='wg-side l'>ᲤᲝᲠᲛᲐ</span><span class='wg-side r'>ᲛᲜᲘᲨᲕᲜᲔᲚᲝᲑᲐ</span>"
             "<svg id=wg role=img aria-label='სიტყვების რუკა'></svg><div class=wg-tip></div></div>"
             f"<div class=wg-legend>{legend}</div>"
             f"<p class=wg-hint><a class=wg-search href='/?q={q}&amp;from=words'>„{q}“ ძიებაში →</a></p>"
-            f"<div class=wg-lists>{lists}</div></div>"), data
+            f"<div class=wg-lists>{lists}</div>{declension}{sentences}"
+            f"<h2>ლექსიკონი</h2>{_alphabet()}</div>"), data, meta
 
 
 def script(data: dict) -> str:
