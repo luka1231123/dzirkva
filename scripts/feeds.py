@@ -251,17 +251,36 @@ def seed(db, crawler, limit):
     db.commit()
 
 
+FEED_PATHS = ["/feed/", "/rss", "/ka/feed/", "/ge/feed/"]
+
+
 async def discover(fetcher, host):
+    """Advertised feeds first, then common paths; a feed with Georgian titles wins over a foreign one."""
     home, _, _, body = await fetcher.get(f"https://{host}/")
     tree = html.fromstring(body)
+    candidates = []
     for e in tree.xpath("//link[@href]"):
         if "alternate" in e.get("rel", "").lower().split() and e.get("type", "").lower() in {
                 "application/rss+xml", "application/atom+xml", "application/rdf+xml"}:
             if "comments" not in e.get("href", "").lower():
-                feed = clean_url(e.get("href"), home)
-                if feed:
-                    return feed
-    return ""
+                candidates.append(clean_url(e.get("href"), home))
+    candidates += [clean_url(path, home) for path in FEED_PATHS]
+    foreign = ""
+    for url in dict.fromkeys(filter(None, candidates)):
+        try:
+            final, status, _, feed = await fetcher.get(url)
+            root = etree.fromstring(feed, etree.XMLParser(resolve_entities=False, no_network=True))
+        except (httpx.HTTPError, ValueError, etree.LxmlError):
+            continue
+        if status != 200 or etree.QName(root).localname not in {"rss", "RDF", "feed"}:
+            continue
+        posts = [p for p in parse(feed, final) if crawl.domain_of(p.url) == host]
+        if not posts:
+            continue
+        if georgian_ratio(" ".join(p.title for p in posts)) >= crawl.MIN_GEORGIAN:
+            return final
+        foreign = foreign or final
+    return foreign
 
 
 async def poll(fetcher, db, crawler, row):
