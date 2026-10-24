@@ -89,10 +89,9 @@ PORT = int(os.environ.get("PORT", "8000"))
 BUSY_SECONDS = 10  # the busy page reloads itself after this
 SITE = os.environ.get("SITE_URL", "https://dzirkva.ge")  # canonical links and the sitemap
 NO_INDEX = "noindex, nofollow"
-# Results, site profiles and redirects are endless and cost CPU: crawlers get the start, about, discover pages
+# Results and site profiles stay crawlable: a blocked page cannot show its noindex, so Google listed them bare.
+# Robots get a cheap noindex page there (gate_page, the /site bot reply) instead of the costly work.
 ROBOTS = f"""User-agent: *
-Disallow: /?
-Disallow: /site?
 Disallow: /go
 Disallow: /t?
 Disallow: /random
@@ -1174,6 +1173,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._redirect(f"https://{host}/")
         if route == "/site" and p("h"):
             host = p("h").lower().removeprefix("www.")
+            if self.who.get("bot"):
+                return self._send(_page("", f"<p class=fix>{escape(host)}</p>", robots=NO_INDEX))
             body = site_page(host)
             self._log("site", host=host, **{"from": p("from")})
             return self._send(_page("", body, robots=NO_INDEX))
