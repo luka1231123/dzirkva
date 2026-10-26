@@ -112,6 +112,9 @@ SEARCH_CACHE_TTL = max(0, int(os.environ.get("SEARCH_CACHE_TTL", "900")))
 _cache: OrderedDict[str, tuple[dict, list, dict]] = OrderedDict()
 _cache_times: dict[str, float] = {}
 _cache_lock = threading.Lock()
+# Word pages read shared SQLite connections (wordgraph, dictionary, morph, wiki); crawlers ask for many at once
+# and parallel reads on one connection fail ("bad parameter or other API misuse"). A page takes ~50 ms.
+_words_lock = threading.Lock()
 
 
 def _cached(key):
@@ -1183,18 +1186,22 @@ class Handler(BaseHTTPRequestHandler):
             self._log("discover")
             return self._send(_page("", body, canonical="/discover"))
         if route == "/words.json":
-            data = wordgraph.graph(wordgraph.resolve(p("w")) or "")
+            with _words_lock:
+                data = wordgraph.graph(wordgraph.resolve(p("w")) or "")
             self._log("words", p("w"), json=True)
             return self._send(json.dumps(data, ensure_ascii=False), content_type="application/json")
         if route == "/words":
             if "l" in params and not p("w"):  # the index: /words?l=ს
                 letter = p("l") if p("l") in wordgraph.ALPHABET else ""
                 self._log("words", letter, index=True)
-                return self._send(_page("", wordgraph.letter_page(letter), extra_css=wordgraph.CSS,
+                with _words_lock:
+                    body = wordgraph.letter_page(letter)
+                return self._send(_page("", body, extra_css=wordgraph.CSS,
                                         title="ლექსიკონი" + (f": {letter}" if letter else ""),
                                         description="ქართული სიტყვები: მნიშვნელობა, ბრუნება, მაგალითები, მსგავსი სიტყვები.",
                                         canonical=f"/words?l={letter}" if letter else ""))
-            body, data, meta = wordgraph.page(p("w"), out=lambda url: _out(url, "words"))
+            with _words_lock:
+                body, data, meta = wordgraph.page(p("w"), out=lambda url: _out(url, "words"))
             self._log("words", p("w"))
             return self._send(_page("", body, extra_css=wordgraph.CSS, script=wordgraph.script(data) if data else "",
                                     title=meta["title"], description=meta.get("description", ""),
