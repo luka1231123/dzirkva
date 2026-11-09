@@ -28,6 +28,7 @@ import os
 import re
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
@@ -106,6 +107,7 @@ RELATED = 8             # related searches under the results
 TYPED_USES = 3          # crawled pages with the typed word and the other query words: maybe a real word …
 TYPO_RATIO = 20         # … unless the fix is 20× more common with them (as the vocabulary test, georgian.py)
 COUNT_MAX = 1000        # pages counted at most for that test
+POOL = ThreadPoolExecutor(8, "index")  # round 1: one thread per index database
 DEEP = 3                # deep search (button): × local results and results read by meaning
 TRACKING = re.compile(r"^(utm_|fbclid|gclid|yclid|mc_|ref$|ref_|locale$)")  # locale: DSpace UI language, same record
 
@@ -557,31 +559,51 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
                         for h, share, name in named if share >= NAVIGATIONAL])]
     want = intent(content, read_as)
     wanted = set(intents()[want]["sites"]) if want else set()
-    lists.append(("wikipedia", wiki.search(content, 20 * m)))   # local Georgian Wikipedia, every search
-    lists.append(("wikisource", wiki.search(content, 10 * m, "wikisource")))  # classic texts: poems, prose, laws
-    lists.append(("archive", archive.search(content, 20 * m)))  # old Georgian web, local index
-    lists.append(("crawl", crawl.search(content, 20 * m, keep=people, keep_limit=PEOPLE_PAGES * m)))  # own crawl
-    # Already-extracted Georgian web text, indexed offline on the Mac. Prefer a live crawl match
-    # for the same URL, so an older bulk capture cannot replace its current snippet.
-    live_urls = {canonical_url(r["url"]) for r in lists[-1][1]}
-    lists.append(("bulk", [r for r in bulk.search(content, 20 * m) if canonical_url(r["url"]) not in live_urls]))
+    topic = [w for w in content if not _lemmas(w) & intents()["research"]["words"]] or content
+    kinds = {k for w in content for k in _lemmas(w) if k in papers.KIND_WORDS}
     qs = {}
-    if wanted:  # the same words on the sites made for what the query wants
-        qs[f"intent:{want}"] = f"{' '.join(content)} ({len(wanted)} საიტი)"
-        lists.append((f"intent:{want}", crawl.search(content, 10 * m, hosts=sorted(wanted))))
+    rest, site = [], None
     for h, share, name in named[:1]:
         rest = [w for w in content if w not in name.split() and _lemma(w) not in name.split()]
         if share >= NAVIGATIONAL and rest:  # ფეისბუქი შესვლა → შესვლა on facebook.com
+            site = h
             qs[f"named:{h}"] = f"{' '.join(rest)} site:{h}"
-            lists.append((f"named:{h}", crawl.search(rest, 10 * m, hosts=[h])))
-    lists.append(("iverieli", iverieli.search(content, 10 * m)))  # National Library catalog: books, journals, press
-    # Georgian journals and university repositories; research words (დისერტაცია, სტატია) name the kind of text,
-    # not its topic: an abstract seldom says them. დისერტაცია puts theses first.
-    topic = [w for w in content if not _lemmas(w) & intents()["research"]["words"]] or content
-    kinds = {k for w in content for k in _lemmas(w) if k in papers.KIND_WORDS}
-    lists.append(("papers", papers.search(topic, 10 * m, kinds=kinds)))
-    lists.append(("passage_words", passages.word_search(topic, 20 * m)))
-    qv = vectors([query])[0]
+    if wanted:  # the same words on the sites made for what the query wants
+        qs[f"intent:{want}"] = f"{' '.join(content)} ({len(wanted)} საიტი)"
+
+    def crawled() -> list[tuple[str, list[dict]]]:
+        out = [("crawl", crawl.search(content, 20 * m, keep=people, keep_limit=PEOPLE_PAGES * m))]  # own crawl
+        if wanted:
+            out.append((f"intent:{want}", crawl.search(content, 10 * m, hosts=sorted(wanted))))
+        if site:
+            out.append((f"named:{site}", crawl.search(rest, 10 * m, hosts=[site])))
+        return out
+
+    # The indexes are searched at the same time, one thread per database file: a SQLite connection serves one
+    # thread at a time. The word forms are looked up here first, so no thread reads families.db.
+    for w in content:
+        wiki.any_form(w)
+    jobs = {
+        "wikipedia": POOL.submit(wiki.search, content, 20 * m),  # local Georgian Wikipedia, every search
+        "wikisource": POOL.submit(wiki.search, content, 10 * m, "wikisource"),  # classic texts: poems, prose, laws
+        "archive": POOL.submit(archive.search, content, 20 * m),  # old Georgian web, local index
+        "crawl": POOL.submit(crawled),
+        "bulk": POOL.submit(bulk.search, content, 20 * m),  # FineWeb-2 text, indexed offline on the Mac
+        "iverieli": POOL.submit(iverieli.search, content, 10 * m),  # National Library catalog
+        # Georgian journals and university repositories; research words (დისერტაცია, სტატია) name the kind of
+        # text, not its topic: an abstract seldom says them. დისერტაცია puts theses first.
+        "papers": POOL.submit(papers.search, topic, 10 * m, kinds=kinds),
+        "passage_words": POOL.submit(passages.word_search, topic, 20 * m),
+    }
+    qv = vectors([query])[0]  # the model stays on this thread
+    got = {name: job.result() for name, job in jobs.items()}
+    lists += [(name, got[name]) for name in ("wikipedia", "wikisource", "archive")]
+    lists += got["crawl"][:1]
+    # Prefer a live crawl match for the same URL, so an older bulk capture cannot replace its current snippet.
+    live_urls = {canonical_url(r["url"]) for r in got["crawl"][0][1]}
+    lists.append(("bulk", [r for r in got["bulk"] if canonical_url(r["url"]) not in live_urls]))
+    lists += got["crawl"][1:]
+    lists += [(name, got[name]) for name in ("iverieli", "papers", "passage_words")]
     near = passages.search(query, 20 * m, qv=qv)     # Wikipedia paragraphs nearest in meaning
     lists.append(("passages", near))
     answer = wiki.article(content)
