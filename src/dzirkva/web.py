@@ -91,8 +91,8 @@ SITE = os.environ.get("SITE_URL", "https://dzirkva.ge")  # canonical links and t
 NO_INDEX = "noindex, nofollow"
 # Results and site profiles stay crawlable: a blocked page cannot show its noindex, so Google listed them bare.
 # Robots get a cheap noindex page there (gate_page, the /site bot reply) instead of the costly work.
+# /go stays crawlable too: its redirect carries X-Robots-Tag noindex, and robots' clicks are not counted.
 ROBOTS = f"""User-agent: *
-Disallow: /go
 Disallow: /t?
 Disallow: /random
 Disallow: /words.json
@@ -1308,6 +1308,7 @@ class Handler(BaseHTTPRequestHandler):
     def _redirect(self, url: str) -> None:
         self.send_response(302)
         self.send_header("Location", _ascii_url(url))
+        self.send_header("X-Robots-Tag", NO_INDEX)  # a redirect has no page for a meta tag
         self._cookie()
         self.end_headers()
 
