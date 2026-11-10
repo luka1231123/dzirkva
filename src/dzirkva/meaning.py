@@ -58,7 +58,8 @@ class EmbeddingWorker:
         self.lock = threading.Lock()
         self.process = self.conn = None
         self.last_used = 0.0
-        self.idle_seconds = max(1, float(os.environ.get("MODEL_IDLE_SECONDS", "300")))
+        # 0: never unload (the server: with few visitors, every search would otherwise load the model again)
+        self.idle_seconds = float(os.environ.get("MODEL_IDLE_SECONDS", "300"))
         threading.Thread(target=self._reap, daemon=True).start()
         atexit.register(self.idle)
 
@@ -82,6 +83,8 @@ class EmbeddingWorker:
             self._stop()
 
     def _reap(self):
+        if self.idle_seconds <= 0:
+            return
         while True:
             time.sleep(min(30, self.idle_seconds))
             with self.lock:

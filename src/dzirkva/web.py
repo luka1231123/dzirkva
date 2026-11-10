@@ -1331,6 +1331,7 @@ if __name__ == "__main__":
         threading.Thread(target=run_http, args=(mcp_server,), daemon=True).start()
         print(f"MCP: http://127.0.0.1:{mcp_port}/mcp", flush=True)
     people_sites()  # the small-web site set (~2 s on the server) before the first search, not in it
+    search("საქართველო")  # the model, the word lexicon and the index pages on disk: ~30 s here, not for a visitor
     # The worker: every new search runs here, one at a time. The meaning model on the Mac GPU hangs when called
     # from other threads; the request threads build the pages and wait only for their search.
     while True:
