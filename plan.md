@@ -146,6 +146,67 @@ Publication
 - [ ] Public mode: no Google, 2 SearXNG queries per search, Yahoo 502 counts as a block
 - [ ] `eval/` in .gitignore, a license, a remote repository; tunnel + domain
 
+## Session 9: Best for students (measured against Google, from 2026-11-10)
+Protocol: `scripts/versus.py` (docstring). 40 student queries in 9 uses (`eval/student.tsv`), Google's first page
+saved once, the first five results of each side judged 0-2 without the engine name, marks kept for later rounds.
+One round = 72 s run + marks for new results only. Keep a change only when quality rises and no use loses a good@3 query.
+
+| 2026-11-10, Mac index | good@1 | good@3 | quality |
+|---|---|---|---|
+| Google | 29 | 33 | 76% |
+| dzirkva, start | 14 | 23 | 43% |
+| dzirkva, round 1 (intents, named article first) | 16 | 25 | 44% |
+
+Cause of the gap, from Google's 110 good results: 11 are in dzirkva's first five, 6 are lower, 46 are on a site we
+crawl but the page is not found, 47 are on a site we do not have. Coverage first, ranking second.
+By use (dzirkva / Google quality): exam 22/85, language 42/78, science 42/88, person 60/92, civics 48/78,
+text 40/65, research 38/68, history 58/80, study 42/50.
+
+Success: on this set and on a second set of real queries, good@3 not below Google and quality within 5 points;
+better than Google for text, study and research. Steps on the way: 55%, 65%, 76%.
+
+Stage 0: a check we can trust
+- [x] Protocol, query set, Google snapshot, 412 marks, first round
+- [ ] Same run twice = same lists (now 2 of 40 queries change order; რეფერატის დაწერის წესი lost its good result
+  between two runs with no related change: find the cause)
+- [ ] Run on the server index (`MEANING_WEB=0`, bigger crawl): that is what visitors get
+- [ ] The user marks 40 results blind (10 minutes); agreement with the stored marks 80% or more
+- [ ] Second set: 40 typed queries of people from `telemetry.db`, never used for tuning
+
+Stage 1: the study pages (93 of 110 misses)
+- [ ] Deploy the new education sources (`config/sources.yaml`) and crawl deep (`crawl_sites.py 10000`): aura.ge,
+  abituri.ge, edu.aris.ge, georgianencyclopedia.ge, nplg.gov.ge (bios, saskolo, gwdict), emis.ge, doctrina.ge,
+  rogor.ge have 1-4k pages each and miss the pages Google shows
+- [ ] naec.ge and online.naec.ge: trusted, 0 pages. Find why (robots, scripts)
+- [ ] Sites that need scripts: ka.khanacademy.org (HTML has no Georgian text; FineWeb has some pages),
+  flexbooks.ck12.org Georgian lessons: sitemap or their data API
+- [ ] Dictionaries for "X რას ნიშნავს": ganmarteba.ge (5 pages now), nplg gwdict, dlab.ug.edu.ge synonyms
+  into the dictionary box (Wiktionary has 8k words)
+- [ ] Small PDFs linked from trusted sites (court, university rules, UNDP, CENN): Google's good civics and
+  research results are often PDFs. Ask with count × size first
+- [ ] School blogs and scribd documents that Google shows: discovery from Wikipedia citations and crawl links
+- Measure: misses 93 → under 40, then run the protocol
+
+Stage 2: order for study needs
+- [ ] Catalog records without text (Iverieli): no tier bonus unless the intent is research (14 of 200 first-five
+  places, nearly all mark 1)
+- [ ] Teacher lesson plans and portfolio blogs match the words and give nothing (marks 0-1): no people bonus
+  for study intents
+- [ ] The same paper twice (dspace.tsu.ge): group by title
+- [ ] "რა არის X", "X რას ნიშნავს": encyclopedia and dictionary first, no service intent (ინფლაცია → statistics)
+- [ ] Work title + შინაარსი / ანალიზი / ტექსტი / პერსონაჟები: the work's article and its Wikisource text first
+- [ ] Vectors for crawl pages (HANDOFF accuracy 1): measure on the server run
+- Tried, not kept: 1918-1921 as two numbers (the first-republic query lost its good@3)
+
+Stage 3: student features (after 60%)
+- [ ] Text box: the poem or work from Wikisource opens above the results, like the dictionary box
+- [ ] Exam tests by year and subject as a shelf on /discover
+- [ ] Citation line for every result, not only papers; Session 8 items (tab სამეცნიერო, operators, similar papers)
+
+Stage 4: proof
+- [ ] Collect Google again every 3 months, same protocol, both sets
+- [ ] Live measure from telemetry: share of searches with a click in the first three, share typed again
+
 ## Later (optional)
 - [x] Own crawl of the trusted sites (`scripts/crawl_sites.py` → `data/crawl.db`, FTS5): robots.txt, sitemaps newest first, 1 req/s per site, main text by trafilatura; search source `crawl`
 - [x] Discovery of rare Georgian sites (same crawler): seeds = 121k hosts cited in ka.wikipedia + hosts linked from crawled pages (`links`); new domain = robots + home + 5 pages, full budget only if >30% Georgian and not commercial

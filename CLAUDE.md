@@ -7,6 +7,7 @@ Own indexes only (no outside search engine; Brave and SearXNG archived in `scrip
 - Search time uses no LLM and no paid tokens: only code and free local models (BGE-M3 embeddings in `meaning.py`).
 - No test suites. The only check is the eval script over `eval/queries.tsv` (private, gitignored).
 - Commit after each working step.
+- Student check against Google: `uv run python scripts/versus.py run|pool|grade|score NAME` (protocol in its docstring; queries, Google snapshot and marks in `eval/student*`, private). Roadmap: `plan.md` Session 9.
 
 ## Commands
 - Grammar demo: `uv run python -m dzirkva.morph <words>`; accuracy: `uv run python scripts/check_morph.py`

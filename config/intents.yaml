@@ -80,7 +80,7 @@ recipe:
 
 health:
   ka: ჯანმრთელობა
-  words: სიმპტომი დაავადება მკურნალობა ტკივილი სიცხე ცხელება წნევა ქოლესტერინი შაქარი ვირუსი გრიპი ალერგია ანალიზი ექიმი ვაქცინა დიეტა ორსულობა
+  words: სიმპტომი დაავადება მკურნალობა ტკივილი სიცხე ცხელება წნევა ქოლესტერინი შაქარი ვირუსი გრიპი ალერგია სისხლის_ანალიზი შარდის_ანალიზი ანალიზის_პასუხი ექიმი ვაქცინა დიეტა ორსულობა
   sites: mkurnali.ge vidal.ge aversi.ge psp.ge ncdc.ge moh.gov.ge redmed.ge apollohospitals.com
 
 clinic:
@@ -121,7 +121,7 @@ social_help:
 
 law:
   ka: სამართალი
-  words: კანონი კოდექსი კონსტიტუცია სასამართლო დადგენილება ბრძანებულება მუხლი უფლება ხელშეკრულება მემკვიდრეობა ანდერძი განქორწინება ალიმენტი ადვოკატი იურისტი სარჩელი
+  words: დეკლარაცია კანონი კოდექსი კონსტიტუცია სასამართლო დადგენილება ბრძანებულება მუხლი უფლება ხელშეკრულება მემკვიდრეობა ანდერძი განქორწინება ალიმენტი ადვოკატი იურისტი სარჩელი
   sites: matsne.gov.ge iuristi.ge legalaid.ge myadvokat.ge constcourt.ge supremecourt.ge court.ge
   trusted: law
 
@@ -133,7 +133,7 @@ labour:
 exams:
   ka: გამოცდები
   encyclopedia: false
-  words: გამოცდა ეროვნული_გამოცდები ერთიანი შეფასება ქულა აბიტურიენტი ჩარიცხვა გრანტი სტიპენდია
+  words: გამოცდა ეროვნული_გამოცდები ერთიანი შეფასება ქულა აბიტურიენტი ჩარიცხვა გრანტი სტიპენდია ტესტი სამაგისტრო ზოგადი_უნარები
   sites: naec.ge online.naec.ge mes.gov.ge emis.ge edu.aris.ge abituri.ge
   trusted: education
 
@@ -253,6 +253,12 @@ tv:
   words: ტელევიზია ეთერი ლაივი პირდაპირი_ეთერი არხი გადაცემა
   sites: 1tv.ge imedi.ge rustavi2.ge mtavari.tv formula.ge myvideo.ge
 
+books:
+  ka: წიგნები და ლიტერატურა
+  words: წიგნი რომანი მოთხრობა პოემა ლექსი ავტორი მწერალი პოეტი შინაარსი ანალიზი ტექსტი ნაწარმოები პერსონაჟი
+  sites: poetry.ge scribd.com ka.wikisource.org lib.ge nplg.gov.ge geolit.ge biblusi.ge sulakauri.ge palitral.ge
+  trusted: reference
+
 music:
   ka: მუსიკა
   words: სიმღერა მუსიკა ტექსტი აკორდი კლიპი ალბომი მომღერალი ჯგუფი
@@ -264,12 +270,6 @@ events:
   encyclopedia: false
   words: კონცერტი სპექტაკლი თეატრი გამოფენა ფესტივალი ბილეთები ღონისძიება
   sites: tkt.ge biletebi.ge culture.gov.ge rustavelitheatre.ge
-
-books:
-  ka: წიგნები და ლიტერატურა
-  words: წიგნი რომანი მოთხრობა პოემა ლექსი ავტორი მწერალი პოეტი შინაარსი ანალიზი
-  sites: poetry.ge scribd.com ka.wikisource.org lib.ge nplg.gov.ge geolit.ge biblusi.ge sulakauri.ge palitral.ge
-  trusted: reference
 
 history:
   ka: ისტორია

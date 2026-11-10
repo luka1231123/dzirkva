@@ -608,6 +608,9 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     lists.append(("passages", near))
     answer = wiki.article(content)
     wiki_hits = next(res for name, res in lists if name == "wikipedia")
+    if answer:  # the article the query names leads its list: word rank prefers short pages (თაყაიშვილები)
+        wiki_hits[:] = [{"url": answer["url"], "title": f"{answer['title']} · ვიკიპედია", "snippet": answer["text"],
+                         "engine": "wikipedia"}] + [h for h in wiki_hits if h["url"] != answer["url"]]
     articles = [answer["title"]] if answer else []
     articles += [t for _, t in filter(None, map(_wiki_page, [h["url"] for h in wiki_hits[:CITING_ARTICLES * m]]))]
     articles += [t for site, t in filter(None, map(_wiki_page, [p["url"] for p in near])) if site == "wikipedia"][

@@ -54,6 +54,15 @@ education:
   eqe.ge: 1
   teachers.gov.ge: 1
   mastsavlebeli.ge: 2         # teachers' portal: methods, subject articles
+  emis.ge: 1                  # school information system: grammar.emis.ge, textbooks in elfiles.emis.ge
+  finedu.gov.ge: 1            # National Bank: economics explained
+  georgianencyclopedia.ge: 1  # Georgian encyclopedia articles
+  edu.aris.ge: 2              # exam tests, answers, admission news
+  abituri.ge: 2               # exam tests by year, summaries of school texts
+  testebi.ge: 2               # past national exam tests
+  aura.ge: 2                  # school literature: texts by chapter, summaries, grammar lessons
+  doctrina.ge: 2              # school subjects explained
+  astronet.ge: 2              # astronomy and physics explained
 
 law:
   matsne.gov.ge: 1            # Legislative Herald: all laws
