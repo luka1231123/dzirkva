@@ -337,9 +337,13 @@ def _family_share(text: str, query_fams: list[set[str]]) -> float:
     return sum(bool(fs & text_fams) for fs in query_fams) / len(query_fams)
 
 
-def _trust(r: Result) -> float:
-    return max(TIER_BONUS.get(r.tier, 0.0), SMALL_BONUS if r.small else 0.0, CITED_BONUS if r.cited else 0.0,
-               NAMED_BONUS if r.named else 0.0, INTENT_BONUS if r.wanted else 0.0)
+def _trust(r: Result, cover: float = 1.0) -> float:
+    """Bonus for a good source (tier, small site, cited, made for the query's intent) × cover, the share of the topic
+    the page has: a good site's page off the topic gets none (ომის კანონი "Ohm's law": law pages on war). A site the
+    query names counts in full."""
+    good = max(TIER_BONUS.get(r.tier, 0.0), SMALL_BONUS if r.small else 0.0, CITED_BONUS if r.cited else 0.0,
+               INTENT_BONUS if r.wanted else 0.0)
+    return max(good * cover, NAMED_BONUS if r.named else 0.0)
 
 
 def _wiki_page(url: str) -> tuple[str, str] | None:
@@ -473,7 +477,7 @@ def rank_by_meaning(query: str, results: list[Result], content: list[str], qv, a
         low, high = MEANING_COVER
         cover = max(r.coverage, min((r.meaning - low) / (high - low), 1.0)) if r.snippet else r.coverage
         floor = COVERAGE_FLOOR if r.snippet else TITLE_ONLY_FLOOR
-        r.score = fused * (1 + _trust(r)) * (floor + (1 - floor) * cover)
+        r.score = fused * (1 + _trust(r, cover)) * (floor + (1 - floor) * cover)
         if shape and shape.search(r.snippet):
             r.score *= 1 + SHAPE_BONUS
         r.score *= 1 + CLICK_BONUS * min(r.clicks, CLICK_MAX)

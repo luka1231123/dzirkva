@@ -63,7 +63,11 @@ Plan for students: `plan.md` Session 9.
 ### Next steps, in order
 1. Done: fix 1 (punctuation). The student lists did not change; `რა არის ალიტერაცია?` now gives the same list as
    the query without `?`, and `"მერანი" ანალიზი` shows `მერანი - ანალიზი` at 3 (before: no result on the poem).
-2. Measure fix 2 (cut intents) with `versus.py`.
+2. Done another way: no intent was cut. The source bonus (tier, small site, cited, intent) now counts × the
+   page's topic cover (`search._trust`), so a law page for Ohm's law gets no lift. good@1 16 → 18, good@3 26,
+   quality 43% → 44%. Law pages left the top 5 of ომის კანონი and ნიუტონის მესამე კანონი; დისკრიმინაცია fell
+   from 1 to 4 for დისკრიმინანტის ფორმულა. Measured on the 107 known queries with an intent: 9 misfires
+   (law 4, driving 1, statistics 1, translation 1, banking 1, history 1).
 3. Build fix 3 (title parts as a source), measure; it should repair text and study queries.
 4. Plan Stage 1 (coverage) stays the biggest lever: of Google's 110 good results, 46 are on sites we crawl but the
    page is missing, 47 are on sites we do not have.
