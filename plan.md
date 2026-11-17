@@ -202,7 +202,8 @@ Stage 2: order for study needs
 - [ ] The same paper twice (dspace.tsu.ge): group by title
 - [ ] "რა არის X", "X რას ნიშნავს": encyclopedia and dictionary first, no service intent (ინფლაცია → statistics)
 - [ ] Work title + შინაარსი / ანალიზი / ტექსტი / პერსონაჟები: the work's article and its Wikisource text first
-- [ ] Vectors for crawl pages (HANDOFF accuracy 1): measure on the server run
+- [ ] Vectors for crawl pages: plan in HANDOFF.md (2.53M pages, about 9.5 h on the Mac GPU, 1 GB out and
+  5.4 GB back). Pilot on the student set first: like the server 10 / 23 / 42%, with vectors 18 / 26 / 44%
 - Tried, not kept: 1918-1921 as two numbers (the first-republic query lost its good@3)
 
 Stage 3: student features (after 60%)

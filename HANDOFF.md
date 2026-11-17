@@ -73,11 +73,47 @@ Plan for students: `plan.md` Session 9.
    Wikipedia, Wikisource and papers have a meaning score, so a Wikipedia article off the topic still wins
    (დისკრიმინაცია stays first on the server). The biggest lever for what visitors get is accuracy step 1 below:
    stored vectors for crawl pages, built on the Mac GPU.
-3. Build fix 3 (title parts as a source), measure; it should repair text and study queries.
-4. Plan Stage 1 (coverage) stays the biggest lever: of Google's 110 good results, 46 are on sites we crawl but the
+3. Stored vectors for crawl pages: pilot first, then the full build (plan below). The user approved the plan
+   on 2026-11-17; ask again before the 1 GB and 5.4 GB copies.
+4. Build fix 3 (title parts as a source), measure; it should repair text and study queries.
+5. Plan Stage 1 (coverage) stays the biggest lever: of Google's 110 good results, 46 are on sites we crawl but the
    page is missing, 47 are on sites we do not have.
-5. Second query set: 40 queries in `eval/odd.tsv` (query, use, need), Google collected by the user in Chrome.
+6. Second query set: 40 queries in `eval/odd.tsv` (query, use, need), Google collected by the user in Chrome.
    Telemetry has too few clean human queries for it (see plan.md Stage 0).
+
+### Plan: stored vectors for crawl pages (measured 2026-11-17)
+
+Why: on the server only Wikipedia, Wikisource and papers have a meaning score. Like the server (`MEANING_WEB=0`) the
+student set gives 10 / 23 / 42%; with a vector for every result (Mac) 18 / 26 / 44%. Crawl pages are 2/3 of the list.
+
+Measured: 2,533,767 live crawl pages on the server (sample of 3,000 ids, 96% live); title + first 600 characters =
+1,536 bytes per page, 380 compressed: export about 1 GB. BGE-M3 on the Mac GPU, fp16: 74 pages/s = about 9.5 h for
+all (4,096-page test, the GPU shared with another session). Vectors back: fp16 1024 = 2 KB per page, about 5.4 GB,
+about 25 min over the LAN. Server disk: 126 GB free. Server RAM: nothing more (40 indexed reads per search). The
+crawl grew 1.41M → 2.63M pages in 45 days: about 27k new pages a day.
+
+Design (one table, one lookup, no new rule in the ranking):
+- `data/page_vectors.db`: `v (url TEXT PRIMARY KEY, v BLOB)`; url = `search.canonical_url`, v = fp16 unit vector of
+  `passages.embed_text(title, text[:600])`, the same text shape as the Wikipedia passages.
+- `search.rank_by_meaning`: results in the top `MEANING_TOP` without a vector first read their stored page vector
+  by URL; only then `MEANING_WEB` computes new ones. About 10 lines. The Mac then ranks like the server.
+- `scripts/build_page_vectors.py`, three steps, resumable: `export` on the server (read-only, `nice -n 19`, rows with
+  id > the last exported id → `data/pages_export.tsv.zst`); `embed` on the Mac (foreground or nohup like
+  `build_passages.py`, no daemon); then rsync `page_vectors.db` to the server. Weekly after that: only new ids
+  (about 190k pages, 45 min on the GPU, about 400 MB back).
+
+Steps:
+1. Pilot (no big copy): vectors only for the crawl pages in the student set's candidate lists (about 2-3k pages,
+   from the Mac `crawl.db`, 1 min on the GPU). Run `versus.py` with `MEANING_WEB=0`; mark new results. Go on only if
+   good@1 rises from 10 toward 18.
+2. Export on the server, copy about 1 GB to the Mac (ask first: download budget).
+3. Embed on the Mac (about 9.5 h; at night). Copy about 5.4 GB to the server (ask first). Restart `dzirkva-web`.
+4. Live check: დისკრიმინანტის ფორმულა must not start with დისკრიმინაცია; student set on the server index.
+5. Later, only if needed: the same vectors for `bulk.db` pages (3.5M, about 13 h), and search by meaning over the
+   crawl (1-bit copy in RAM, about 324 MB: the server RAM is tight).
+
+Wait first: the session "Search bar customization tools" has uncommitted edits in `search.py`, `web.py`, `crawl.py`
+and others (search operators, `ops.py`). Start step 1 after it commits, so the two do not edit `search.py` at once.
 
 ### Questions for the user
 1. People reach dzirkva from Google on word and site pages, not by the search box. Should the next work make more
