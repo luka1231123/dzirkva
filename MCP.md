@@ -57,6 +57,11 @@ assistant the search → read → cite flow.
 | `site_profile` | `domain` | Indexed pages, Wikipedia citations, archived copies, repositories, linked and similar sites |
 | `read_passages` | Source `url`, `after_id` (default 0), `limit` (1–20, default 10) | Stored document passages, including extracted PDF text where available |
 
+`search_georgian` reads the same search tools as the website (`/tools`, `src/dzirkva/ops.py`): `"phrase"`, `!form`,
+`a/b`, `a+b`, `~word`, `prefix*`, `-word`, `#title`, `@site` / `@source`, `>year` / `<year`. The response adds
+`query_tools` (how each part was read) and `query_notes` (parts that could not be read). The server instructions
+carry the short rules (`ops.mcp_help`), so a client knows them without this file.
+
 All tools declare typed output schemas. The `dzirkva://indexes` resource lists available
 databases and their modification times. These timestamps describe the index files,
 including pending WAL writes; they are not source publication or crawl dates.

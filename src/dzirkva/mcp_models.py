@@ -53,6 +53,14 @@ class SearchFilters(BaseModel):
     domain: str | None
 
 
+class QueryTool(BaseModel):
+    """How one part of the query was read (search tools: "phrase", a/b, -word, @site …)."""
+    kind: str
+    sign: str
+    meaning: str
+    alternatives: list[str] = Field(default_factory=list)
+
+
 class RelatedQuery(BaseModel):
     query: str
     source: str
@@ -74,6 +82,8 @@ class SearchResponse(BaseModel):
     answer: Answer | None
     definition: Definition | None
     related_queries: list[RelatedQuery]
+    query_tools: list[QueryTool] = Field(default_factory=list)
+    query_notes: list[str] = Field(default_factory=list)
     index_hits: dict[str, int]
     seconds: dict[str, float]
     note: str

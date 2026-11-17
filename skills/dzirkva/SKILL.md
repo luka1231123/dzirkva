@@ -17,6 +17,31 @@ and does not translate. The MCP tools are read-only.
 - For a person, use the full Georgian name (`ილია ჭავჭავაძე`).
 - If the user writes in English, translate the key terms to Georgian yourself before you search.
 
+## Query tools (exact search)
+
+Plain words are broad: every word is required, in any form. Add signs when you need exact results.
+Signs only; never write AND, OR or site: (they are read as words).
+
+| Sign | Meaning | Example |
+|---|---|---|
+| `"…"` or `„…“` | exact phrase, these forms, this order | `"ილია ჭავჭავაძე"` |
+| `!word` | this word form only | `!ქართველთა` |
+| `a/b` | a or b; `/` joins one word or one `"phrase"` on each side | `ტყემალი/ბაჟე` |
+| `a+b` | both words within 10 words, any form | `ქვევრი+ღვინო` |
+| `~word` | the word or up to 5 words near in meaning | `~მასწავლებელი ხელფასი` |
+| `prefix*` | words that start with the prefix (3+ letters) | `ვეფხისტყაოს*` |
+| `-word`, `-"…"` | exclude, any form | `ჯაზი -ფესტივალი` |
+| `#word` | the word is in the title | `#ლექსი ბარათაშვილი` |
+| `@tsu.ge`, `@ფეისბუქი`, `-@…` | only / not this site | `სტიპენდია @tsu.ge` |
+| `@ვიკიპედია`, `@ხალხი`, `@სამეცნიერო`, `@ბიბლიოთეკა`, `@ძველივები`, `@ტექსტები` … | only this source kind | `ქუთაისი @ხალხი` |
+| `>2015`, `<2000` | dated 2016 or later / 1999 or earlier; undated results drop | `არჩევნები >2019` |
+
+- `ძველი ღვინო/ჭაჭა` = ძველი AND (ღვინო OR ჭაჭა). For a multi-word option, quote it: `"ძველი ღვინო"/ჭაჭა`.
+- `/` and `+` must touch both words, with no spaces: `ღვინო / ჭაჭა` and `24/7` are plain text.
+- A query longer than 12 words is read as pasted text, without tools.
+- Read `query_tools` (how each part was read) and `query_notes` (parts that could not be read) in the response.
+- Signs narrow the results. If a tool query returns little, drop one sign before you conclude that no source exists.
+
 ## Tool order
 
 1. `search_georgian` with `limit` 5 to 10. Read `read_as` (how dzirkva read the query) and

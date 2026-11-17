@@ -38,7 +38,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")  # before search/morph read their settings
 
 from dzirkva.georgian import normalize
-from dzirkva import (archive, clicks, crawl, dictionary, discover, iverieli, papers, passages, telemetry, wiki,
+from dzirkva import (archive, clicks, crawl, dictionary, discover, iverieli, ops, papers, passages, telemetry, wiki,
                      wordgraph)
 from dzirkva.meaning import idle as idle_model
 from dzirkva.morph import analyze, families
@@ -97,6 +97,7 @@ ROBOTS = f"""User-agent: *
 Disallow: /t?
 Disallow: /random
 Disallow: /words.json
+Disallow: /ops.json
 Disallow: /stats
 
 Sitemap: {SITE}/sitemap.xml
@@ -162,12 +163,13 @@ if(c)t("copy",1,c.dataset.r)});
 </script>"""
 
 # Colors are tokens: light by default, dark when the system asks for it.
-ICON_MAP = ("<svg width=18 height=14 viewBox='0 0 18 14' aria-hidden=true><g stroke=currentColor stroke-width=1.3 fill=none><path d='M9 7 3 2.5M9 7 3 11.5M9 7 15 2.5M9 7 15.5 9'/></g><g fill=currentColor><circle cx=9 cy=7 r=2.6/><circle cx=3 cy=2.5 r=1.6/><circle cx=3 cy=11.5 r=1.6/><circle cx=15 cy=2.5 r=1.6/><circle cx=15.5 cy=9 r=1.6/></g></svg>")  # three words around one: the word map
+ICON_MAP = ("<svg width=18 height=14 viewBox='0 0 18 14' aria-hidden=true><g stroke=currentColor stroke-width=1.3 fill=none><path d='M9 7 3 2.5M9 7 3 11.5M9 7 15 2.5M9 7 15.5 9'/></g><g fill=currentColor><circle cx=9 cy=7 r='2.6'/><circle cx=3 cy=2.5 r='1.6'/><circle cx=3 cy=11.5 r='1.6'/><circle cx=15 cy=2.5 r='1.6'/><circle cx=15.5 cy=9 r='1.6'/></g></svg>")  # three words around one: the word map
 
 CSS = """
 :root{--bg:#1b1714;--card:#241f1b;--ink:#f1e9df;--text:#d6ccc0;--muted:#9a8f83;--line:#352e28;
 --link:#eab676;--visited:#d1a2c4;--accent:#d9774b;--fb:#3a2c1f;
---ok-bg:#25331f;--ok:#a9cf8e;--old-bg:#3b2c1a;--old:#e2b87c;--rare-bg:#2f2638;--rare:#c7b3e6;color-scheme:dark}
+--ok-bg:#25331f;--ok:#a9cf8e;--old-bg:#3b2c1a;--old:#e2b87c;--rare-bg:#2f2638;--rare:#c7b3e6;
+--k-word:#d6ccc0;--k-phrase:#e2b87c;--k-or:#c7b3e6;--k-near:#8ec5e0;--k-minus:#ef9f9f;--k-site:#a9cf8e;color-scheme:dark}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:15.5px/1.6 "Noto Serif Georgian",Georgia,serif}
 a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline} a:visited{color:var(--visited)}
@@ -238,10 +240,56 @@ th{font-size:11px;color:var(--muted);text-align:left;font-weight:600;padding:2px
 .sess{font-size:12.5px;margin:10px 0;padding-top:8px;border-top:1px solid var(--line)} .sess div{margin:2px 0}
 .cite code{display:block;margin-top:6px;padding:8px 10px;background:var(--bg);border:1px solid var(--line);
  border-radius:8px;font:12.5px/1.6 "Noto Serif Georgian",Georgia,serif;color:var(--text);user-select:all}
+.tl{position:relative;flex:none} .tl summary{list-style:none;cursor:pointer;display:flex;align-items:center;height:100%;
+ padding:0 12px;border-radius:22px;color:var(--muted);box-shadow:inset 0 0 0 1px var(--line)} .tl summary::-webkit-details-marker{display:none}
+.tl summary:hover,.tl[open] summary{color:var(--ink);box-shadow:inset 0 0 0 1px var(--muted)}
+.tlp{position:absolute;right:0;top:calc(100% + 8px);z-index:9;width:min(92vw,460px);background:var(--card);border:1px solid var(--line);
+ border-radius:12px;padding:12px;box-shadow:0 10px 30px #0008}
+.tlp p{margin:0 0 8px;font-size:12px;color:var(--muted)} .tlg{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+.tlp button{flex:none;display:flex;gap:8px;align-items:baseline;text-align:left;background:var(--bg);color:var(--text);font-weight:400;
+ letter-spacing:0;font-size:13px;padding:6px 10px;border-radius:8px;box-shadow:inset 0 0 0 1px var(--line)}
+.tlp button:hover{box-shadow:inset 0 0 0 1px var(--muted)} .tlp button b,.oc b,.op-sign{font-family:ui-monospace,Menlo,monospace;font-weight:600}
+.tlp button b{min-width:2.2em;color:var(--accent)} .tlp a{display:block;margin-top:10px;font-size:12.5px}
+.ops{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:12px 0 4px;font-size:12.5px} .ops>.cap{font-size:11px;color:var(--text);margin-right:2px}
+.oc{display:inline-flex;align-items:center;gap:6px;border-radius:16px;padding:2px 4px 2px 10px;background:var(--card);
+ border:1px solid var(--line);border-left:3px solid var(--k);color:var(--ink)} .oc b{color:var(--k)}
+.oc .x,.alt .x{color:var(--muted);padding:0 6px;border-radius:10px} .oc .x:hover,.alt .x:hover{color:var(--ink);background:var(--line);text-decoration:none}
+.alt{display:inline-flex;align-items:center;border-radius:12px;padding:0 0 0 8px;background:var(--bg);color:var(--text)}
+.k-word{--k:var(--k-word)} .k-phrase,.k-exact{--k:var(--k-phrase)} .k-or,.k-alt{--k:var(--k-or)} .k-near,.k-prefix{--k:var(--k-near)}
+.k-minus{--k:var(--k-minus)} .k-site,.k-year{--k:var(--k-site)}
+.opn{font-size:12.5px;color:var(--k-minus);margin:4px 0} .ops .oph{color:var(--muted);font-size:12px;margin-left:4px}
+@media (max-width:520px){.tlp{right:auto;left:0} .tlg{grid-template-columns:1fr}}
 @media (max-width:520px){.r .t{font-size:17px} .ans,.blk,.dbg{padding:12px 14px;border-radius:10px}
  form{flex-wrap:wrap;min-width:100%} input{flex-basis:100%} button{flex:1}}
 """
 
+
+
+# The search tools panel next to the search bar (ops.py): a button puts its sign into the query. (before, after,
+# sign shown, name). Selected text gets wrapped (quotes) or marked (-, #, ~ …); without a selection the sign goes at
+# the cursor, with the cursor where the word goes.
+TOOL_BUTTONS = [('"', '"', "„ “", "ზუსტი ფრაზა"), ("!", "", "!", "მხოლოდ ეს ფორმა"), ("/", "", "/", "ერთ-ერთი"),
+                ("+", "", "+", "ახლოს"), ("~", "", "~", "მსგავსი სიტყვებიც"), ("", "*", "*", "ასე იწყება"),
+                ("-", "", "-", "გარდა"), ("#", "", "#", "სათაურში"), ("@", "", "@", "საიტი ან წყარო"),
+                (">", "", "> <", "წლის შემდეგ / მანამდე")]
+ICON_TOOLS = ("<svg width=18 height=14 viewBox='0 0 18 14' aria-hidden=true><g stroke=currentColor stroke-width=1.4 "
+              "stroke-linecap=round><path d='M1 3h16M1 11h16'/></g><g fill=currentColor><circle cx=6 cy=3 r='2.4'/>"
+              "<circle cx=12 cy=11 r='2.4'/></g></svg>")  # two sliders: tune the search
+TOOLS_SCRIPT = """<script>document.querySelectorAll('.tlp [data-b]').forEach(b=>b.onclick=()=>{
+const i=document.querySelector('header input[name=q]'),v=i.value,s=i.selectionStart??v.length,e=i.selectionEnd??s;
+let B=b.dataset.b,A=b.dataset.a;if(s==e&&B&&!'/+'.includes(B)&&s>0&&!/\\s/.test(v[s-1]))B=' '+B;
+i.value=v.slice(0,s)+B+v.slice(s,e)+A+v.slice(e);const c=s==e&&B&&A?s+B.length:s+B.length+(e-s)+A.length;
+i.focus();i.setSelectionRange(c,c)});
+document.addEventListener('click',e=>{const d=document.querySelector('.tl');if(d&&!d.contains(e.target))d.open=false})</script>"""
+
+
+def _tools_panel() -> str:
+    """The dropdown of search tools in the header (ops.py); the full rules are on /tools."""
+    buttons = "".join(f"<button type=button data-b='{escape(b)}' data-a='{escape(a)}'><b>{escape(sign)}</b>{escape(name)}</button>"
+                      for b, a, sign, name in TOOL_BUTTONS)
+    return (f"<details class=tl><summary title='ძიების ხელსაწყოები' aria-label='ძიების ხელსაწყოები'>{ICON_TOOLS}</summary>"
+            "<div class=tlp><p>მონიშნეთ სიტყვა შეკითხვაში და დააჭირეთ ღილაკს, ან ჩასვით ნიშანი კურსორთან.</p>"
+            f"<div class=tlg>{buttons}</div><a href=/tools>{cap('ყველა წესი და მაგალითი')} →</a></div></details>")
 
 
 def _page(q: str, body: str, refresh: int = 0, extra_css: str = "", script: str = "", robots: str = "",
@@ -259,10 +307,10 @@ def _page(q: str, body: str, refresh: int = 0, extra_css: str = "", script: str 
             "<link rel=preconnect href=https://fonts.googleapis.com><link rel=stylesheet href="
             "'https://fonts.googleapis.com/css2?family=Noto+Serif+Georgian:wght@400..600&display=swap'>"
             f"<style>{CSS}{extra_css}</style><header><div><a class=logo href=/>{cap('ძირკვა')}</a>"
-            f"<form action=/><input name=q value='{escape(q)}' autofocus><button>{cap('ძებნა')}</button>"
+            f"<form action=/><input name=q value='{escape(q)}' autofocus>{_tools_panel()}<button>{cap('ძებნა')}</button>"
             f"<button class=deep name=deep value=1 title='სამჯერ მეტი შედეგი, უფრო ნელა'>"
             f"{cap('ამოძირკვა')}</button></form><a class=nav href=/words>{ICON_MAP}{cap('სიტყვების რუკა')}</a></div></header>"
-            f"<main>{body}</main>" + (f"<script>{script}</script>" if script else ""))
+            f"<main>{body}</main>" + TOOLS_SCRIPT + (f"<script>{script}</script>" if script else ""))
 
 
 def _url(path: str) -> str:
@@ -282,7 +330,7 @@ def _social(title: str, description: str, canonical: str) -> str:
 @cache
 def _sitemap() -> str:
     """Start, about, discover, the word map, its index letters and its word pages (wordgraph.sitemap_words)."""
-    paths = ["/", "/about", "/discover", "/words"] + [f"/words?l={c}" for c in wordgraph.ALPHABET] + [
+    paths = ["/", "/about", "/tools", "/discover", "/words"] + [f"/words?l={c}" for c in wordgraph.ALPHABET] + [
         f"/words?w={w}" for w in wordgraph.sitemap_words()]
     return ("<?xml version='1.0' encoding='UTF-8'?><urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'>"
             + "".join(f"<url><loc>{escape(_url(p))}</loc></url>" for p in paths) + "</urlset>")
@@ -313,7 +361,7 @@ def _highlight(text: str, marks: dict[str, str]) -> tuple[str, list[str]]:
 
 def _marks(debug: dict) -> dict[str, str]:
     """Word family -> CSS class: query words yellow, feedback words blue."""
-    marks = {f: "q" for w in debug["content"] for f in families(w) | {w}}
+    marks = {f: "q" for w in debug["content"] for x in getattr(w, "words", [w]) for f in families(x) | {x}}
     for term in debug["feedback"]:
         for w in term.split():
             marks.update({f: "fb" for f in families(w) | {w}} if w not in marks else {})
@@ -391,8 +439,10 @@ def _out(url: str, where: str, **params) -> str:
 def _understood(q: str, debug: dict) -> str:
     """One line: how the query was read (spelling, Latin → Georgian, dictionary forms, question, extra words)."""
     parts = []
-    if debug["read_as"] != normalize(q) and not debug["spelling"]:  # Latin → Georgian; spelling has its own line
-        parts.append(f"<b>{escape(debug['read_as'])}</b> <span class=m>(დაწერილი: {escape(q)})</span>")
+    tools = debug.get("ops")
+    plain = tools.plain_text if tools and tools.active else q  # the tools line shows the rest
+    if debug["read_as"] != normalize(plain) and debug["read_as"] and not debug["spelling"]:  # Latin → Georgian; spelling has its own line
+        parts.append(f"<b>{escape(debug['read_as'])}</b> <span class=m>(დაწერილი: {escape(plain)})</span>")
     dropped = [w for w in debug["read_as"].split() if w not in debug["content"]]
     if dropped:
         parts.append(f"გამოტოვებული: {escape(' '.join(dropped))}")
@@ -401,6 +451,26 @@ def _understood(q: str, debug: dict) -> str:
     if debug["feedback"]:
         parts.append(f"დამატებითი სიტყვები: <mark class=fb>{escape(', '.join(debug['feedback']))}</mark>")
     return f"<p class=und><span class=cap>{cap('გავიგეთ')}</span> {' · '.join(parts)}</p>" if parts else ""
+
+
+def _tools_line(q: str, debug: dict, tab: str, chosen: set[str]) -> str:
+    """How the search tools in the query were read (ops.py): one chip per part, × removes it; red notes for parts
+    that could not be read. Nothing is read silently."""
+    tools = debug.get("ops")
+    if tools and tools.info:
+        return f"<p class=und>{escape(tools.info)} <a href=/tools>{cap('წესები')} →</a></p>"
+    if not tools or not tools.active:
+        return ""
+    deep = debug.get("deep", False)
+    x = lambda without: (f"<a class=x href='{_link(without, tab, chosen, 'tool', deep)}' title='მოშლა'>×</a>"
+                         if without else "")
+    chips = "".join(
+        f"<span class='oc k-{c.kind}'>" + (f"<b>{escape(c.sign)}</b>" if c.sign else "") + escape(c.label)
+        + "".join(f"<span class=alt>{escape(w)}{x(without)}</span>" for w, without in c.alts) + x(c.without) + "</span>"
+        for c in tools.chips)
+    return (f"<div class=ops><span class=cap>{cap('ასე წავიკითხეთ')}</span>{chips}"
+            f"<a class=oph href=/tools>{cap('წესები')} →</a></div>"
+            + "".join(f"<p class=opn>{escape(n)}</p>" for n in tools.notes))
 
 
 def _sources(results: list) -> str:
@@ -547,13 +617,17 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
         f"<a class={'on' if f in chosen else 'off'} href='{_link(q, tab, set() if f in chosen else {f}, 'filter', deep)}'>{cap(name)}"
         f" <span class=m>{sum(passes(r, {f}) for r in results)}</span></a>"
         for f, name in FILTERS.items()) + "</nav>"
+    tools = debug.get("ops")
+    with_tools = tools is not None and tools.active
     if debug["spelling"]:
-        fixed = " ".join(debug["spelling"].get(normalize(w), w) for w in query_words(q))
+        fixed = tools.with_fixes(debug["spelling"]) if with_tools else \
+            " ".join(debug["spelling"].get(normalize(w), w) for w in query_words(q))
         body += f"<p class=fix>ნაჩვენებია შედეგები: <b>{escape(fixed)}</b> <span class=m>(დაწერილი: {escape(q)})</span></p>"
     if debug.get("did_you_mean"):
-        maybe = " ".join(debug["did_you_mean"].get(normalize(w), w) for w in query_words(q))
+        maybe = tools.with_fixes(debug["did_you_mean"]) if with_tools else \
+            " ".join(debug["did_you_mean"].get(normalize(w), w) for w in query_words(q))
         body += f"<p class=fix>ხომ არ გულისხმობდით: <a href='{_link(maybe, 'all', set(), 'dym')}'><b>{escape(maybe)}</b></a></p>"
-    body += _egg(q, debug["read_as"]) + _understood(q, debug) + _sources(results)
+    body += _egg(q, debug["read_as"]) + _tools_line(q, debug, tab, chosen) + _understood(q, debug) + _sources(results)
     d = debug.get("definition")
     if d and tab == "all" and not chosen and (d["asked"] or not debug.get("answer")):
         body += _definition(d, q)
@@ -764,6 +838,12 @@ def home_page() -> str:
             + _block("როგორ დავწეროთ შეკითხვა",
                      "<ul class=list>" + "".join(f"<li>{escape(x)}</li>" for x in QUERY_TIPS) + "</ul>"
                      "<p>ამინდს, რუკას ან საყიდელს დიდ საძიებო სისტემებში უფრო სწრაფად იპოვით.</p>")
+            + _block("ძიების ხელსაწყოები",
+                     "<p>ნიშნებით ძიებას ზუსტად აწყობთ. ყოველ ნიშანს ერთი წესი აქვს, და შედეგების ზემოთ ჩანს, როგორ "
+                     "წაიკითხა ძირკვამ შეკითხვა. ნიშნები საძიებო ველის გვერდით ღილაკშიცაა.</p><div class=rel>"
+                     + "".join(f"<span class='oc k-{TOOLS_KIND[sign]}'><b>{escape(sign)}</b>{escape(name)}&nbsp;</span>"
+                               for sign, name, _, _ in ops.GUIDE)
+                     + f"</div><a class=go href=/tools>{cap('წესები და მაგალითები')} →</a>")
             + _block("როდის გამოვიყენოთ ამოძირკვა",
                      "<p>ამოძირკვა ჩვენი ინდექსებიდან სამჯერ მეტ შედეგს იღებს და სამჯერ მეტს "
                      "ადარებს შეკითხვას აზრით. ამას მეტი დრო სჭირდება, ამიტომ "
@@ -907,6 +987,107 @@ def about_page() -> str:
                         f"<a href='{escape(_out('https://opendatacommons.org/licenses/by/1-0/', 'about:license'))}'>ODC-By 1.0</a></p>"
                         if n["bulk"] else ""))
             + _block("რას ვინახავთ", "<ul class=list>" + "".join(f"<li>{escape(s)}</li>" for s in stored) + "</ul>")
+            + _foot())
+
+
+# ---- search tools: the explainer (/tools) ------------------------------------------
+
+TOOLS_CSS = """
+.anat{display:flex;flex-wrap:wrap;gap:6px;align-items:flex-end;padding:16px;margin:10px 0 6px;background:var(--bg);
+ border:1px solid var(--line);border-radius:14px;font-size:17px;line-height:1.5}
+.seg{display:flex;flex-direction:column;align-items:center;gap:6px}
+.seg span{padding:2px 8px;border-radius:8px;color:var(--ink);background:color-mix(in srgb,var(--k) 18%,transparent);
+ border-bottom:2px solid var(--k)} .seg i{font:600 11px/18px "Noto Serif Georgian",serif;font-style:normal;width:18px;
+ text-align:center;border-radius:50%;background:var(--k);color:var(--bg)}
+.legend{list-style:none;margin:8px 0;padding:0} .legend li{display:flex;gap:10px;align-items:baseline;margin:7px 0}
+.legend i{flex:none;font:600 11px/18px "Noto Serif Georgian",serif;font-style:normal;width:18px;text-align:center;
+ border-radius:50%;background:var(--k);color:var(--bg)} .legend code{color:var(--ink);font:inherit;font-weight:600}
+.flow{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0}
+.lane{background:var(--bg);border:1px solid var(--line);border-top:3px solid var(--k);border-radius:10px;padding:10px 12px}
+.lane h4{margin:0 0 4px;font-size:12.5px;letter-spacing:.04em;color:var(--ink)} .lane .op-sign{color:var(--k);font-size:15px}
+.lane p{margin:6px 0 0;font-size:13px;line-height:1.55}
+.arrow{text-align:center;color:var(--muted);font-size:18px;line-height:1;margin:4px 0}
+.box{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:13.5px;text-align:center}
+.box b{color:var(--ink)}
+.play{display:flex;gap:8px;align-items:center;margin:8px 0}
+#read{min-height:34px}
+.ref{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:10px}
+.card{background:var(--bg);border:1px solid var(--line);border-left:3px solid var(--k);border-radius:10px;padding:10px 12px}
+.card .op-sign{font-size:20px;color:var(--k);margin-right:8px} .card h4{display:flex;align-items:baseline;margin:0;
+ font-size:13px;letter-spacing:.04em;color:var(--ink)} .card p{margin:6px 0;font-size:13.5px;line-height:1.55}
+.card a{font-size:14px}
+@media (max-width:620px){.flow,.ref{grid-template-columns:1fr}}
+"""
+# the anatomy of one query: (part as typed, chip kind, what it does)
+TOOLS_ANATOMY = [
+    ("„ძველი ღვინო“/ჭაჭა", "or", "ფრაზა „ძველი ღვინო“ ზუსტად ასე, ან სიტყვა ჭაჭა ნებისმიერი ფორმით (ჭაჭის, ჭაჭას …)."),
+    ("ქვევრი", "word", "სიტყვა ნიშნის გარეშე: სავალდებულოა, ნებისმიერი ფორმით (ქვევრში, ქვევრების …)."),
+    ("-ლუდი", "minus", "შედეგებში ლუდი არცერთი ფორმით არ არის."),
+    ("@ხალხი", "site", "მხოლოდ ბლოგები, ფორუმები და პირადი გვერდები."),
+    (">2015", "year", "მხოლოდ 2016 წლის და უფრო ახალი გვერდები."),
+]
+TOOLS_KIND = {'"…"': "phrase", "!": "phrase", "/": "or", "+": "near", "~": "or", "*": "near", "-": "minus",
+              "#": "word", "@": "site", ">  <": "year"}
+TOOLS_SCRIPT_PAGE = """
+const box=document.getElementById('try'),out=document.getElementById('read'),go=document.getElementById('go');let t;
+const esc=s=>s.replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+function show(){fetch('/ops.json?q='+encodeURIComponent(box.value)).then(r=>r.json()).then(d=>{
+out.innerHTML=(d.chips.length?d.chips.map(c=>`<span class='oc k-${c.kind}'>${c.sign?`<b>${esc(c.sign)}</b>`:''}${esc(c.label)}`
++c.alts.map(a=>`<span class=alt>${esc(a)}</span>`).join('')+'</span>').join(' '):
+`<span class=m>${box.value.trim()?'ნიშნები არ არის: ჩვეულებრივი ძიება, ყველა სიტყვა ყველა ფორმით.':'დაწერეთ შეკითხვა ნიშნებით.'}</span>`)
++d.notes.map(n=>`<p class=opn>${esc(n)}</p>`).join('');go.href='/?q='+encodeURIComponent(box.value)+'&from=tools'})}
+box.addEventListener('input',()=>{clearTimeout(t);t=setTimeout(show,180)});show();
+"""
+
+
+def tools_page() -> str:
+    """The search tools (ops.py): one query taken apart, what happens to each kind of sign, a live reader, every sign
+    with its rule and an example, the rules that leave nothing to guessing."""
+    anatomy = "".join(f"<div class='seg k-{k}'><span>{escape(part)}</span><i>{n}</i></div>"
+                      for n, (part, k, _) in enumerate(TOOLS_ANATOMY, 1))
+    legend = "".join(f"<li class=k-{k}><i>{n}</i><span><code>{escape(part)}</code> {escape(text)}</span></li>"
+                     for n, (part, k, text) in enumerate(TOOLS_ANATOMY, 1))
+    example = " ".join(p for p, _, _ in TOOLS_ANATOMY)
+    lanes = [
+        ("phrase", "„ “ ! / + ~ *", "ვეძებთ",
+         "სიტყვები, ფრაზები და ჯგუფები ყველა ინდექსში ერთად მიდის: ვიკიპედია, ვიკიწყარო, ჩვენი ქრაული, ტექსტების "
+         "კრებული, ძველი ვები, ივერიელი და სამეცნიერო ჟურნალები."),
+        ("minus", "-", "ვაშორებთ",
+         "გამორიცხული სიტყვა ინდექსებს ეუბნება, რომ ასეთი გვერდი საერთოდ არ მოიტანონ. ამონარიდშიც ვამოწმებთ."),
+        ("site", "@ # > <", "ვფილტრავთ",
+         "საიტი, წყარო, სათაური და წელი ბოლო სიას ფილტრავს: რაც წესს არ ერგება, ქრება. ახალს არაფერს ამატებს."),
+    ]
+    flow = (f"<div class=box>{cap('შეკითხვა')}: <b>{escape(example)}</b></div><div class=arrow>↓</div>"
+            "<div class=flow>" + "".join(
+                f"<div class='lane k-{k}'><h4>{cap(name)} <span class=op-sign>{escape(signs)}</span></h4><p>{escape(text)}</p></div>"
+                for k, signs, name, text in lanes)
+            + "</div><div class=arrow>↓</div><div class=box>შედეგები ჩვეულებრივად ლაგდება: აზრით, წყაროს სანდოობით და "
+              "იმით, ადამიანმა დაწერა თუ არა. ნიშნებიან შეკითხვაზე ძირკვა ინდექსებიდან <b>სამჯერ მეტ</b> კანდიდატს იღებს, "
+              "რადგან ფილტრები ბევრს აშორებს.</div>")
+    cards = "".join(
+        f"<div class='card k-{TOOLS_KIND[sign]}'><h4><span class=op-sign>{escape(sign)}</span>{cap(name)}</h4>"
+        f"<p>{escape(rule)}</p><a href='{_link(ex, 'all', set(), 'tools')}'>{escape(ex)}</a></div>"
+        for sign, name, rule, ex in ops.GUIDE)
+    sources = ", ".join(f"@{name}" for name in ops.SOURCES)
+    return (f"<div class='ans hero'><div class=cap>{cap('ძიების ხელსაწყოები')}</div>"
+            "<span class=t>უთხარით ძირკვას ზუსტად, რას ეძებთ</span>"
+            "<p class=lead>ჩვეულებრივ ძირკვა ყველა სიტყვას ყველა ფორმით ეძებს. ნიშნებით შეგიძლიათ თქვათ, რომ გინდათ "
+            "ზუსტი ფრაზა, ერთ-ერთი სიტყვა, სიტყვა სათაურში, ერთი საიტი ან წყარო, წელი, ან რომ რომელიმე სიტყვა არ "
+            "გინდათ. ყოველ ნიშანს ერთი წესი აქვს, და შედეგების ზემოთ ჩანს, როგორ წაიკითხა ძირკვამ შეკითხვა.</p>"
+            "<p class=lead>ნიშნები საძიებო ველის გვერდით ღილაკშიცაა: მონიშნეთ სიტყვა და დააჭირეთ.</p></div>"
+            + _block("ერთი შეკითხვა ნაწილებად", f"<div class=anat>{anatomy}</div><ul class=legend>{legend}</ul>"
+                     f"<a class=go href='{_link(example, 'all', set(), 'tools')}'>{cap('ეს ძიება')} →</a>")
+            + _block("რა ემართება ყოველ ნიშანს", flow)
+            + _block("სცადეთ", "<p>დაწერეთ შეკითხვა და ნახავთ, როგორ წაიკითხავს მას ძირკვა.</p>"
+                     f"<div class=play><input id=try value='{escape(example)}' aria-label='შეკითხვა'>"
+                     f"<a class=go id=go href=/>{cap('ძებნა')} →</a></div><div id=read class=ops></div>")
+            + _block("ყველა ნიშანი", f"<div class=ref>{cards}</div>"
+                     f"<p class=m>წყაროები @-ით: {escape(sources)}. საიტი: მისამართით (@tsu.ge) ან სახელით (@ფეისბუქი).</p>")
+            + _block("წესები, რომ არაფერი გამოსაცნობი არ დარჩეს",
+                     "<ol class=steps>" + "".join(f"<li>{escape(r)}</li>" for r in ops.RULES) + "</ol>")
+            + _block("AI ასისტენტებისთვის",
+                     "<p>ძირკვის MCP სერვერი (mcp.dzirkva.ge) იგივე ნიშნებს იგებს. ასისტენტი პასუხში ხედავს, "
+                     "როგორ წაიკითხა ძირკვამ შეკითხვა და რა ვერ წაიკითხა, ამიტომ ზუსტ ძიებას თვითონაც აწყობს.</p>")
             + _foot())
 
 
@@ -1207,6 +1388,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(_page("", body, extra_css=wordgraph.CSS, script=wordgraph.script(data) if data else "",
                                     title=meta["title"], description=meta.get("description", ""),
                                     canonical=meta.get("canonical", ""), robots="" if meta["index"] else "noindex"))
+        if route == "/tools":
+            self._log("tools")
+            return self._send(_page("", tools_page(), extra_css=TOOLS_CSS, script=TOOLS_SCRIPT_PAGE,
+                                    title="ძიების ხელსაწყოები", canonical="/tools",
+                                    description="ძირკვის ძიების ნიშნები: ზუსტი ფრაზა, ერთ-ერთი სიტყვა, გამორიცხვა, "
+                                                "საიტი, წყარო, სათაური და წელი. ყოველ ნიშანს ერთი წესი აქვს."))
+        if route == "/ops.json":  # the live reader of /tools
+            tools = ops.parse(p("q")[:300])
+            data = {"chips": [{"kind": c.kind, "sign": c.sign, "label": c.label, "alts": [w for w, _ in c.alts]}
+                              for c in tools.chips if tools.active], "notes": tools.notes}
+            return self._send(json.dumps(data, ensure_ascii=False), content_type="application/json")
         if route == "/about":
             self._log("about")
             return self._send(_page("", about_page(), description=DESCRIPTION, canonical="/about"))
@@ -1255,6 +1447,7 @@ class Handler(BaseHTTPRequestHandler):
                   fixed=bool(debug["spelling"]), dym=bool(debug.get("did_you_mean")), answer=bool(debug.get("answer")),
                   definition=bool(debug.get("definition")), feedback=bool(debug["feedback"]),
                   papers=any("papers" in r.queries for r in top), top=[_host(r.url) for r in top],
+                  tools=[c.kind for c in debug["ops"].chips if c.kind != "word"] if debug.get("ops") else [],
                   **{"from": src})
         self._send(_page(q, body, robots=NO_INDEX))
 

@@ -33,6 +33,7 @@ ALT_MAX = 5          # ~ : words near in meaning added
 ALT_SIM = 0.7        # ~ : word2vec similarity at least (ღვინო → ლუდი 0.79, ჭაჭა 0.79, ყურძენი 0.68)
 ALT_MIN_FREQ = 20    # ~ : neighbours rarer than this are mostly typos (მასწავლებლი)
 PREFIX_MIN = 3       # * : letters before the star at least (ქა* would read half the index)
+PASTE_WORDS = 12     # a longer query is pasted text: its quotes and dashes are not tools
 OPEN, CLOSE = "\"„“«", "\"“”»"
 PREFIXES = "-!~#@<>"
 TOKEN = re.compile(r"\s+|[/+]|[" + re.escape(OPEN) + r"]|[^\s/+" + re.escape(OPEN) + r"]+")
@@ -164,6 +165,11 @@ class Term(str):
     def words(self) -> list[str]:
         return [w for a in self.atoms for w in a.text.split()]
 
+    @property
+    def meaning(self) -> list[str]:
+        """Words for the meaning model: ~ღვინო is ღვინო (its neighbours would pull the query toward ლუდი)."""
+        return self.atoms[0].text.split() if getattr(self, "alts", False) else self.words
+
 
 def text_parts(text: str) -> tuple[list[str], set[str], str]:
     """(tokens, their word families, tokens joined with spaces around) of a text, for Term.found."""
@@ -197,6 +203,7 @@ class Query:
     before: int | None = None
     chips: list[Chip] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    info: str = ""  # a long query read without tools: said on the page, changes nothing
 
     @property
     def active(self) -> bool:
@@ -211,7 +218,7 @@ class Query:
     @property
     def text(self) -> str:
         """The query for the meaning model and the question type: plain words and the words of the terms."""
-        return " ".join([self.plain_text] + [" ".join(t.words) for t in self.terms]).strip()
+        return " ".join([self.plain_text] + [" ".join(t.meaning) for t in self.terms]).strip()
 
     @property
     def tail(self) -> str:
@@ -286,7 +293,10 @@ def _lex(query: str) -> list[tuple[str, str, int, int]]:
         if c.isspace():
             i += 1
         elif c in "/+":
-            out.append(("slash" if c == "/" else "plus", c, i, i + 1))
+            # a sign only between two words it touches: ბურჯანაძე / Burjanadze, 24/7, UTC+11 stay plain text
+            before, after = query[i - 1:i], query[i + 1:i + 2]
+            if before and after and not (before.isspace() or after.isspace() or before.isdigit() or after.isdigit()):
+                out.append(("slash" if c == "/" else "plus", c, i, i + 1))
             i += 1
         elif c in OPEN:
             close = CLOSE[OPEN.index(c)]
@@ -322,6 +332,11 @@ def _site_name(name: str) -> str | None:
 
 def parse(query: str) -> Query:
     q = Query(query)
+    if len(query.split()) > PASTE_WORDS:
+        q.plain = [(m.start(), m.end(), m[0]) for m in re.finditer(r"\S+", query)]
+        if re.search(r"[\"„“«/+~*#@<>!]|(^|\s)-\w", query):
+            q.info = f"შეკითხვაში {PASTE_WORDS} სიტყვაზე მეტია: ჩასმულ ტექსტად წავიკითხეთ, ნიშნების გარეშე."
+        return q
     items = _lex(query)
     if any(k == "open" for k, *_ in items):
         q.notes.append("ბრჭყალი არ დაიხურა: ფრაზად წავიკითხეთ ბოლომდე.")
@@ -402,10 +417,10 @@ def parse(query: str) -> Query:
                 minus, title = "-" in sign, "#" in sign
             elif "-" in sign or "#" in sign:
                 q.notes.append(f"«{text}»: «-» და «#» ჯგუფის დასაწყისში იწერება, მთელ ჯგუფზე.")
+            if sign == "-" and body[:1].isdigit():  # -5 გრადუსი: a number, not an excluded word
+                sign, minus = "", False
             words = [_word(w) for w in WORD.findall(body)]
-            if not words:
-                if sign:  # punctuation alone (a lone ?) stays silent, as before
-                    q.notes.append(f"«{text}»: ნიშნის შემდეგ სიტყვა არ არის.")
+            if not words:  # a sign alone is punctuation (Nobody Else - The Movie), as before
                 continue
             w = " ".join(words)
             if body.endswith("*"):
@@ -436,9 +451,20 @@ def parse(query: str) -> Query:
             if minus:
                 text = text.lstrip("-")
             term = Term(text, atoms, join, title, minus)
+            term.alts = alts_of is not None
             (q.minus if minus else q.terms).append(term)
             q.chips.append(_chip(term, without(start, end), alts_of,
                                  lambda put: without(start, end, put)))
+    # ~ never brings back what - takes away: ~ღვინო -ლუდი has no ლუდი
+    gone = {f for t in q.minus for w in t.words for f in families(w) | {w}}
+    for i, t in enumerate(q.terms):
+        if getattr(t, "alts", False) and gone:
+            keep = [a for a in t.atoms[1:] if not (families(a.text) | {a.text}) & gone]
+            if len(keep) < len(t.atoms) - 1:
+                q.terms[i] = nt = Term(str(t), [t.atoms[0], *keep], t.join, t.title, t.minus)
+                nt.alts = True
+                chip = next(c for c in q.chips if c.kind == "alt" and c.label.startswith(t.atoms[0].text + " "))
+                chip.alts = [(w, without) for w, without in chip.alts if w in {a.text for a in keep}]
     if q.active and not (q.plain or q.terms):
         q.notes.append("საძიებო სიტყვა არ არის: დაწერეთ მინიმუმ ერთი სიტყვა ნიშნის გარეშე ან ფრაზა.")
     if q.active:  # plain words are chips too, so the whole reading is on the page
@@ -470,8 +496,9 @@ def _chip(term: Term, without: str, alts_of, rewrite) -> Chip:
 
 GUIDE = [  # (sign, name, rule, example)
     ('"…"', "ზუსტი ფრაზა", "ეს სიტყვები, ამ რიგით და ამ ფორმით. „…“ და «…» ბრჭყალებიც მუშაობს.", '"ილია ჭავჭავაძე"'),
-    ("!", "მხოლოდ ეს ფორმა", "სიტყვის სხვა ფორმებს არ ეძებს: !ღვინოს არ პოულობს ღვინოს გარდა სხვას.", "!ქართველთა"),
-    ("/", "ერთ-ერთი", "აერთებს ერთ სიტყვას ან ფრაზას თითო მხარეს. მეტი სიტყვისთვის გამოიყენეთ ბრჭყალები.",
+    ("!", "მხოლოდ ეს ფორმა", "სიტყვის სხვა ფორმებს არ ეძებს: !ღვინოს პოულობს მხოლოდ „ღვინოს“, არა „ღვინო“ ან „ღვინის“.", "!ქართველთა"),
+    ("/", "ერთ-ერთი", "აერთებს ერთ სიტყვას ან ფრაზას თითო მხარეს, ჰარის გარეშე. მეტი სიტყვისთვის "
+                      "გამოიყენეთ ბრჭყალები.",
      "ტყემალი/ბაჟე"),
     ("+", "ახლოს", f"ორივე სიტყვა, ნებისმიერი ფორმით, ერთმანეთიდან მაქსიმუმ {NEAR} სიტყვის მანძილზე.", "ქვევრი+ღვინო"),
     ("~", "მსგავსი", f"სიტყვა ან მასთან მნიშვნელობით ახლო სიტყვა (მაქსიმუმ {ALT_MAX}, სიტყვების რუკიდან). "
@@ -486,11 +513,14 @@ GUIDE = [  # (sign, name, rule, example)
 ]
 RULES = [
     "ნიშნის გარეშე სიტყვა სავალდებულოა და ნებისმიერი ფორმით მოიძებნება, როგორც ყოველთვის.",
-    "«/» და «+» აერთებს ზუსტად ერთ სიტყვას ან ბრჭყალებში ჩასმულ ფრაზას თითო მხარეს. ჰარი მათ გარშემო მნიშვნელობას არ ცვლის.",
+    "«/» და «+» აერთებს ზუსტად ერთ სიტყვას ან ბრჭყალებში ჩასმულ ფრაზას თითო მხარეს და ორივეს უნდა ეხებოდეს, "
+    "ჰარის გარეშე: ღვინო/ჭაჭა. ჰარით (ღვინო / ჭაჭა) ან ციფრებთან (24/7) ის ჩვეულებრივი სასვენი ნიშანია.",
     "ძველი ღვინო/ჭაჭა ნიშნავს: ძველი და (ღვინო ან ჭაჭა). „ძველი ღვინო“/ჭაჭა ნიშნავს: ფრაზა ან ჭაჭა.",
     "«/» და «+» ერთ ჯგუფში ერთად არ იწერება.",
     "«-» და «#» ჯგუფის დასაწყისში დგას და მთელ ჯგუფს ეხება: -ღვინო/ჭაჭა აშორებს ორივეს.",
     "«-», «@», «#» და წელი მხოლოდ აშორებს შედეგებს, ახალს არ ამატებს.",
+    "მარტო მდგარი ნიშანი (ტირე ჰარებს შორის) და -5 მსგავსი რიცხვი ჩვეულებრივი ტექსტია.",
+    f"{PASTE_WORDS} სიტყვაზე გრძელი შეკითხვა ჩასმული ტექსტია: მასში ნიშნები არ იკითხება, და ეს შედეგების ზემოთ ჩანს.",
     "რასაც ვერ წავიკითხავთ, წითლად ჩანს შედეგების ზემოთ. ჩუმად არაფერი იკარგება.",
 ]
 SOURCE_HELP = "@" + ", @".join(SOURCES)
@@ -501,8 +531,10 @@ def mcp_help() -> str:
     return (
         "Query tools (symbols only; no AND/OR words; every plain word is required and matches any form): "
         '"phrase" = exact words in order (also „…“); !word = this form only; a/b = a or b (/ joins one word or '
-        '"phrase" on each side); a+b = both words within 10 words, any form; ~word = word or up to 5 words near in '
+        '"phrase" on each side and must touch both, no spaces: "a / b" and 24/7 are plain text); a+b = both words '
+        'within 10 words, any form; ~word = word or up to 5 words near in '
         "meaning; prefix* = words starting with prefix (3+ letters); -word or -\"phrase\" = exclude; #word = in the "
         "title; @domain.ge or @site-name = only that site, -@ = not that site; " + SOURCE_HELP + " = only that "
         "source kind; >2015 = dated 2016 or later, <2000 = dated 1999 or earlier (undated results are dropped). "
+        f"Queries longer than {PASTE_WORDS} words are pasted text: no tools. "
         "The response field query_tools shows how each part was read and query_notes what could not be read.")
