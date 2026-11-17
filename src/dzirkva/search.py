@@ -109,7 +109,8 @@ TYPO_RATIO = 20         # … unless the fix is 20× more common with them (as t
 COUNT_MAX = 1000        # pages counted at most for that test
 POOL = ThreadPoolExecutor(8, "index")  # round 1: one thread per index database
 DEEP = 3                # deep search (button): × local results and results read by meaning
-TRACKING = re.compile(r"^(utm_|fbclid|gclid|yclid|mc_|ref$|ref_|locale$)")  # locale: DSpace UI language, same record
+TRACKING = re.compile(r"^(utm_|fbclid|gclid|yclid|mc_|ref$|ref_|locale$)")
+WORD = re.compile(r"\w+(?:-\w+)*")  # a query word: ? , . " „ “ ( ) left out; ვაჟა-ფშაველა and 1918-1921 stay one word  # locale: DSpace UI language, same record
 
 
 @dataclass
@@ -146,6 +147,11 @@ class Result:
 
 def is_stop(word: str) -> bool:
     return word in STOPWORDS or any(word.endswith(c) and word[: -len(c)] in STOPWORDS for c in CLITICS)
+
+
+def query_words(query: str) -> list[str]:
+    """The words of a query without punctuation: ალიტერაცია? was a word no page has, so every result had coverage 0."""
+    return WORD.findall(query) or query.split()
 
 
 def _fix_word(word: str) -> str:
@@ -250,11 +256,12 @@ def _on(url: str, hosts: set[str]) -> bool:
 def understand(query: str) -> tuple[list[str], list[str], dict[str, str], list[tuple[str, float, str]]]:
     """All words (Latin letters turned into Georgian), the content words, the spelling fixes to check
     (confirm_fixes), and the sites the query names."""
-    typed = [_fix_word(w) for w in query.split()]
+    parts = query_words(query)
+    typed = [_fix_word(w) for w in parts]
     content = [w for w in typed if not is_stop(w)] or typed
     fixes = spelling_fixes(content)
     fixed = [fixes.get(w, w) for w in content]
-    return typed, content, fixes, named_sites(query.split(), fixed, [_lemma(w) for w in fixed])
+    return typed, content, fixes, named_sites(parts, fixed, [_lemma(w) for w in fixed])
 
 
 def confirm_fixes(fixes: dict[str, str], content: list[str]) -> tuple[dict[str, str], dict[str, str]]:
@@ -396,7 +403,7 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[st
 
 def question_type(query: str) -> str | None:
     """why / how / when / amount from the question word, clitics removed (რამდენია = რამდენი + ა)."""
-    for w in map(normalize, query.split()):
+    for w in map(normalize, query_words(query)):
         for t, (qwords, _) in SHAPES.items():
             if any(w == q or w in (q + c for c in CLITICS) for q in qwords.split()):
                 return t

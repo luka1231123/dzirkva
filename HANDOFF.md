@@ -34,7 +34,7 @@ Plan for students: `plan.md` Session 9.
   (რა არის ფოტოსინთეზი gave Armenian blogs). Collect set 2 in the user's own Chrome (about 10 minutes).
 
 ### Failures seen on 26 new school queries (Mac index, judged by Claude, not blind)
-1. **Punctuation breaks every query (confirmed bug).** `understand` splits on spaces, so `ალიტერაცია?` and
+1. **Punctuation broke every query (fixed 2026-11-17, `search.query_words`).** `understand` splits on spaces, so `ალიტერაცია?` and
    `"მერანი"` keep the mark. Coverage of every result becomes 0.0 (`coverage('ალიტერაცია არის …',
    ['ალიტერაცია?'])` = 0.0, without `?` = 1.0). Fix: words by `re.findall(r"\w+", query)` in `understand` and
    `question_type`. The student set has no punctuation, so the score cannot show this fix.
@@ -56,7 +56,8 @@ Plan for students: `plan.md` Session 9.
    დისკრიმინანტის ფორმულა puts the article დისკრიმინაცია first with coverage 0: check the word family in morph.
 
 ### Next steps, in order
-1. Fix 1 (punctuation): about 3 lines, no eval change expected; check by hand with `?` and quotes.
+1. Done: fix 1 (punctuation). The student lists did not change; `რა არის ალიტერაცია?` now gives the same list as
+   the query without `?`, and `"მერანი" ანალიზი` shows `მერანი - ანალიზი` at 3 (before: no result on the poem).
 2. Measure fix 2 (cut intents) with `versus.py`.
 3. Build fix 3 (title parts as a source), measure; it should repair text and study queries.
 4. Plan Stage 1 (coverage) stays the biggest lever: of Google's 110 good results, 46 are on sites we crawl but the

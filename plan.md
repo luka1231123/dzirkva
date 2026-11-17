@@ -174,7 +174,8 @@ Stage 0: a check we can trust
 - [ ] Second set: 40 typed queries of people from `telemetry.db`, never used for tuning
   (2026-11-16: too few: 20 human searches since the gate page, 91 before the scrapers, many slang. Use real
   queries where they exist, add new ones by need; `SET=odd versus.py`, Google collected in a normal Chrome)
-- [ ] Query words with punctuation (`ალიტერაცია?`, `"მერანი"`) get coverage 0 on every result: split on `\w+`
+- [x] Query words with punctuation (`ალიტერაცია?`, `"მერანი"`) got coverage 0 on every result: `search.query_words`
+  drops the marks (hyphenated words stay one word); the student lists did not change
 
 Stage 1: the study pages (93 of 110 misses)
 - [ ] Deploy the new education sources (`config/sources.yaml`) and crawl deep (`crawl_sites.py 10000`): aura.ge,

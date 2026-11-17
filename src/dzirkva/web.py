@@ -43,7 +43,8 @@ from dzirkva import (archive, clicks, crawl, dictionary, discover, iverieli, pap
 from dzirkva.meaning import idle as idle_model
 from dzirkva.morph import analyze, families
 from dzirkva.georgian import KEEP_RATIO
-from dzirkva.search import COPY_SIMILARITY, MIN_GEORGIAN, ROUND1_GOOD, people_sites, canonical_url, intents, search
+from dzirkva.search import (COPY_SIMILARITY, MIN_GEORGIAN, ROUND1_GOOD, people_sites, canonical_url, intents,
+                            query_words, search)
 from dzirkva.sources import sources
 
 TABS = {"all": "ყველა", "video": "ვიდეო", "news": "სიახლეები"}
@@ -547,10 +548,10 @@ def render(q: str, tab: str, chosen: set[str], qs: dict[str, str], results: list
         f" <span class=m>{sum(passes(r, {f}) for r in results)}</span></a>"
         for f, name in FILTERS.items()) + "</nav>"
     if debug["spelling"]:
-        fixed = " ".join(debug["spelling"].get(normalize(w), w) for w in q.split())
+        fixed = " ".join(debug["spelling"].get(normalize(w), w) for w in query_words(q))
         body += f"<p class=fix>ნაჩვენებია შედეგები: <b>{escape(fixed)}</b> <span class=m>(დაწერილი: {escape(q)})</span></p>"
     if debug.get("did_you_mean"):
-        maybe = " ".join(debug["did_you_mean"].get(normalize(w), w) for w in q.split())
+        maybe = " ".join(debug["did_you_mean"].get(normalize(w), w) for w in query_words(q))
         body += f"<p class=fix>ხომ არ გულისხმობდით: <a href='{_link(maybe, 'all', set(), 'dym')}'><b>{escape(maybe)}</b></a></p>"
     body += _egg(q, debug["read_as"]) + _understood(q, debug) + _sources(results)
     d = debug.get("definition")
