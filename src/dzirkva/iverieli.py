@@ -11,7 +11,7 @@ from functools import cache
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from dzirkva.wiki import any_form
+from dzirkva.wiki import match
 
 DB = Path(__file__).resolve().parents[2] / "data" / "iverieli.db"
 BASE = "https://dspace.nplg.gov.ge"
@@ -62,7 +62,7 @@ def search(words: list[str], limit: int = 10) -> list[dict]:
     db = _db()
     if db is None or not words:
         return []
-    expr = " AND ".join(any_form(w) for w in words)
+    expr = match(words)
     rows = db.execute(
         "SELECT handle, title, creator, description, year, type, publisher FROM items WHERE items MATCH ? "
         "ORDER BY bm25(items, 0, 10, 3, 3, 1, 0, 0, 1) LIMIT ?", (expr, limit * 20)).fetchall()

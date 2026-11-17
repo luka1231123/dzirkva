@@ -82,11 +82,11 @@ def search(words: list[str], limit: int = 20) -> list[dict]:
     db = _db()
     if db is None or not words or limit <= 0:
         return []
-    from dzirkva.wiki import any_form
+    from dzirkva.wiki import match
 
     rows = []
     for op in (" AND ", " OR "):
-        expr = op.join(any_form(w) for w in words)
+        expr = match(words, op)
         # Native FTS rank supplies top rowids before loading their metadata/body snippets.
         rows = db.execute("WITH hits AS MATERIALIZED (SELECT rowid,rank AS score,snippet(docs_fts,1,'','','…',35) AS preview "
                           "FROM docs_fts WHERE docs_fts MATCH ? ORDER BY rank LIMIT ?) "

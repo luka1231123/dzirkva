@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from dzirkva.sources import sources
-from dzirkva.wiki import any_form
+from dzirkva.wiki import any_form, match
 
 DB = Path(__file__).resolve().parents[2] / "data" / "crawl.db"
 SCHEMA = """
@@ -198,7 +198,7 @@ def search(words: list[str], limit: int = 20, urls: list[str] = (), hosts: list[
     sites = [x for p in starts for x in (p, p[:-1] + "0")]
     rows = []
     for op in (" AND ", " OR "):
-        expr = op.join(any_form(w) for w in words)
+        expr = match(words, op)
         rows = db.execute(
             f"SELECT url, title, date, snippet(pages, 3, '', '', '…', 30) FROM pages "
             f"WHERE pages MATCH ?{only} AND rank MATCH 'bm25(0,5,0,1)' ORDER BY rank LIMIT ?",
@@ -216,7 +216,7 @@ def _search_keep(words: list[str], limit: int, keep, keep_limit: int) -> list[di
     if db is None or not words:
         return []
     for op in (" AND ", " OR "):
-        expr = op.join(any_form(w) for w in words)
+        expr = match(words, op)
         ids = [r for r, in db.execute("SELECT rowid FROM pages WHERE pages MATCH ? AND rank MATCH 'bm25(0,5,0,1)' "
                                       "ORDER BY rank LIMIT ?", (expr, max(KEEP_POOL, limit)))]
         if len(ids) >= 5 or len(words) == 1:

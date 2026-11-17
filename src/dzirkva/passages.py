@@ -172,7 +172,7 @@ def build_word_index(db: sqlite3.Connection, batch: int = 1000, limit: int = 20_
 
 def word_search(words: list[str], limit: int = 20) -> list[dict]:
     """Stored passage text, including PDFs without vectors. Works while bounded backfill is underway."""
-    from dzirkva.wiki import SITES, any_form
+    from dzirkva.wiki import SITES, match
 
     if not words or not DB.exists():
         return []
@@ -181,7 +181,7 @@ def word_search(words: list[str], limit: int = 20) -> list[dict]:
         return []
     rows = []
     for op in (" AND ", " OR "):
-        expr = op.join(any_form(w) for w in words)
+        expr = match(words, op)
         ids = [r[0] for r in db.execute("SELECT rowid FROM passages_fts WHERE passages_fts MATCH ? "
                                       "AND rank MATCH 'bm25(5,1)' ORDER BY rank LIMIT ?",
                                       (expr, limit * 4))]

@@ -31,11 +31,23 @@ def _db(site: str = "wikipedia") -> sqlite3.Connection | None:
 
 
 def any_form(word: str) -> str:
-    """FTS5 expression matching any known form of the word's lemma."""
+    """FTS5 expression matching any known form of the word's lemma. A search tool term (ops.Term: a phrase,
+    a/b, a+b, ~a, a*) gives its own expression."""
+    if hasattr(word, "fts"):
+        return word.fts()
     lemma = analyze(word)[0].lemma
     # ties in frequency sorted by the form: a set's order changes per process, so the cut kept other forms
     forms = sorted(set(forms_of(lemma)) | {word, lemma}, key=lambda f: (-freq(f), f))[:MAX_FORMS]
     return "(" + " OR ".join(f'"{f}"' for f in forms) + ")"
+
+
+def match(words: list[str], op: str = " AND ") -> str:
+    """FTS5 expression of the query words joined by op; excluded words (ops.Term with minus, -ლექსი) follow NOT.
+    Every index builds its expression here."""
+    pos = [w for w in words if not getattr(w, "minus", False)]
+    neg = [w for w in words if getattr(w, "minus", False)]
+    expr = op.join(any_form(w) for w in pos)
+    return f"({expr})" + "".join(f" NOT {any_form(w)}" for w in neg) if neg and expr else expr
 
 
 @cache
@@ -44,7 +56,7 @@ def count(*words: str) -> int:
     db = _db()
     if db is None or not words:
         return 0
-    expr = " AND ".join(any_form(w) for w in words)
+    expr = match(words)
     return db.execute("SELECT count(*) FROM wiki WHERE wiki MATCH ?", (expr,)).fetchone()[0]
 
 
@@ -95,7 +107,7 @@ def search(words: list[str], limit: int = 20, site: str = "wikipedia") -> list[d
         return []
     rows = []
     for op in (" AND ", " OR "):
-        expr = op.join(any_form(w) for w in words)
+        expr = match(words, op)
         rows = db.execute(
             "SELECT title, snippet(wiki, 1, '', '', '…', 30) FROM wiki WHERE wiki MATCH ? "
             "AND rank MATCH 'bm25(10,1)' ORDER BY rank LIMIT ?", (expr, limit)).fetchall()

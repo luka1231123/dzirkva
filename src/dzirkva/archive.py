@@ -14,7 +14,7 @@ from urllib.parse import urljoin, urlparse
 import lxml.html
 
 from dzirkva.georgian import from_keyboard, georgian_ratio
-from dzirkva.wiki import any_form
+from dzirkva.wiki import match
 
 DB = Path(__file__).resolve().parents[2] / "data" / "archive.db"
 FONT_FONTS = re.compile(r"(?i)acad|nusx|lit ?mtavr|grigol")   # fonts that draw Latin letters as Georgian
@@ -105,7 +105,7 @@ def search(words: list[str], limit: int = 20) -> list[dict]:
         return []
     rows = []
     for op in (" AND ", " OR "):
-        expr = op.join(any_form(w) for w in words)
+        expr = match(words, op)
         rows = db.execute(
             "SELECT url, snapshot, title, snippet(pages_fts, 3, '', '', '…', 30) FROM pages_fts "
             "WHERE pages_fts MATCH ? ORDER BY bm25(pages_fts, 0, 0, 5, 1) LIMIT ?", (expr, limit)).fetchall()

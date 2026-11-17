@@ -41,7 +41,8 @@ from dzirkva.georgian import freq, georgian_ratio, latin_to_georgian, normalize,
 from dzirkva.meaning import cached_vectors, vectors
 from dzirkva.ingest import search_activity
 from dzirkva.morph import analyze, families, family_members
-from dzirkva import archive, bulk, clicks, crawl, dictionary, iverieli, papers, passages, wiki
+from dzirkva import archive, bulk, clicks, crawl, dictionary, iverieli, ops, papers, passages, wiki
+from dzirkva.ops import Term
 from dzirkva.sources import BLOG_HOSTS, by_category, georgian_hosts, host, kind, lookup, named_sites, tags
 
 # Question words and function words: dropped from keyword queries and feedback terms.
@@ -186,7 +187,9 @@ def spelling_fixes(content: list[str]) -> dict[str, str]:
 
 
 def _lemma(word: str) -> str:
-    """Dictionary form of nouns and adjectives; verbs and unknown words stay as typed."""
+    """Dictionary form of nouns and adjectives; verbs, unknown words and search tool terms stay as typed."""
+    if isinstance(word, Term):
+        return word
     for a in analyze(word):
         if a.source in ("lexicon", "noun-rule") and a.lemma in family_members(a.family):
             return a.lemma
@@ -227,6 +230,8 @@ def intents() -> dict[str, dict]:
 
 def _lemmas(word: str) -> set[str]:
     """The word and its dictionary forms (guesses of the verb rules left out: შემოსილი is not მოსავს)."""
+    if isinstance(word, Term):
+        return {word}
     return {word} | {a.lemma for a in analyze(word) if a.source != "verb-rule"}
 
 
@@ -284,7 +289,12 @@ def _idf(word: str) -> float:
 
 
 def _is_verb(word: str) -> bool:
-    return analyze(word)[0].pos == "verb"
+    return not isinstance(word, Term) and analyze(word)[0].pos == "verb"
+
+
+def _fams(word: str) -> set[str]:
+    """Word families of a query word; of a search tool term: of all its words."""
+    return set().union(*map(families, word.words)) if isinstance(word, Term) else families(word)
 
 
 def coverage(text: str, content: list[str], verbs: bool = False) -> float:
@@ -295,14 +305,16 @@ def coverage(text: str, content: list[str], verbs: bool = False) -> float:
     content = content if verbs else [w for w in content if not _is_verb(w)] or content
     toks = re.findall(r"\w+", normalize(text))
     text_fams = {f for w in toks for f in families(w)} | set(toks)
-    weights = [(_idf(w), bool(families(w) & text_fams) or w in text_fams) for w in content]
+    joined = f" {' '.join(toks)} "
+    weights = [(_idf(w), w.found(toks, text_fams, joined) if isinstance(w, Term)
+                else bool(families(w) & text_fams) or w in text_fams) for w in content]
     total = sum(w for w, _ in weights)
     return sum(w for w, hit in weights if hit) / total if total else 1.0
 
 
 def feedback_terms(content: list[str], texts: list[str], n: int = FEEDBACK_TERMS) -> list[str]:
     """Words and two-word names that repeat in the texts but are rare in Georgian."""
-    query_fams = {f for w in content for f in families(w)}
+    query_fams = {f for w in content for f in _fams(w)}
     df: Counter[str] = Counter()
     for text in texts:
         toks = [w for w in re.findall(r"[ა-ჰ]+", normalize(text)) if len(w) > 2 and not is_stop(w)]
@@ -386,7 +398,7 @@ def merge(lists: list[tuple[str, list[dict]]], content: list[str], cited: set[st
             m.queries.add(name)
             m.engines.update(r["engine"].split("+"))
             m.hits += [(name, e, rank + 1) for e in r["engine"].split("+")]
-    query_fams = [families(w) for w in content]
+    query_fams = [_fams(w) for w in content]
     out = []
     for m in merged.values():
         m.georgian = georgian_ratio(m.title + " " + m.snippet)
@@ -558,13 +570,27 @@ def click_key(content: list[str]) -> str:
 @search_activity()
 def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result], dict]:
     """Returns the words searched in each list, the ranked results, and debug information (with the answer box).
-    deep: DEEP × more local results and results read by meaning; slower."""
+    deep: DEEP × more local results and results read by meaning; slower.
+    Search tools in the query (ops.py: "phrase", a/b, -word, @site, >2015 …): the plain words take the usual way,
+    the tool terms join the content words, excluded words reach every index as NOT (wiki.match), and the merged
+    results pass the tool filters (Query.keep). The indexes give DEEP × more candidates then: the filters remove many."""
     t0 = time.time()
     m = DEEP if deep else 1
-    typed, content, fixes, named = understand(query)
+    q = ops.parse(query)
+    f = DEEP if deep or q.active else 1  # candidates from each index
+    query = q.text or query
+    typed, content, fixes, named = understand(q.plain_text)
     fixes, suggested = confirm_fixes(fixes, content)
     read_as = " ".join(fixes.get(w, w) for w in typed)
-    content = [fixes.get(w, w) for w in content]
+    content = [fixes.get(w, w) for w in content] + q.terms
+    debug = {"content": content, "deep": deep, "key": click_key(content), "type": question_type(query),
+             "spelling": fixes, "did_you_mean": suggested, "named": [h for h, _, _ in named], "intent": None,
+             "read_as": read_as, "feedback": [], "answer": None, "related": [], "definition": None, "counts": {},
+             "cites": 0, "ops": q, "seconds": {"round1": 0.0, "round2+rank": 0.0}}
+    if not content:  # only filters (@ვიკიპედია, -ლექსი): nothing to search for; the page says so (ops notes)
+        return {}, [], debug
+    fts = content + q.minus  # what the indexes search: excluded words follow NOT
+    narrow = (lambda rs: [r for r in rs if q.keep(r)]) if q.active else (lambda rs: rs)
     named_hosts = {h for h, _, _ in named}
     lists = [("named", [{"url": f"https://{h}/", "title": name, "snippet": "", "engine": "named"}
                         for h, share, name in named if share >= NAVIGATIONAL])]
@@ -581,30 +607,33 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
             qs[f"named:{h}"] = f"{' '.join(rest)} site:{h}"
     if wanted:  # the same words on the sites made for what the query wants
         qs[f"intent:{want}"] = f"{' '.join(content)} ({len(wanted)} საიტი)"
+    for h in q.sites:  # @tsu.ge: the crawl of that site
+        qs[f"site:{h}"] = f"{' '.join(content)} @{h}"
 
     def crawled() -> list[tuple[str, list[dict]]]:
-        out = [("crawl", crawl.search(content, 20 * m, keep=people, keep_limit=PEOPLE_PAGES * m))]  # own crawl
+        out = [("crawl", crawl.search(fts, 20 * f, keep=people, keep_limit=PEOPLE_PAGES * f))]  # own crawl
         if wanted:
-            out.append((f"intent:{want}", crawl.search(content, 10 * m, hosts=sorted(wanted))))
+            out.append((f"intent:{want}", crawl.search(fts, 10 * f, hosts=sorted(wanted))))
         if site:
-            out.append((f"named:{site}", crawl.search(rest, 10 * m, hosts=[site])))
+            out.append((f"named:{site}", crawl.search(rest + q.minus, 10 * f, hosts=[site])))
+        out += [(f"site:{h}", crawl.search(fts, 20 * f, hosts=[h])) for h in q.sites]
         return out
 
     # The indexes are searched at the same time, one thread per database file: a SQLite connection serves one
     # thread at a time. The word forms are looked up here first, so no thread reads families.db.
-    for w in content:
+    for w in fts:
         wiki.any_form(w)
     jobs = {
-        "wikipedia": POOL.submit(wiki.search, content, 20 * m),  # local Georgian Wikipedia, every search
-        "wikisource": POOL.submit(wiki.search, content, 10 * m, "wikisource"),  # classic texts: poems, prose, laws
-        "archive": POOL.submit(archive.search, content, 20 * m),  # old Georgian web, local index
+        "wikipedia": POOL.submit(wiki.search, fts, 20 * f),  # local Georgian Wikipedia, every search
+        "wikisource": POOL.submit(wiki.search, fts, 10 * f, "wikisource"),  # classic texts: poems, prose, laws
+        "archive": POOL.submit(archive.search, fts, 20 * f),  # old Georgian web, local index
         "crawl": POOL.submit(crawled),
-        "bulk": POOL.submit(bulk.search, content, 20 * m),  # FineWeb-2 text, indexed offline on the Mac
-        "iverieli": POOL.submit(iverieli.search, content, 10 * m),  # National Library catalog
+        "bulk": POOL.submit(bulk.search, fts, 20 * f),  # FineWeb-2 text, indexed offline on the Mac
+        "iverieli": POOL.submit(iverieli.search, fts, 10 * f),  # National Library catalog
         # Georgian journals and university repositories; research words (დისერტაცია, სტატია) name the kind of
         # text, not its topic: an abstract seldom says them. დისერტაცია puts theses first.
-        "papers": POOL.submit(papers.search, topic, 10 * m, kinds=kinds),
-        "passage_words": POOL.submit(passages.word_search, topic, 20 * m),
+        "papers": POOL.submit(papers.search, topic + q.minus, 10 * f, kinds=kinds),
+        "passage_words": POOL.submit(passages.word_search, topic + q.minus, 20 * f),
     }
     qv = vectors([query])[0]  # the model stays on this thread
     got = {name: job.result() for name, job in jobs.items()}
@@ -617,7 +646,11 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     lists += [(name, got[name]) for name in ("iverieli", "papers", "passage_words")]
     near = passages.search(query, 20 * m, qv=qv)     # Wikipedia paragraphs nearest in meaning
     lists.append(("passages", near))
-    answer = wiki.article(content)
+    # the answer box: plain words and phrases name an article; a/b, ~, *, + do not; a site or source filter wants
+    # only those pages
+    simple = all(len(t.atoms) == 1 and t.atoms[0].how != "prefix" for t in q.terms)
+    answer = wiki.article([x for w in content for x in (w.words if isinstance(w, Term) else [w])]) \
+        if simple and not (q.sites or q.sources) else None
     wiki_hits = next(res for name, res in lists if name == "wikipedia")
     if answer:  # the article the query names leads its list: word rank prefers short pages (თაყაიშვილები)
         wiki_hits[:] = [{"url": answer["url"], "title": f"{answer['title']} · ვიკიპედია", "snippet": answer["text"],
@@ -630,14 +663,14 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     cited = {canonical_url(u) for u in cites}
     key = click_key(content)
     clicked = clicks.good(key)
-    lists.append(("cited", crawl.search(content, 10 * m, cites) if cites else []))  # crawled pages the articles cite
+    lists.append(("cited", crawl.search(fts, 10 * f, cites) if cites else []))  # crawled pages the articles cite
     qs = {name: qs.get(name) or (query if name == "passages" else " ".join(topic if name == "papers" else content))
           for name, _ in lists if name != "named"}
     # explanations (why/how): answer vector and feedback from the nearest paragraphs; names and facts: from
     # the covered snippets (paragraphs about "the fastest" drift to cars and trains, the snippets name ბოლტი)
     explain = question_type(query) in ANSWER_TYPES and bool(near)
     answer_v = answer_vector(near) if explain else None
-    merged = merge(lists, content, cited, clicked, named_hosts, wanted)
+    merged = narrow(merge(lists, content, cited, clicked, named_hosts, wanted))
     encyclopedia = intents()[want]["encyclopedia"] if want else True
     first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia, topic,
                             MEANING_TOP * m)
@@ -645,26 +678,28 @@ def search(query: str, deep: bool = False) -> tuple[dict[str, str], list[Result]
     covered = [r.text for r in first if r.coverage >= FEEDBACK_MIN_COVERAGE][:FEEDBACK_DOCS]
     terms = feedback_terms(content, [p["snippet"] for p in near[:FEEDBACK_PASSAGES]] if explain else covered)
     # verbs stay out: ბნელდება would bring back the eclipse pages (დაბნელება)
-    base = " ".join(_lemma(w) for w in content if not _is_verb(w)) or " ".join(_lemma(w) for w in content)
+    base_words = [_lemma(w) for w in content if not _is_verb(w)] or [_lemma(w) for w in content]
+    base = " ".join(base_words)
     bad = sum(r.coverage >= FEEDBACK_MIN_COVERAGE for r in first[:10]) < ROUND1_GOOD
     more = terms and bad
     if more:  # the web pages that use the answer word: the crawl
         name = f"feedback:{terms[0]}"
         qs[name] = f"{base} {terms[0]}"
-        lists.append((name, crawl.search(qs[name].split(), 20 * m)))
-        merged = merge(lists, content, cited, clicked, named_hosts, wanted)
+        lists.append((name, crawl.search(base_words + terms[0].split() + q.minus, 20 * f)))
+        merged = narrow(merge(lists, content, cited, clicked, named_hosts, wanted))
         first = rank_by_meaning(query, wiki_snippets(merged, qv, content), content, qv, answer_v, encyclopedia, topic,
                                 MEANING_TOP * m)
     results = diversify(group_copies(first), named_hosts)
     for i, r in enumerate(results, 1):
         r.rank = i
-    debug = {
-        "content": content, "deep": deep, "key": key, "type": question_type(query), "spelling": fixes, "did_you_mean": suggested, "named": [h for h, _, _ in named], "intent": want, "read_as": read_as, "feedback": terms if more else [], "answer": answer,
-        "related": related(content, base, terms, wiki_hits, near, answer),
-        "definition": dictionary.define(read_as),  # "სახლი რას ნიშნავს"
+    tail = f" {q.tail}" if q.tail else ""  # related searches keep the filters
+    debug.update({
+        "key": key, "intent": want, "feedback": terms if more else [], "answer": answer,
+        "related": [(rq + tail, src) for rq, src in related(content, base, terms, wiki_hits, near, answer)],
+        "definition": dictionary.define(read_as) if not q.active or read_as else None,  # "სახლი რას ნიშნავს"
         "counts": {name: len(res) for name, res in lists}, "cites": len(cites),
         "seconds": {"round1": round(t1 - t0, 1), "round2+rank": round(time.time() - t1, 1)},
-    }
+    })
     return qs, results, debug
 
 

@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from xml.etree import ElementTree as ET
 
 from dzirkva.georgian import georgian_ratio
-from dzirkva.wiki import any_form
+from dzirkva.wiki import match
 
 DB = Path(__file__).resolve().parents[2] / "data" / "papers.db"
 AGENT = "dzirkva/0.1 (Georgian search engine)"
@@ -225,7 +225,7 @@ def search(words: list[str], limit: int = 10, kinds: set[str] = frozenset()) -> 
     db = _db()
     if db is None or not words or limit <= 0:
         return []
-    expr = " AND ".join(any_form(w) for w in words)
+    expr = match(words)
     types = sorted({t for k in kinds for t in KIND_WORDS.get(k, ())})
     first = f"lower(type) IN ({','.join('?' * len(types))}) DESC, " if types else ""
     rows = db.execute(
