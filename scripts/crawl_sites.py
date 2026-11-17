@@ -3,7 +3,8 @@
 Domains (table `domains`):
 - trusted (config/sources.yaml): full budget from the start.
 - discovered: hosts cited in Georgian Wikipedia (data/kawiki.xml.bz2, read once), Georgian hosts in
-  Common Crawl (data/cc_hosts.db, read once) and hosts linked from crawled Georgian pages (table `links`). A new domain is probed: robots.txt, home page + 5 pages
+  Common Crawl (data/cc_hosts.db, read once), hosts of the FineWeb-2 Georgian corpus (data/bulk.db, a few
+  hundred to a few thousand an hour, most pages first) and hosts linked from crawled Georgian pages (table `links`). A new domain is probed: robots.txt, home page + 5 pages
   (cited pages first). Full budget only if its pages are >30% Georgian and it is not commercial.
 Rules, no ML (signals in the HTML of each page, collected per domain):
 - commercial score: ad/tracker scripts 1, WooCommerce 2, shop page (3+ shop words on one page: კალათა, ყიდვა, ₾ …) 2
@@ -60,6 +61,9 @@ from dzirkva.wiki import cited_on  # noqa: E402
 
 WIKI_DUMP = Path(__file__).resolve().parent.parent / "data" / "kawiki.xml.bz2"
 CC_HOSTS = WIKI_DUMP.with_name("cc_hosts.db")
+BULK = WIKI_DUMP.with_name("bulk.db")
+BULK_HOSTS = WIKI_DUMP.with_name("bulk_hosts.tsv")  # hosts of bulk.db, most pages first: host, pages, one page URL
+BULK_IMPORT = {"slow": 200, "max": 2000, "fast": 2000}  # new FineWeb hosts per hour by mode
 AGENT = "dzirkva-crawler/0.1 (Georgian search research; 1 req/s)"
 PER_HOST = int(sys.argv[1]) if len(sys.argv) > 1 else 2000  # trusted domain
 PER_SITE = 100          # discovered domain
@@ -281,6 +285,43 @@ def seed_cc(db, sites: dict[str, Site], limit: int = 500) -> None:
     db.execute("INSERT OR REPLACE INTO cc_import_state VALUES (1,?,?,?)", (cursor, scan_mtime, completed_mtime))
     db.commit()
     print(f"cc seeds: scanned {len(rows)} rows, {added} new domains", flush=True)
+
+
+def bulk_hosts() -> list[list[str]]:
+    """Hosts of the FineWeb-2 Georgian corpus, most pages first. Written once to BULK_HOSTS (~40 s over the
+    URL index, not the 40 GB of text): the corpus does not change."""
+    if not BULK_HOSTS.exists():
+        count: Counter[str] = Counter()
+        sample: dict[str, str] = {}
+        bulk = sqlite3.connect(f"file:{BULK}?mode=ro", uri=True)
+        for (url,) in bulk.execute("SELECT url FROM docs INDEXED BY sqlite_autoindex_docs_1"):
+            host = domain_of(url)
+            count[host] += 1
+            sample.setdefault(host, url)
+        bulk.close()
+        tmp = BULK_HOSTS.with_suffix(".tmp")
+        tmp.write_text("".join(f"{h}\t{n}\t{sample[h].split()[0]}\n" for h, n in count.most_common()), encoding="utf-8")
+        tmp.rename(BULK_HOSTS)
+    return [line.split("\t") for line in BULK_HOSTS.read_text(encoding="utf-8").splitlines()]
+
+
+def seed_bulk(db, sites: dict[str, Site], limit: int) -> None:
+    """The next `limit` FineWeb hosts the crawler does not know: probes with the home page and one corpus page."""
+    db.execute("CREATE TABLE IF NOT EXISTS bulk_import_state (id INT PRIMARY KEY, cursor INT)")
+    cursor = (db.execute("SELECT cursor FROM bulk_import_state WHERE id=1").fetchone() or (0,))[0]
+    rows = bulk_hosts()[cursor:cursor + limit]
+    added = 0
+    for host, _, url in rows:
+        if host in sites or skip(host):
+            continue
+        s = add_site(db, sites, host, "bulk")
+        enqueue(db, s, [f"https://{host}/", url], 1)
+        db.execute("UPDATE queue SET depth=0 WHERE url=?", (f"https://{host}/",))  # the home page is a link list
+        added += 1
+    db.execute("INSERT OR REPLACE INTO bulk_import_state VALUES (1, ?)", (cursor + len(rows),))
+    db.commit()
+    if rows:
+        print(f"bulk seeds: {added} new domains of {len(rows)} hosts ({cursor + len(rows):,} read)", flush=True)
 
 
 async def get(client: httpx.AsyncClient, url: str) -> httpx.Response | None:
@@ -564,11 +605,15 @@ async def main() -> None:
 
         last_ingest = 0.0
         last_cc_import = time.monotonic()
+        last_bulk_import = 0.0
         seed_order = deque(sorted((s for s in sites.values() if s.state == "full"), key=lambda s: (s.pages, s.inbound)))
         while True:
             if auto and (mode := auto.wanted()) != auto.mode:
                 auto.mode = mode
                 use(mode)
+            if BULK.exists() and time.monotonic() - last_bulk_import >= 600:  # a sixth of the hour's hosts
+                seed_bulk(db, sites, BULK_IMPORT[auto.mode if auto else MODE] // 6)
+                last_bulk_import = time.monotonic()
             if CC_HOSTS.exists() and time.monotonic() - last_cc_import >= 3600:
                 seed_cc(db, sites)
                 last_cc_import = time.monotonic()
