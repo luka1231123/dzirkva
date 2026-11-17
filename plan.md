@@ -158,6 +158,7 @@ One round = 72 s run + marks for new results only. Keep a change only when quali
 | dzirkva, round 1 (intents, named article first) | 16 | 25 | 44% |
 | dzirkva, 2026-11-16 (same lists each run) | 16 | 26 | 43% |
 | dzirkva, 2026-11-17 (source bonus × topic cover) | 18 | 26 | 44% |
+| dzirkva like the server (`MEANING_WEB=0`), before / after the bonus change | 10 | 23 | 42% |
 
 Cause of the gap, from Google's 110 good results: 11 are in dzirkva's first five, 6 are lower, 46 are on a site we
 crawl but the page is not found, 47 are on a site we do not have. Coverage first, ranking second.
