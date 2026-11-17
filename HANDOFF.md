@@ -14,6 +14,11 @@ Plan for students: `plan.md` Session 9.
   process. Check: two runs of the 40 student queries, 0 lists differ.
 - `6d2877b`: `SET=odd uv run python scripts/versus.py run|pool|grade|score NAME` reads `eval/odd.tsv` and writes
   `eval/odd_*`. Use it for the second query set.
+- Deployed 2026-11-17 (rsync of the changed files, `dzirkva-web` restarted): round 1 (intents, sources), the
+  determinism fix and the punctuation fix. Live check: `რა არის ალიტერაცია?` puts the article first.
+- **The server has code that git does not have:** `scripts/crawl_sites.py` (FineWeb-2 hosts as crawl seeds,
+  `bulk_hosts.tsv`) and `CLAUDE.md`, both edited on the server on 2026-10-19. The deploy left them alone. Copy
+  them into git before the next full `git ls-files | rsync`, or that rsync deletes the feature.
 - Baseline after the fix (`eval/student_d1.jsonl`, Mac index): dzirkva good@1 16, good@3 26, quality 43%.
   Google: 29, 33, 76%. One new result has no mark yet (`versus.py pool d1`).
 
