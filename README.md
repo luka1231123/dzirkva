@@ -19,6 +19,27 @@ no LLM: only code and one local embedding model, BGE-M3. Live at https://dzirkva
 - **Privacy.** No IP addresses, a 30-minute random session cookie, Do Not Track and GPC respected, records
   deleted after 180 days.
 
+## Search tools
+
+Write these signs in the search bar. Every other word is required, in any form. The tools button next to the search
+bar lists them; `/tools` has every rule with examples. The MCP `search_georgian` tool takes them too.
+
+| Write | Finds |
+|---|---|
+| `"ილია ჭავჭავაძე"` or `„…“` | the exact phrase: these words, in this order, in these forms |
+| `!ღვინოს` | this form only |
+| `ღვინო/ჭაჭა` | one of the words (a word or a `"phrase"` on each side of `/`) |
+| `ღვინო+ქვევრი` | both words, at most 10 words apart, any form |
+| `~ღვინო` | the word or a word close in meaning (word map) |
+| `ქართ*` | a word that starts like this |
+| `-ლექსი`, `-"…"` | pages without this word (any form) or phrase |
+| `#ილია` | the word in the title |
+| `@tsu.ge`, `@ფეისბუქი` | only this site; `-@` = not this site |
+| `@ვიკიპედია`, `@ბლოგები`, `@სამეცნიერო` … | only this kind of source (list on `/tools`) |
+| `>2015`, `<2020` | dated after or before the year; pages with no date drop out |
+
+Code: `src/dzirkva/ops.py`.
+
 ## Indexes
 
 | Source | Size |
@@ -122,6 +143,28 @@ dzirkva searches its own indexes, which can be weeks or years old; it does not s
    ქვეშ წერია, რატომ დადგა ამ ადგილას.
 
 კოდი: `src/dzirkva/search.py`. ტერმინალში ასე გაეშვება: `uv run python -m dzirkva.search ქართული ანბანი`.
+
+## ძიების ხელსაწყოები
+
+ეს ნიშნები საძიებო ველში იწერება. დანარჩენი სიტყვები აუცილებელია, ნებისმიერი ფორმით. საძიებო ველის გვერდით
+ხელსაწყოების ღილაკი მათ ჩამოთვლის. ყველა წესი მაგალითებით გვერდზე `/tools` არის. MCP-ის
+`search_georgian` ხელსაწყოც იგებს მათ.
+
+| ჩაწერეთ | იპოვის |
+|---|---|
+| `"ილია ჭავჭავაძე"` ან `„…“` | ზუსტ ფრაზას: ეს სიტყვები, ამ რიგით და ამ ფორმით |
+| `!ღვინოს` | მხოლოდ ამ ფორმას |
+| `ღვინო/ჭაჭა` | ერთ-ერთ სიტყვას (`/`-ის თითო მხარეს სიტყვა ან `"ფრაზა"`) |
+| `ღვინო+ქვევრი` | ორივე სიტყვას, ერთმანეთიდან არაუმეტეს 10 სიტყვაზე, ნებისმიერი ფორმით |
+| `~ღვინო` | ამ სიტყვას ან მნიშვნელობით ახლო სიტყვას (სიტყვების რუკიდან) |
+| `ქართ*` | სიტყვას, რომელიც ასე იწყება |
+| `-ლექსი`, `-"…"` | გვერდებს ამ სიტყვის (ნებისმიერი ფორმით) ან ფრაზის გარეშე |
+| `#ილია` | სიტყვას სათაურში |
+| `@tsu.ge`, `@ფეისბუქი` | მხოლოდ ამ საიტზე; `-@` ნიშნავს: ამ საიტის გარდა |
+| `@ვიკიპედია`, `@ბლოგები`, `@სამეცნიერო` … | მხოლოდ ამ ტიპის წყაროში (სია გვერდზე `/tools`) |
+| `>2015`, `<2020` | ამ წლის შემდეგ ან მანამდე დათარიღებულს; თარიღის გარეშე გვერდები არ ჩანს |
+
+კოდი: `src/dzirkva/ops.py`.
 
 ## სიტყვების რუკა
 
