@@ -35,7 +35,7 @@ Plan for students: `plan.md` Session 9.
   in Latin letters), word meanings, how-to, one thesis search, history, weather, slang.
 - **Visitors come from Google to pages, not to the search.** 65 visits from Google: 45 to `/site` pages (they
   stopped after 23 Oct, when `/site` became noindex), 9 to `/words` pages, 5 to result pages for paper authors in
-  Latin letters (Nardaia Ada, Geldiashvili Nunu), 6 to the home page.
+  Latin letters, 6 to the home page.
 - **Cold search on the server is slow.** Live median 1.3 s while bots kept the cache warm; the rare human search
   since 22 Oct took 5-23 s. On the Mac the word search of all indexes takes about 0.3 s per query (40 queries:
   crawl 7.3 s, bulk 4.0 s, the rest under 1.2 s each). So the cause is on the server: cold disk cache, RAM taken
