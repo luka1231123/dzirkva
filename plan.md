@@ -167,8 +167,8 @@ better than Google for text, study and research. Steps on the way: 55%, 65%, 76%
 
 Stage 0: a check we can trust
 - [x] Protocol, query set, Google snapshot, 412 marks, first round
-- [ ] Same run twice = same lists (now 2 of 40 queries change order; რეფერატის დაწერის წესი lost its good result
-  between two runs with no related change: find the cause)
+- [x] Same run twice = same lists (cause: `wiki.any_form` cut its forms in set order, which changes per process;
+  ties now sort by the form: 0 of 40 queries differ between two runs)
 - [ ] Run on the server index (`MEANING_WEB=0`, bigger crawl): that is what visitors get
 - [ ] The user marks 40 results blind (10 minutes); agreement with the stored marks 80% or more
 - [ ] Second set: 40 typed queries of people from `telemetry.db`, never used for tuning

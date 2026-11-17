@@ -33,7 +33,8 @@ def _db(site: str = "wikipedia") -> sqlite3.Connection | None:
 def any_form(word: str) -> str:
     """FTS5 expression matching any known form of the word's lemma."""
     lemma = analyze(word)[0].lemma
-    forms = sorted(set(forms_of(lemma)) | {word, lemma}, key=freq, reverse=True)[:MAX_FORMS]
+    # ties in frequency sorted by the form: a set's order changes per process, so the cut kept other forms
+    forms = sorted(set(forms_of(lemma)) | {word, lemma}, key=lambda f: (-freq(f), f))[:MAX_FORMS]
     return "(" + " OR ".join(f'"{f}"' for f in forms) + ")"
 
 
