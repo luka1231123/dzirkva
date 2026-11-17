@@ -115,6 +115,26 @@ Steps:
 Wait first: the session "Search bar customization tools" has uncommitted edits in `search.py`, `web.py`, `crawl.py`
 and others (search operators, `ops.py`). Start step 1 after it commits, so the two do not edit `search.py` at once.
 
+### Plan: faster search on the server (measured 2026-11-17)
+
+Measured on the server (read-only, a capped process): the web process holds 4.7 GB (MemoryMax 5.8 GB); the page
+cache has 4.4 GB for about 74 GB of databases (bulk 40, crawl 27, passages 4, wiki 1.3). Word search of every index:
+first query 13.3 s (language tables 8.0 s: loaded once at web start; crawl 4.7 s cold), later queries 0.5-1.7 s
+(crawl 0.2-0.6 s, papers up to 0.9 s). The crawl FTS index has 24 segments (2 of 374k and 582k leaf pages + 4 of
+374k at level 8); bulk and wiki have 1. The disk scheduler is `none`, so `IOSchedulingClass=idle` of the crawler
+and ingest units does nothing: their reads and writes compete with search on equal terms.
+
+Steps (each measured alone; none takes CPU from the other jobs):
+1. Time every step of a real search (indexes, query vector, passages, wiki snippets, citations, rank) in
+   `debug["seconds"]` and telemetry; a day of data shows the slow step. About 10 lines.
+2. Disk priority: scheduler `mq-deadline` for nvme0n1 (a udev rule, the user's sudo), so the idle IO class of the
+   crawler and ingest takes effect. Search reads then go first; the jobs lose nothing while nobody searches.
+3. Merge the crawl FTS segments (24 → a few) in small `merge` steps while the crawler is stopped or idle, under
+   `nice -n 19` and idle IO; fewer segments = fewer cold disk reads per word. Measure a cold query before and after.
+4. Papers search (0.9 s warm on a 0.2 GB file): find the slow query.
+5. Only if 1-4 are not enough: less RAM in the web process (what holds the 4.7 GB?) so more of the index stays in
+   the page cache.
+
 ### Questions for the user
 1. People reach dzirkva from Google on word and site pages, not by the search box. Should the next work make more
    such pages for students (texts, authors, word pages), with search second?
