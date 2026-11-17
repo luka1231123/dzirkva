@@ -7,12 +7,14 @@ Domains (table `domains`):
   hundred to a few thousand an hour, most pages first) and hosts linked from crawled Georgian pages (table `links`). A new domain is probed: robots.txt, home page + 5 pages
   (cited pages first). Full budget only if its pages are >30% Georgian and it is not commercial.
 Rules, no ML (signals in the HTML of each page, collected per domain):
-- commercial score: ad/tracker scripts 1, WooCommerce 2, shop page (3+ shop words on one page: კალათა, ყიდვა, ₾ …) 2
+- commercial score: ad/tracker scripts 1, a WooCommerce cart button 2 (the word "woocommerce" alone is in many
+  blog themes' CSS: 1,121 Georgian blogs were rejected for it), shop page (3+ shop words on one page: კალათა, ყიდვა, ₾ …) 2
 - kind: academic (.edu, OJS or DSpace generator), blog (Blogger, WordPress, blogspot, RSS)
 Full domains: pages cited in Georgian Wikipedia first (outside the budget), then home page + sitemaps
 (newest first) each run, same-site links up to MAX_DEPTH, max PER_HOST new pages per run for a trusted
 domain, PER_SITE for a discovered one (many sites before deep sites).
-A host that does not answer is tried ROBOTS_TRIES times, RETRY seconds apart, before it is rejected.
+A host that does not answer is tried ROBOTS_TRIES times, RETRY seconds apart, before it is rejected. Table `dead`
+probes it again after DEAD_WAIT days (one outage was enough to drop a site for good), REVIVE hosts an hour, .ge first.
 Polite: robots.txt, one request per second per domain.
 Each domain runs as its own task, one page at a time; up to MAX_TASKS pages and MAX_SEEDS sitemap reads in flight;
 WORKERS processes parse the pages. New domains
@@ -70,6 +72,8 @@ PER_SITE = 100          # discovered domain
 PROBE = 6               # new domain: home page + 5 pages
 ROBOTS_TRIES = 3        # a host that does not answer: tries before it is rejected
 RETRY = 600             # seconds between the tries
+DEAD_WAIT = (1, 7, 30)  # days before a dead host is probed again after its 1st, 2nd, 3rd dead run; then never
+REVIVE = 1000           # dead hosts probed again per hour
 MAX_DEPTH = 3
 MAX_SITEMAPS = 30       # sitemap files read per site, newest first
 MODE = os.environ.get("CRAWL_MODE") or ("slow" if os.environ.get("CRAWL_SLOW") == "1" else "fast")
@@ -103,7 +107,7 @@ LOC = re.compile(r"<loc>\s*(?:<!\[CDATA\[)?\s*(.*?)\s*(?:\]\]>)?\s*</loc>", re.S
 LASTMOD = re.compile(r"<lastmod>\s*(.*?)\s*</lastmod>")
 SIGNALS = {
     "ads": re.compile(r"googlesyndication|adsbygoogle|doubleclick\.net|adocean|admixer|taboola|outbrain|mgid\.com|fbevents\.js"),
-    "woocommerce": re.compile(r"woocommerce", re.I),
+    "cart": re.compile(r"add_to_cart_button"),  # WooCommerce product buttons, not its CSS in blog themes
     "ojs": re.compile(r'content="Open Journal Systems|pkp_structure'),  # the site's own software, not a link
     "dspace": re.compile(r'content="DSpace', re.I),
     "issn": re.compile(r"\bISSN\b"),
@@ -129,7 +133,7 @@ def page_signals(page: str, host: str) -> set[str]:
 
 
 def commercial(signals: set[str]) -> int:
-    return ("ads" in signals) + 2 * ("woocommerce" in signals) + 2 * ("shop" in signals)
+    return ("ads" in signals) + 2 * ("cart" in signals) + 2 * ("shop" in signals)
 
 
 def kind(signals: set[str]) -> str:
@@ -447,15 +451,20 @@ def links(page: str, base: str) -> list[str]:
 
 
 async def visit(client: httpx.AsyncClient, db, sites: dict[str, Site], site: Site, url: str, depth: int) -> None:
-    if site.robots is None and not await load_robots(client, site):
-        site.fails += 1
-        if site.fails < ROBOTS_TRIES:  # one lost connection is not a dead site
-            site.next = time.monotonic() + RETRY
+    if site.robots is None:
+        if not await load_robots(client, site):
+            site.fails += 1
+            if site.fails < ROBOTS_TRIES:  # one lost connection is not a dead site
+                site.next = time.monotonic() + RETRY
+                return
+            db.execute("UPDATE queue SET status='dead' WHERE host=? AND status='todo'", (site.host,))
+            site.todo, site.state = 0, "rejected"
+            save(db, site)
+            tries = (db.execute("SELECT tries FROM dead WHERE host=?", (site.host,)).fetchone() or (0,))[0] + 1
+            wait = time.time() + DEAD_WAIT[tries - 1] * 86400 if tries <= len(DEAD_WAIT) else None  # None: never
+            db.execute("INSERT OR REPLACE INTO dead VALUES (?, ?, ?)", (site.host, tries, wait))
             return
-        db.execute("UPDATE queue SET status='dead' WHERE host=? AND status='todo'", (site.host,))
-        site.todo, site.state = 0, "rejected"
-        save(db, site)
-        return
+        db.execute("DELETE FROM dead WHERE host=?", (site.host,))
     site.todo -= 1
     fetch = url.replace("https:", "http:", 1) if site.base.startswith("http:") else url
     if not site.robots.can_fetch(AGENT, fetch):
@@ -557,10 +566,32 @@ def use(mode: str) -> None:
     print(f"mode     {mode}", flush=True)
 
 
+def revive(db, sites: dict[str, Site]) -> None:
+    """Dead hosts whose wait is over: probe them again with the pages that were queued for them."""
+    rows = db.execute("SELECT host FROM dead WHERE next <= ? ORDER BY host NOT LIKE '%.ge', next LIMIT ?",
+                      (time.time(), REVIVE)).fetchall()
+    n = 0
+    for (host,) in rows:
+        s = sites.get(host)
+        todo = 0
+        if s is not None and s.state == "rejected" and s.pages == 0:
+            todo = db.execute("UPDATE queue SET status='todo' WHERE host=? AND status='dead'", (host,)).rowcount
+        if not todo:  # answered in the meantime, or nothing to probe
+            db.execute("DELETE FROM dead WHERE host=?", (host,))
+            continue
+        s.state, s.fails, s.next, s.todo, s.queued = "probe", 0, 0.0, todo, todo
+        db.execute("UPDATE dead SET next=NULL WHERE host=?", (host,))  # visit() sets the next wait if it fails again
+        save(db, s)
+        n += 1
+    db.commit()
+    print(f"revived  {n} dead hosts", flush=True)
+
+
 async def main() -> None:
     auto = Auto() if MODE == "auto" else None
     print(f"mode     {MODE}", flush=True)
     db = connect()
+    db.execute("CREATE TABLE IF NOT EXISTS dead (host TEXT PRIMARY KEY, tries INT, next REAL)")  # next: unix time, NULL = not now
     sites = {h: Site(h, *row) for h, *row in db.execute(
         "SELECT host, source, state, pages, georgian, signals, inbound FROM domains")}
     for d in sources():
@@ -605,6 +636,7 @@ async def main() -> None:
 
         last_ingest = 0.0
         last_cc_import = time.monotonic()
+        last_revive = 0.0  # at once: hosts whose wait ended while no crawler ran
         last_bulk_import = 0.0
         seed_order = deque(sorted((s for s in sites.values() if s.state == "full"), key=lambda s: (s.pages, s.inbound)))
         while True:
@@ -614,6 +646,9 @@ async def main() -> None:
             if BULK.exists() and time.monotonic() - last_bulk_import >= 600:  # a sixth of the hour's hosts
                 seed_bulk(db, sites, BULK_IMPORT[auto.mode if auto else MODE] // 6)
                 last_bulk_import = time.monotonic()
+            if time.monotonic() - last_revive >= 3600:
+                revive(db, sites)
+                last_revive = time.monotonic()
             if CC_HOSTS.exists() and time.monotonic() - last_cc_import >= 3600:
                 seed_cc(db, sites)
                 last_cc_import = time.monotonic()
