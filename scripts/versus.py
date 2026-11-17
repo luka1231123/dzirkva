@@ -13,22 +13,24 @@ Protocol. One round = run (about 1 minute) + judging only the results no round h
    0-100%), wins and losses per query. The losses are the work list.
 Keep a change only when quality rises and no use loses a good@3 query.
 Limit: the judge sees title, address and snippet, not the page.
+Another query set: `SET=odd versus.py …` reads eval/odd.tsv and writes eval/odd_*.
 """
 
 import hashlib
 import json
+import os
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-E, N = Path("eval"), 5
-GOOGLE, JUDGED, POOL, GRADES = E / "student_google.jsonl", E / "student_judged.tsv", E / "student_pool", E / "student_grades.txt"
+E, N, SET = Path("eval"), 5, os.environ.get("SET", "student")
+GOOGLE, JUDGED, POOL, GRADES = (E / f"{SET}_{x}" for x in ("google.jsonl", "judged.tsv", "pool", "grades.txt"))
 
 
 def queries() -> list[list[str]]:
-    return [line.split("\t") for line in (E / "student.tsv").read_text().splitlines()[1:]]
+    return [line.split("\t") for line in (E / f"{SET}.tsv").read_text().splitlines()[1:]]
 
 
 def load(path: Path) -> dict[str, dict]:
@@ -73,7 +75,7 @@ def run(name: str) -> None:
     from dzirkva.search import search
     from dzirkva.web import main_list
 
-    with (E / f"student_{name}.jsonl").open("w") as f:
+    with (E / f"{SET}_{name}.jsonl").open("w") as f:
         for q, use, _ in queries():
             t = time.time()
             _, results, d = search(q)
@@ -86,7 +88,7 @@ def run(name: str) -> None:
 
 
 def pool(name: str) -> None:
-    sides, marks, order, text = [load(GOOGLE), load(E / f"student_{name}.jsonl")], judged(), {}, []
+    sides, marks, order, text = [load(GOOGLE), load(E / f"{SET}_{name}.jsonl")], judged(), {}, []
     for n, (q, _, need) in enumerate(queries(), 1):
         new = {key(q, r): r for side in sides if q in side for r in shown(q, side[q], marks) if key(q, r) not in marks}
         if new:
@@ -112,7 +114,7 @@ def grade() -> None:
 
 
 def score(name: str) -> None:
-    sides, marks = {"dzirkva": load(E / f"student_{name}.jsonl"), "google": load(GOOGLE)}, judged()
+    sides, marks = {"dzirkva": load(E / f"{SET}_{name}.jsonl"), "google": load(GOOGLE)}, judged()
     rows, missing = [], 0
     for q, use, _ in queries():
         row = {"q": q, "use": use}
