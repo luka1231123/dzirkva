@@ -16,6 +16,11 @@ Plan for students: `plan.md` Session 9.
   `eval/odd_*`. Use it for the second query set.
 - Deployed 2026-11-17 (rsync of the changed files, `dzirkva-web` restarted): round 1 (intents, sources), the
   determinism fix and the punctuation fix. Live check: `რა არის ალიტერაცია?` puts the article first.
+- Search tools (`28d4abd`, `6ecb996`; `ops.py`, `/tools`, MCP `query_tools`) deployed 2026-11-17: rsync of the 14
+  changed files (server copies matched git before), `dzirkva-web` restarted. `CLAUDE.md` not sent (server copy
+  differs). Live check: `"ილია ჭავჭავაძე" -ლექსი @სამეცნიერო` 37 results in 3.4 s with 3 chips; MCP
+  `ტყემალი/ბაჟე -მაღაზია` returns `query_tools`. `dzirkva-crawl` was stopped at 11:09 by another change (SIGTERM),
+  not started again by this deploy.
 - **The server has code that git does not have:** `scripts/crawl_sites.py` (FineWeb-2 hosts as crawl seeds,
   `bulk_hosts.tsv`) and `CLAUDE.md`, both edited on the server on 2026-10-19. The deploy left them alone. Copy
   them into git before the next full `git ls-files | rsync`, or that rsync deletes the feature.
