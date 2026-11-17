@@ -1,9 +1,85 @@
-# dzirkva handoff (2026-10-08)
+# dzirkva handoff (2026-11-17; the state of 2026-10-08 follows below)
 
 Goal of the next sessions: expand dzirkva's own indexes, make search more accurate, and make the code simpler.
 Read `CLAUDE.md` first (rules, commands, layout). This file holds the state and the plan.
 
-## State
+## Session 2026-11-16/17: audit for the student goal
+
+The user asked: finish dzirkva, compare it with Google, find niches, decide what to add, make good and discard,
+and prefer one simple mechanism to many patches. The audit stopped early at the usage limit. Its findings are below.
+Plan for students: `plan.md` Session 9.
+
+### Done
+- `0bed028`: the same run twice gives the same lists. `wiki.any_form` cut its forms in set order, which changes per
+  process. Check: two runs of the 40 student queries, 0 lists differ.
+- `6d2877b`: `SET=odd uv run python scripts/versus.py run|pool|grade|score NAME` reads `eval/odd.tsv` and writes
+  `eval/odd_*`. Use it for the second query set.
+- Baseline after the fix (`eval/student_d1.jsonl`, Mac index): dzirkva good@1 16, good@3 26, quality 43%.
+  Google: 29, 33, 76%. One new result has no mark yet (`versus.py pool d1`).
+
+### Facts measured
+- **Almost no person uses the search box.** Live `telemetry.db` (copied from the server on 2026-11-16): 937,930
+  events, most from bots. The bot flag misses many bots: "human" browsers had language en 18,327, zh 1,826, ka 4.
+  Since the gate page (22 Oct): 20 human searches in total; /discover 8 views, /random 2, citation and panel
+  actions 13 ever. Real typed queries before the scrapers (24 Sep - 7 Oct, 91): person names (often "Surname Name"
+  in Latin letters), word meanings, how-to, one thesis search, history, weather, slang.
+- **Visitors come from Google to pages, not to the search.** 65 visits from Google: 45 to `/site` pages (they
+  stopped after 23 Oct, when `/site` became noindex), 9 to `/words` pages, 5 to result pages for paper authors in
+  Latin letters (Nardaia Ada, Geldiashvili Nunu), 6 to the home page.
+- **Cold search on the server is slow.** Live median 1.3 s while bots kept the cache warm; the rare human search
+  since 22 Oct took 5-23 s. On the Mac the word search of all indexes takes about 0.3 s per query (40 queries:
+  crawl 7.3 s, bulk 4.0 s, the rest under 1.2 s each). So the cause is on the server: cold disk cache, RAM taken
+  by the crawler in max mode, the model. Not measured on the server yet.
+- **Google snapshots need a normal browser.** The built-in browser pane gets non-Georgian results from Google
+  (რა არის ფოტოსინთეზი gave Armenian blogs). Collect set 2 in the user's own Chrome (about 10 minutes).
+
+### Failures seen on 26 new school queries (Mac index, judged by Claude, not blind)
+1. **Punctuation breaks every query (confirmed bug).** `understand` splits on spaces, so `ალიტერაცია?` and
+   `"მერანი"` keep the mark. Coverage of every result becomes 0.0 (`coverage('ალიტერაცია არის …',
+   ['ალიტერაცია?'])` = 0.0, without `?` = 1.0). Fix: words by `re.findall(r"\w+", query)` in `understand` and
+   `question_type`. The student set has no punctuation, so the score cannot show this fix.
+2. **One-word intent triggers misfire.** `intent()` gives `law` for ომის კანონი (Ohm's law), ნიუტონის მესამე
+   კანონი, ავთანდილის ანდერძი ტექსტი (Avtandil's testament, a poem). 50 intents in `config/intents.yaml`, most
+   for services (no more tuning by the 2026-09-23 focus). Test: student set with only research, books and school
+   intents; keep the cut if the score does not drop.
+3. **A work named in the query does not lead.** The Wikisource text ranks 29-46: ოთარაანთ ქვრივი (33),
+   ვეფხისტყაოსანი/ანდერძი ავთანდილისა (42), the quote სჯობს სიცოცხლესა ნაძრახსა… (no text in the top 30).
+   "მერანი" ანალიზი gives მათემატიკური ანალიზი. `wiki.article` matches only the whole query. One general
+   mechanism: look up every 1-4 word part of the query in the Wikipedia and Wikisource titles; a hit joins the
+   candidates with full title fit. This also covers plan Stage 2 "work title + შინაარსი / ანალიზი / ტექსტი".
+4. **Crawl titles are the site name.** mastsavlebeli.ge pages show the title "mastsavlebeli.ge", so neither the
+   judge nor a visitor sees the topic. Fix the title choice in `crawl.py` (og:title or h1 when the title is the host).
+5. **Blogs and lesson plans fill the top of study queries** (გაკვეთილის გეგმა at 4-5 for ალიტერაცია and მიტოზი).
+   Plan Stage 2 already lists it: no people bonus for study queries.
+6. Known limits: fact questions (ყველაზე გრძელი მდინარე: blogs first, the list article third); words outside the
+   8k-word dictionary (მიჯნური რას ნიშნავს: no box); textbooks as PDF (me 10 klasis istoriis wigni pdf).
+   დისკრიმინანტის ფორმულა puts the article დისკრიმინაცია first with coverage 0: check the word family in morph.
+
+### Next steps, in order
+1. Fix 1 (punctuation): about 3 lines, no eval change expected; check by hand with `?` and quotes.
+2. Measure fix 2 (cut intents) with `versus.py`.
+3. Build fix 3 (title parts as a source), measure; it should repair text and study queries.
+4. Plan Stage 1 (coverage) stays the biggest lever: of Google's 110 good results, 46 are on sites we crawl but the
+   page is missing, 47 are on sites we do not have.
+5. Second query set: 40 queries in `eval/odd.tsv` (query, use, need), Google collected by the user in Chrome.
+   Telemetry has too few clean human queries for it (see plan.md Stage 0).
+
+### Questions for the user
+1. People reach dzirkva from Google on word and site pages, not by the search box. Should the next work make more
+   such pages for students (texts, authors, word pages), with search second?
+2. `/site` pages brought 45 of 65 Google visits before noindex. Open them again as cached static pages?
+3. Cut the 50 intents to research, books and school, if the score agrees?
+4. On the server, crawl speed or search speed first? The crawler in max mode is the likely cause of 5-23 s searches.
+5. Will you collect Google for the second set in your Chrome (about 10 minutes)?
+
+### The stopped audit
+Two read-only workflow runs (8 agents: ranking audit, feature audit, Google losses 1-20 and 21-40, four user
+lenses) stopped at the usage limit with no reports. Script to run again:
+`~/.claude/projects/-Users-rexvlapt-Programming-dzirkva/dcee13aa-da4d-43e9-a62c-7443bbe506c7/workflows/scripts/dzirkva-understand-2.js`
+(set its `SCRATCH` constant to the new session's scratchpad; the school lens is done, see above). Run it only when
+the user asks for agents again.
+
+## State (2026-10-08)
 
 - **No outside search engine.** Brave and SearXNG are archived in `scripts/archive/engines/` (commit `471fec9`,
   deployed to `rexvopc`, SearXNG service disabled, not pushed to GitHub yet). Search uses only local indexes.

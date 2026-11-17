@@ -172,6 +172,9 @@ Stage 0: a check we can trust
 - [ ] Run on the server index (`MEANING_WEB=0`, bigger crawl): that is what visitors get
 - [ ] The user marks 40 results blind (10 minutes); agreement with the stored marks 80% or more
 - [ ] Second set: 40 typed queries of people from `telemetry.db`, never used for tuning
+  (2026-11-16: too few: 20 human searches since the gate page, 91 before the scrapers, many slang. Use real
+  queries where they exist, add new ones by need; `SET=odd versus.py`, Google collected in a normal Chrome)
+- [ ] Query words with punctuation (`ალიტერაცია?`, `"მერანი"`) get coverage 0 on every result: split on `\w+`
 
 Stage 1: the study pages (93 of 110 misses)
 - [ ] Deploy the new education sources (`config/sources.yaml`) and crawl deep (`crawl_sites.py 10000`): aura.ge,
